@@ -1,5 +1,5 @@
 # MIT License — Copyright (c) 2026 John Kuok
-"""US National Weather Service forecast mode."""
+"""US National Weather Service forecast mode with a wall clock."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import requests
 
-from ticker.canvas import Canvas
+from ticker.canvas import HUGE, SMALL, Canvas
 from ticker.modes.base import Mode
 
 
@@ -20,6 +20,11 @@ class Forecast:
     high: int
     low: int
     wind: str
+
+
+def _shorten_wind(wind: str) -> str:
+    """Turn NWS wording like '12 to 16 mph' into a panel-sized '12-16mph'."""
+    return wind.replace(" to ", "-").replace(" mph", "mph").strip()
 
 
 class WeatherMode(Mode):
@@ -68,14 +73,31 @@ class WeatherMode(Mode):
         if time.monotonic() - self._last_refresh >= self.CACHE_SECONDS:
             self._refresh()
         canvas.clear()
+
+        clock = self.config.clock_text()
+
         if not self.config.weather_lat or not self.config.weather_lon:
-            canvas.text(2, 11, "Set WEATHER_LAT/LON", (255, 180, 60), 8)
+            canvas.text_centered(6, clock, (255, 210, 50), SMALL)
+            canvas.text_centered(18, "SET WEATHER LAT/LON", (255, 150, 60), SMALL)
             return
+
         if not self.forecast:
-            canvas.text(20, 11, "Loading weather...", (130, 180, 255), 8)
+            canvas.text_centered(6, clock, (255, 210, 50), SMALL)
+            canvas.text_centered(18, "LOADING WEATHER", (130, 180, 255), SMALL)
             return
+
         forecast = self.forecast
-        canvas.text(1, -3, f"{forecast.temperature}°", (255, 210, 50), 18)
-        canvas.text(48, 1, forecast.condition[:18], (200, 220, 255), 7)
-        canvas.text(48, 11, f"H {forecast.high}°  L {forecast.low}°", (255, 140, 100), 8)
-        canvas.text(1, 23, f"Wind {forecast.wind}", (120, 190, 255), 8)
+
+        # Left third: the hero temperature, vertically centred.
+        temp_text = f"{forecast.temperature}"
+        canvas.text(0, 3, temp_text, (255, 205, 40), HUGE)
+        temp_width = canvas.text_width(temp_text, HUGE)
+        canvas.degree(temp_width + 1, 4, (255, 205, 40))
+
+        # Right two thirds: three stacked 8px rows — clock, sky, then the numbers.
+        right_x = temp_width + 8
+        column = canvas.width - right_x
+        canvas.text(right_x, 2, canvas.fit(clock, column), (235, 240, 250), SMALL)
+        canvas.text(right_x, 12, canvas.fit(forecast.condition.upper(), column), (170, 205, 255), SMALL)
+        detail = f"H{forecast.high} L{forecast.low} {_shorten_wind(forecast.wind)}".upper()
+        canvas.text(right_x, 22, canvas.fit(detail, column), (255, 145, 105), SMALL)

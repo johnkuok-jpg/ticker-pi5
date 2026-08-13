@@ -7,7 +7,7 @@ import time
 
 import feedparser
 
-from ticker.canvas import Canvas
+from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
 
@@ -35,7 +35,7 @@ class NewsMode(Mode):
         if time.monotonic() - self._last_refresh >= self.CACHE_SECONDS:
             self._refresh()
         canvas.clear()
-        prefix = f"{self.config.news_source_name}: "
-        headline = "  •  ".join(self.headlines) if self.headlines else "Waiting for headlines"
-        canvas.text(0, 1, prefix, (80, 100, 130), 7)
-        canvas.scroll_text(15, headline, (220, 225, 235), tick * 2, 8)
+        headline = "   +   ".join(self.headlines) if self.headlines else "WAITING FOR HEADLINES"
+        canvas.text(1, 1, canvas.fit(self.config.news_source_name), (95, 135, 195), SMALL)
+        canvas.hline(11, (26, 36, 56))
+        canvas.scroll_text(15, headline, (225, 230, 240), tick * 2, SMALL)

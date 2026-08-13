@@ -42,8 +42,31 @@ class Config:
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
+    timezone: str = ""
+    clock_24h: bool = False
     raspotify_log_path: Path = Path("/var/log/raspotify/raspotify.log")
     state_dir: Path = Path.home() / ".ticker"
+
+    def now(self):  # noqa: ANN201 - datetime, kept loose to avoid a module-level import cycle
+        """Current local time, honouring TICKER_TIMEZONE when it is set and valid."""
+        from datetime import datetime
+
+        if self.timezone:
+            try:
+                from zoneinfo import ZoneInfo
+
+                return datetime.now(ZoneInfo(self.timezone))
+            except Exception:
+                pass  # fall through to the system clock
+        return datetime.now()
+
+    def clock_text(self) -> str:
+        """Formatted wall clock, e.g. '1:07 PM' or '13:07'. No leading zero on 12h."""
+        stamp = self.now()
+        if self.clock_24h:
+            return stamp.strftime("%H:%M")
+        hour = stamp.hour % 12 or 12
+        return f"{hour}:{stamp.strftime('%M %p')}"
 
     @property
     def mode_file(self) -> Path:
@@ -116,6 +139,8 @@ def load_config(env_file: Path | None = None) -> Config:
         weather_user_agent=os.getenv(
             "WEATHER_USER_AGENT", "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
         ),
+        timezone=os.getenv("TICKER_TIMEZONE", ""),
+        clock_24h=os.getenv("TICKER_CLOCK_24H", "false").strip().lower() in {"1", "true", "yes"},
         raspotify_log_path=Path(os.getenv("RASPOTIFY_LOG_PATH", "/var/log/raspotify/raspotify.log")),
         state_dir=_first_writable_state_dir(),
     )

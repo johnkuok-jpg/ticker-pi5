@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from ticker.canvas import Canvas
+from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
 
@@ -72,9 +72,9 @@ class SpotifyMode(Mode):
             self._refresh()
         canvas.clear()
         if not self.track:
-            canvas.text(30, 7, "no music", (135, 135, 150), 10)
-            canvas.text(19, 19, "start a track on raspotify", (70, 80, 95), 7)
+            canvas.text_centered(7, "NO MUSIC", (150, 150, 165), SMALL)
+            canvas.text_centered(18, "START RASPOTIFY", (70, 80, 95), SMALL)
             return
         # TODO: add album-art retrieval when a stable local source is selected.
-        canvas.scroll_text(1, self.track.title, (80, 240, 130), tick * 2, 10)
-        canvas.scroll_text(17, self.track.artist, (160, 180, 200), tick, 8)
+        canvas.scroll_text(6, self.track.title, (80, 240, 130), tick * 2, SMALL)
+        canvas.scroll_text(18, self.track.artist, (150, 170, 195), tick, SMALL)

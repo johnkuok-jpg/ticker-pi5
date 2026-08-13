@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from ticker.canvas import Canvas
+from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
 
@@ -65,7 +65,7 @@ class StocksMode(Mode):
             self._refresh()
         canvas.clear()
         if not self.quotes:
-            canvas.scroll_text(11, "MARKETS: waiting for prices", (120, 140, 170), tick * 2)
+            canvas.scroll_text(12, "MARKETS: WAITING FOR PRICES", (120, 140, 170), tick * 2, SMALL)
             return
 
         offset = tick * 2
@@ -78,8 +78,8 @@ class StocksMode(Mode):
                     canvas.image(x, 8, logo)
                     x += 18
                 color = (40, 230, 90) if quote.change_percent >= 0 else (255, 70, 70)
-                canvas.text(x, 11, label, color, 8)
-                x += canvas.text_width(label, 8) + 20
+                canvas.text(x, 12, label, color, SMALL)
+                x += canvas.text_width(label, SMALL) + 20
 
     def _row_width(self, canvas: Canvas) -> int:
-        return sum(canvas.text_width(f"{q.symbol} {q.price:,.2f} {q.change_percent:+.1f}%", 8) + 38 for q in self.quotes)
+        return sum(canvas.text_width(f"{q.symbol} {q.price:,.2f} {q.change_percent:+.1f}%", SMALL) + 38 for q in self.quotes)
