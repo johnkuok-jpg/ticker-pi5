@@ -1,0 +1,20 @@
+# MIT License — Copyright (c) 2026 John Kuok
+[Unit]
+Description=Ticker Pi 5 web control panel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ticker-pi5
+EnvironmentFile=/home/pi/ticker-pi5/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/ticker-pi5/venv/bin/gunicorn -w 2 -b 0.0.0.0:8080 ticker.web.app:app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

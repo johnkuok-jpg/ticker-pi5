@@ -1,0 +1,54 @@
+<!-- MIT License — Copyright (c) 2026 John Kuok -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ticker Pi 5</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="panel">
+    <p class="eyebrow">128 × 32 LED TICKER</p>
+    <h1>Ticker Pi 5</h1>
+    <p id="status" class="status">Current mode: <strong>{{ current_mode }}</strong></p>
+    <section class="mode-grid" aria-label="Display mode">
+      {% for mode in modes %}
+      <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
+        {{ mode }}
+      </button>
+      {% endfor %}
+    </section>
+    <section class="brightness">
+      <label for="brightness">Brightness <output id="brightness-value">{{ brightness }}%</output></label>
+      <input id="brightness" type="range" min="5" max="100" value="{{ brightness }}" aria-label="Brightness">
+    </section>
+    <p id="renderer" class="renderer">Checking renderer…</p>
+  </main>
+  <script>
+    /* MIT License — Copyright (c) 2026 John Kuok */
+    const status = document.getElementById('status');
+    const renderer = document.getElementById('renderer');
+    const slider = document.getElementById('brightness');
+    const brightnessValue = document.getElementById('brightness-value');
+    async function refreshStatus() {
+      const data = await fetch('/api/status').then(response => response.json());
+      status.innerHTML = `Current mode: <strong>${data.current_mode}</strong>`;
+      renderer.textContent = data.renderer_alive ? `Renderer online (PID ${data.renderer_pid})` : 'Renderer offline';
+      renderer.className = `renderer ${data.renderer_alive ? 'online' : 'offline'}`;
+      document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));
+    }
+    document.querySelectorAll('.mode-button').forEach(button => button.addEventListener('click', async () => {
+      await fetch(`/mode/${button.dataset.mode}`, {method: 'POST'});
+      refreshStatus();
+    }));
+    slider.addEventListener('input', () => brightnessValue.textContent = `${slider.value}%`);
+    slider.addEventListener('change', async () => {
+      await fetch('/brightness', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({brightness: slider.value})});
+      refreshStatus();
+    });
+    refreshStatus();
+    setInterval(refreshStatus, 10000);
+  </script>
+</body>
+</html>

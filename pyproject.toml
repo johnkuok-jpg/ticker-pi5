@@ -1,0 +1,41 @@
+# MIT License — Copyright (c) 2026 John Kuok
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ticker-pi5"
+version = "0.1.0"
+description = "Raspberry Pi 5 RGB LED matrix ticker"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "John Kuok"}]
+dependencies = [
+  "adafruit-blinka-raspberry-pi5-piomatter>=1.0.0a3",
+  "Adafruit-Blinka>=8.65.0",
+  "Pillow>=11.0.0",
+  "numpy>=2.0.0",
+  "flask>=3.0.0",
+  "gunicorn>=23.0.0",
+  "yfinance>=0.2.0",
+  "feedparser>=6.0.0",
+  "requests>=2.31.0",
+  "python-dotenv>=1.0.0",
+  "pydbus>=0.6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/johnkuok-jpg/ticker-pi5"
+Repository = "https://github.com/johnkuok-jpg/ticker-pi5"
+Issues = "https://github.com/johnkuok-jpg/ticker-pi5/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

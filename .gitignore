@@ -1,0 +1,14 @@
+# MIT License — Copyright (c) 2026 John Kuok
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.DS_Store

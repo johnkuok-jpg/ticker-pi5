@@ -1,0 +1,19 @@
+# MIT License — Copyright (c) 2026 John Kuok
+[Unit]
+Description=Ticker Pi 5 LED matrix renderer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/ticker-pi5
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/ticker-pi5/venv/bin/python -m ticker
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
