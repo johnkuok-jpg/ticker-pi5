@@ -12,3 +12,6 @@ build/
 dist/
 *.egg-info/
 .DS_Store
+
+.preview-venv/
+preview_site/

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ticker-pi5 — panel simulator</title>
+<style>
+  :root {
+    --bg: #0a0b0d;
+    --panel-body: #111318;
+    --edge: #23262e;
+    --text: #e8eaf0;
+    --dim: #8b91a0;
+    --accent: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 20px 60px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+  }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 28px; text-align: center; }
+  .sub code { background: #1a1d24; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  /* The physical panel housing */
+  .housing {
+    background: var(--panel-body);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    padding: 14px;
+    box-shadow: 0 20px 60px -12px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  .housing-inner {
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+    display: block;
+    line-height: 0;
+  }
+  canvas { display: block; image-rendering: pixelated; }
+  .seam {
+    text-align: center;
+    color: #3a3f4a;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    margin-top: 9px;
+    text-transform: uppercase;
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    margin: 26px 0 0;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  button {
+    background: #191c23;
+    color: var(--text);
+    border: 1px solid var(--edge);
+    border-radius: 7px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .13s, border-color .13s;
+    font-family: inherit;
+  }
+  button:hover { background: #22262f; }
+  button[aria-pressed="true"] {
+    background: #1b3a29;
+    border-color: #2f6b48;
+    color: var(--accent);
+  }
+  button:disabled { opacity: .4; cursor: default; }
+
+  .sliders {
+    display: flex;
+    gap: 26px;
+    margin-top: 22px;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+  }
+  label.slider {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  input[type=range] { width: 110px; accent-color: var(--accent); }
+  .val { color: var(--text); min-width: 34px; font-variant-numeric: tabular-nums; font-size: 12px; }
+
+  .meta {
+    margin-top: 26px;
+    color: var(--dim);
+    font-size: 12px;
+    text-align: center;
+    max-width: 560px;
+  }
+  .meta b { color: var(--text); font-weight: 500; }
+  .warn {
+    margin-top: 18px;
+    padding: 10px 14px;
+    background: #1e1a10;
+    border: 1px solid #3d3418;
+    border-radius: 7px;
+    color: #d4b871;
+    font-size: 12px;
+    max-width: 560px;
+  }
+</style>
+</head>
+<body>
+  <h1>ticker-pi5 panel simulator</h1>
+  <p class="sub">Two chained 64&times;32 P2.5 panels &rarr; <code>128&times;32</code>. Frames rendered by the real mode code.</p>
+
+  <div class="housing">
+    <div class="housing-inner"><canvas id="screen"></canvas></div>
+    <div class="seam" id="seam">panel a &nbsp;|&nbsp; panel b</div>
+  </div>
+
+  <div class="controls" id="modes"></div>
+
+  <div class="sliders">
+    <label class="slider">Brightness
+      <input type="range" id="brightness" min="5" max="100" value="35">
+      <span class="val" id="brightnessVal">35%</span>
+    </label>
+    <label class="slider">Zoom
+      <input type="range" id="zoom" min="3" max="12" value="7">
+      <span class="val" id="zoomVal">7&times;</span>
+    </label>
+    <label class="slider">Glow
+      <input type="range" id="glow" min="0" max="100" value="55">
+      <span class="val" id="glowVal">55%</span>
+    </label>
+    <label class="slider" style="gap:6px">
+      <input type="checkbox" id="grid" checked style="accent-color:var(--accent)"> pixel grid
+    </label>
+  </div>
+
+  <p class="meta" id="meta"></p>
+  <div class="warn" id="warn" hidden></div>
+
+<script>
+const MANIFEST_URL = "manifest.json";
+let manifest = null;
+let sheets = {};
+let current = null;
+let frame = 0;
+let lastStep = 0;
+
+const cvs = document.getElementById("screen");
+const ctx = cvs.getContext("2d", { alpha: false });
+
+const els = {
+  modes: document.getElementById("modes"),
+  brightness: document.getElementById("brightness"),
+  brightnessVal: document.getElementById("brightnessVal"),
+  zoom: document.getElementById("zoom"),
+  zoomVal: document.getElementById("zoomVal"),
+  glow: document.getElementById("glow"),
+  glowVal: document.getElementById("glowVal"),
+  grid: document.getElementById("grid"),
+  meta: document.getElementById("meta"),
+  warn: document.getElementById("warn"),
+  seam: document.getElementById("seam"),
+};
+
+// Offscreen 1:1 buffer we read true pixel values from.
+const src = document.createElement("canvas");
+const srcCtx = src.getContext("2d", { willReadFrequently: true });
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("failed to load " + url));
+    img.src = url;
+  });
+}
+
+async function init() {
+  manifest = await (await fetch(MANIFEST_URL)).json();
+  const W = manifest.width, H = manifest.height;
+  src.width = W; src.height = H;
+
+  els.brightness.value = Math.round((manifest.brightness ?? 0.35) * 100);
+
+  const names = Object.keys(manifest.modes);
+  for (const name of names) {
+    sheets[name] = await loadImage(manifest.modes[name].sheet);
+    const btn = document.createElement("button");
+    btn.textContent = name;
+    btn.setAttribute("aria-pressed", "false");
+    btn.onclick = () => setMode(name);
+    btn.dataset.mode = name;
+    els.modes.appendChild(btn);
+  }
+  resize();
+  setMode(names.includes("stocks") ? "stocks" : names[0]);
+  requestAnimationFrame(loop);
+}
+
+function setMode(name) {
+  current = name;
+  frame = 0;
+  for (const btn of els.modes.children) {
+    btn.setAttribute("aria-pressed", String(btn.dataset.mode === name));
+  }
+  const info = manifest.modes[name];
+  const staticNote = info.frames <= 2 ? " (static screen — no scrolling)" : "";
+  els.meta.innerHTML =
+    `<b>${name}</b> &middot; ${info.frames} frame loop @ ${manifest.fps}fps${staticNote}` +
+    `<br>tickers: <b>${(manifest.symbols || []).join(", ")}</b>`;
+}
+
+function resize() {
+  const scale = Number(els.zoom.value);
+  cvs.width = manifest.width * scale;
+  cvs.height = manifest.height * scale;
+  els.seam.style.width = cvs.width + "px";
+}
+
+function loop(now) {
+  const interval = 1000 / manifest.fps;
+  if (now - lastStep >= interval) {
+    lastStep = now;
+    draw();
+    const total = manifest.modes[current].frames;
+    frame = (frame + 1) % total;
+  }
+  requestAnimationFrame(loop);
+}
+
+function draw() {
+  const W = manifest.width, H = manifest.height;
+  const scale = Number(els.zoom.value);
+  const brightness = Number(els.brightness.value) / 100;
+  const glow = Number(els.glow.value) / 100;
+  const showGrid = els.grid.checked;
+
+  // Pull the current frame out of the vertical spritesheet at 1:1.
+  srcCtx.clearRect(0, 0, W, H);
+  srcCtx.drawImage(sheets[current], 0, frame * H, W, H, 0, 0, W, H);
+  const data = srcCtx.getImageData(0, 0, W, H).data;
+
+  // Repaint the scaled LED view.
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+  // Each lit pixel becomes a rounded LED dot with optional bloom.
+  const pad = showGrid ? Math.max(1, Math.floor(scale * 0.16)) : 0;
+  const dot = scale - pad;
+  const radius = dot / 2;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      let r = data[i], g = data[i + 1], b = data[i + 2];
+      if (r === 0 && g === 0 && b === 0) {
+        if (showGrid) {
+          // Unlit LEDs are faintly visible on a real panel.
+          ctx.fillStyle = "#0d0d10";
+          ctx.beginPath();
+          ctx.arc(x * scale + scale / 2, y * scale + scale / 2, radius * 0.72, 0, 6.2832);
+          ctx.fill();
+        }
+        continue;
+      }
+      r = Math.min(255, r * brightness * 1.9);
+      g = Math.min(255, g * brightness * 1.9);
+      b = Math.min(255, b * brightness * 1.9);
+      const cx = x * scale + scale / 2;
+      const cy = y * scale + scale / 2;
+
+      if (glow > 0) {
+        ctx.shadowColor = `rgba(${r|0},${g|0},${b|0},${0.85 * glow})`;
+        ctx.shadowBlur = scale * 0.9 * glow;
+      } else {
+        ctx.shadowBlur = 0;
+      }
+      ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, 6.2832);
+      ctx.fill();
+    }
+  }
+  ctx.shadowBlur = 0;
+
+  // Faint seam between the two chained panels, like the real bezels.
+  ctx.fillStyle = "rgba(255,255,255,0.045)";
+  ctx.fillRect(Math.floor(cvs.width / 2) - 1, 0, 2, cvs.height);
+}
+
+els.zoom.oninput = () => { els.zoomVal.textContent = els.zoom.value + "×"; resize(); draw(); };
+els.brightness.oninput = () => { els.brightnessVal.textContent = els.brightness.value + "%"; draw(); };
+els.glow.oninput = () => { els.glowVal.textContent = els.glow.value + "%"; draw(); };
+els.grid.onchange = draw;
+
+init().catch(err => {
+  els.warn.hidden = false;
+  els.warn.textContent = "Could not load the preview: " + err.message;
+});
+</script>
+</body>
+</html>

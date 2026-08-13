@@ -37,8 +37,8 @@ class Config:
     brightness: float = 0.35
     fps: int = 30
     symbols: tuple[str, ...] = ("AAPL", "NVDA", "SPY", "BTC-USD")
-    news_feed_url: str = "https://feeds.apnews.com/apf-topnews"
-    news_source_name: str = "AP TOP NEWS"
+    news_feed_url: str = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
+    news_source_name: str = "CNBC MARKETS"
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -109,8 +109,8 @@ def load_config(env_file: Path | None = None) -> Config:
         brightness=float(os.getenv("TICKER_BRIGHTNESS", "0.35")),
         fps=max(1, int(os.getenv("TICKER_FPS", "30"))),
         symbols=symbols,
-        news_feed_url=os.getenv("NEWS_FEED_URL", "https://feeds.apnews.com/apf-topnews"),
-        news_source_name=os.getenv("NEWS_SOURCE_NAME", "AP TOP NEWS"),
+        news_feed_url=os.getenv("NEWS_FEED_URL", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
+        news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(
