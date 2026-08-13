@@ -291,6 +291,55 @@ for bad in ({}, {"open": "0", "last": "0"}, {"open": "abc", "last": "1"},
     render(m)
     check(f"bad payload {bad} ignored", m.quotes, [])
 
+
+# -- blinking clock colon ---------------------------------------------------
+
+from ticker.modes.weather import WeatherMode  # noqa: E402
+
+blink_cfg = frozen_market = Config(width=128, height=32, fps=30, timezone="America/New_York")
+blinker = MarketMode(blink_cfg)
+check("colon shown at tick 0", ":" in blinker.clock_text(0), True)
+check("colon shown at tick 14", ":" in blinker.clock_text(14), True)
+check("colon hidden at tick 15", ":" in blinker.clock_text(15), False)
+check("colon hidden at tick 29", ":" in blinker.clock_text(29), False)
+check("colon back at tick 30", ":" in blinker.clock_text(30), True)
+check("colon hidden at tick 45", ":" in blinker.clock_text(45), False)
+
+# Blanking the colon must not change the string length, or the digits shuffle.
+check("blink keeps length",
+      len(blinker.clock_text(0)), len(blinker.clock_text(15)))
+
+# One full on/off cycle per second at any usable frame rate. At 1 fps a
+# one-second blink is below the frame rate, so the fastest legal blink is one
+# frame on, one frame off, and that is asserted separately below.
+for fps in (2, 10, 24, 30, 60):
+    cfg = Config(width=128, height=32, fps=fps, timezone="America/New_York")
+    mode = MarketMode(cfg)
+    states = [":" in mode.clock_text(tick) for tick in range(fps * 4)]
+    flips = sum(1 for a, b in zip(states, states[1:]) if a != b)
+    # Four seconds of frames should hold four on-phases, so 7 or 8 transitions.
+    check_true(f"fps {fps} blinks about once a second", 6 <= flips <= 8)
+
+slow = MarketMode(Config(width=128, height=32, fps=1, timezone="America/New_York"))
+check("1 fps alternates every frame",
+      [":" in slow.clock_text(tick) for tick in range(4)], [True, False, True, False])
+
+# The blink has to reach the panel, not just the string.
+def lit_pixels(mode_obj, tick):
+    canvas = Canvas(128, 32)
+    mode_obj.render(canvas, tick)
+    return sum(1 for px in canvas.image_buffer.getdata() if any(px))
+
+
+on, off = lit_pixels(blinker, 0), lit_pixels(blinker, 15)
+check_true("market colon pixels disappear", on > off)
+
+# Weather with no coordinates still draws the clock, offline and deterministic.
+weather = WeatherMode(Config(width=128, height=32, fps=30, timezone="America/New_York"))
+w_on, w_off = lit_pixels(weather, 0), lit_pixels(weather, 15)
+check_true("weather colon pixels disappear", w_on > w_off)
+check("weather colon delta is two dots", w_on - w_off, 2)
+
 # -- registry ---------------------------------------------------------------
 
 check("market in valid modes", "market" in VALID_MODES, True)

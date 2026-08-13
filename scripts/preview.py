@@ -38,11 +38,14 @@ MAX_FRAMES = 900  # 30 seconds at 30fps
 # time defeats hash-based detection, which would see frame 2 repeat frame 1 and
 # declare the loop closed after two frames.
 PREVIEW_SCREENS: dict[str, dict[str, object]] = {
-    "weather": {"mode": "weather"},
+    # Four frames of 15 ticks played at 2 fps is a two-second loop that runs in
+    # real time, so the clock colon blinks here at the same 1 Hz it does on the
+    # panel. Hash detection alone would stop at two frames and freeze it lit.
+    "weather": {"mode": "weather", "frames": 4, "fps": 2, "stride": 15},
     "stocks": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
     "stocks-scroll": {"mode": "stocks", "layout": "scroll"},
     "news": {"mode": "news"},
-    "market": {"mode": "market"},
+    "market": {"mode": "market", "frames": 4, "fps": 2, "stride": 15},
     "crypto": {"mode": "crypto"},
     # The detail field rotates every few seconds, so a single frame would hide
     # the gate and baggage readouts. Walk one full rotation instead.

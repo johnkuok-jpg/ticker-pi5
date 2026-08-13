@@ -42,7 +42,7 @@ class MarketMode(Mode):
 
         canvas.text(0, 0, state.label, state.color, LARGE)
 
-        clock = self.config.clock_text()
+        clock = self.clock_text(tick)
         clock_width = canvas.text_width(clock, MEDIUM)
         label_end = canvas.text_width(state.label, LARGE)
         if label_end + 4 + clock_width <= canvas.width:

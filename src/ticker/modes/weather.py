@@ -122,7 +122,7 @@ class WeatherMode(Mode):
             self._refresh()
         canvas.clear()
 
-        clock = self.config.clock_text()
+        clock = self.clock_text(tick)
 
         if not self.config.weather_lat or not self.config.weather_lon:
             canvas.text_centered(6, clock, (255, 210, 50), SMALL)
