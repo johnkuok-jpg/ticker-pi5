@@ -14,4 +14,5 @@ h1 { margin: 8px 0 4px; font-size: 2rem; }
 .brightness { margin-top: 26px; padding-top: 20px; border-top: 1px solid #2a3449; }
 .brightness label { display: flex; justify-content: space-between; color: #cbd5e1; font-weight: 700; }.brightness output { color: #78b6ff; }
 input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
+.schedule { margin: 10px 0 0; min-height: 1.1em; color: #8b97ad; font-size: .82rem; }
 .renderer { margin: 20px 0 0; font-size: .88rem; }.online { color: #57df96; }.offline { color: #ff8f87; }

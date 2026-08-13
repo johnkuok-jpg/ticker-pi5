@@ -50,6 +50,14 @@ def run() -> None:
     tick = 0
     check_interval = max(1, config.fps)
 
+    # Brightness is resolved once a second, not every frame: it reads state files
+    # and walks the schedule, and no schedule step or slider drag needs 30Hz.
+    target_brightness = config.current_brightness()
+    brightness = target_brightness
+    # Ramp the full 0-1 range over about a second and a half. A scheduled drop
+    # from 75% to off is a startling flash to black when applied in one frame.
+    ramp = 1.0 / (1.5 * config.fps)
+
     try:
         while True:
             started = time.monotonic()
@@ -58,6 +66,7 @@ def run() -> None:
                 if requested_name != current_name:
                     current_name = requested_name
                     current_mode = build_mode(current_name, config)
+                target_brightness = config.current_brightness()
             canvas.clear()
             try:
                 current_mode.render(canvas, tick)
@@ -67,8 +76,9 @@ def run() -> None:
                 canvas.text(1, 21, str(error)[:24], (140, 140, 140), 7)
             # Scale pixels here rather than relying on an undocumented driver
             # brightness property; this also makes the web slider hardware-neutral.
+            brightness += max(-ramp, min(ramp, target_brightness - brightness))
             pixels = np.asarray(canvas.image_buffer, dtype=np.float32)
-            framebuffer[:] = (pixels * config.current_brightness()).astype(np.uint8)
+            framebuffer[:] = (pixels * brightness).astype(np.uint8)
             matrix.show()
             tick += 1
             time.sleep(max(0.0, (1 / config.fps) - (time.monotonic() - started)))

@@ -22,6 +22,7 @@
     <section class="brightness">
       <label for="brightness">Brightness <output id="brightness-value">{{ brightness }}%</output></label>
       <input id="brightness" type="range" min="5" max="100" value="{{ brightness }}" aria-label="Brightness">
+      <p id="schedule" class="schedule">{{ schedule_note }}</p>
     </section>
     <p id="renderer" class="renderer">Checking renderer…</p>
   </main>
@@ -31,9 +32,18 @@
     const renderer = document.getElementById('renderer');
     const slider = document.getElementById('brightness');
     const brightnessValue = document.getElementById('brightness-value');
+    const schedule = document.getElementById('schedule');
+    /* Set while the user is dragging, so a poll landing mid-drag cannot yank the
+       slider out from under their thumb. */
+    let dragging = false;
     async function refreshStatus() {
       const data = await fetch('/api/status').then(response => response.json());
       status.innerHTML = `Current mode: <strong>${data.current_mode}</strong>`;
+      schedule.textContent = data.schedule_note || '';
+      if (!dragging && typeof data.brightness === 'number') {
+        slider.value = data.brightness;
+        brightnessValue.textContent = `${data.brightness}%`;
+      }
       renderer.textContent = data.renderer_alive ? `Renderer online (PID ${data.renderer_pid})` : 'Renderer offline';
       renderer.className = `renderer ${data.renderer_alive ? 'online' : 'offline'}`;
       document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));
@@ -42,9 +52,13 @@
       await fetch(`/mode/${button.dataset.mode}`, {method: 'POST'});
       refreshStatus();
     }));
-    slider.addEventListener('input', () => brightnessValue.textContent = `${slider.value}%`);
+    slider.addEventListener('input', () => {
+      dragging = true;
+      brightnessValue.textContent = `${slider.value}%`;
+    });
     slider.addEventListener('change', async () => {
       await fetch('/brightness', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({brightness: slider.value})});
+      dragging = false;
       refreshStatus();
     });
     refreshStatus();

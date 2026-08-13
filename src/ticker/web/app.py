@@ -20,6 +20,26 @@ def _renderer_status(pid_file: Path) -> tuple[int | None, bool]:
         return None, False
 
 
+def _describe_schedule(config) -> str:  # noqa: ANN001 - Config, avoiding an import cycle
+    """One line telling the user what the schedule is doing, or '' if unscheduled.
+
+    The schedule is otherwise invisible: the panel simply dims on its own and the
+    slider appears to snap back later. Stating the next step makes both explainable.
+    """
+    upcoming = config.next_brightness_change()
+    if upcoming is None:
+        return ""
+    level, when = upcoming
+    label = "off" if level <= 0 else f"{round(level * 100)}%"
+    clock = when.strftime("%-I:%M %p").lower()
+    day = "" if when.date() == config.now().date() else when.strftime(" %a")
+    manual = config._manual_brightness()
+    active = config.scheduled_brightness()
+    overridden = bool(manual and active and manual[1] > active[1].timestamp())
+    prefix = "Set by hand, schedule resumes" if overridden else "Scheduled"
+    return f"{prefix}: {label} at {clock}{day}"
+
+
 def create_app() -> Flask:
     """Build the web app without any in-process dependency on the renderer."""
     app = Flask(__name__)
@@ -32,6 +52,7 @@ def create_app() -> Flask:
             modes=VALID_MODES,
             current_mode=config.current_mode(),
             brightness=round(config.current_brightness() * 100),
+            schedule_note=_describe_schedule(config),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -56,7 +77,13 @@ def create_app() -> Flask:
     def status():  # type: ignore[no-untyped-def]
         config = load_config()
         pid, alive = _renderer_status(config.pid_file)
-        return jsonify(current_mode=config.current_mode(), renderer_pid=pid, renderer_alive=alive)
+        return jsonify(
+            current_mode=config.current_mode(),
+            renderer_pid=pid,
+            renderer_alive=alive,
+            brightness=round(config.current_brightness() * 100),
+            schedule_note=_describe_schedule(config),
+        )
 
     return app
 
