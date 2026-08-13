@@ -124,10 +124,47 @@ class Canvas:
     def text_width(self, text: str, font_size: int = SMALL) -> int:
         return int(self._draw.textlength(sanitize(text), font=load_font(font_size)))
 
+    def text_bold(
+        self,
+        x: int,
+        y: int,
+        text: str,
+        color: Color,
+        font_size: int = SMALL,
+        weight: int = 1,
+    ) -> None:
+        """Draw *text* with thickened strokes.
+
+        Spleen ships no bold cut, so each glyph is stamped repeatedly one pixel
+        to the right. On an LED panel this genuinely fattens the stroke instead
+        of just darkening it, because there are no partial-intensity pixels to
+        blend.
+
+        Characters are placed one at a time with ``weight`` extra pixels of
+        tracking. Smearing a whole string in place would push each glyph into
+        its neighbour and close up the gaps between digits, turning "105" into
+        one solid block.
+        """
+        cleaned = sanitize(text)
+        font = load_font(font_size)
+        advance = char_width(font_size) + weight
+        for index, character in enumerate(cleaned):
+            cx = x + index * advance
+            for dx in range(weight + 1):
+                self._draw.text((cx + dx, y), character, font=font, fill=color)
+
+    def text_bold_width(self, text: str, font_size: int = SMALL, weight: int = 1) -> int:
+        """Width of :meth:`text_bold`, matching its per-character advance."""
+        return len(sanitize(text)) * (char_width(font_size) + weight)
+
     def text_centered(self, y: int, text: str, color: Color, font_size: int = SMALL) -> None:
         """Draw *text* horizontally centred on the panel."""
         x = max(0, (self.width - self.text_width(text, font_size)) // 2)
         self.text(x, y, text, color, font_size)
+
+    def max_chars_in(self, width: int, font_size: int = SMALL) -> int:
+        """How many characters fit in a *width*-pixel column."""
+        return max_chars(width, font_size)
 
     def fit(self, text: str, width: int | None = None, font_size: int = SMALL) -> str:
         """Truncate *text* to what actually fits, so nothing is half-drawn."""
@@ -158,6 +195,14 @@ class Canvas:
         """Blit an image, retaining alpha when a logo supplies one."""
         image = pil_image.convert("RGBA")
         self.image_buffer.paste(image, (x, y), image)
+
+    def sprite(self, x: int, y: int, rows: list[str], palette: dict[str, Color]) -> None:
+        """Plot a pixel-art glyph; '.' cells are left dark."""
+        for row_index, row in enumerate(rows):
+            for col_index, key in enumerate(row):
+                color = palette.get(key)
+                if color is not None:
+                    self.pixel(x + col_index, y + row_index, color)
 
     def pixel(self, x: int, y: int, color: Color) -> None:
         if 0 <= x < self.width and 0 <= y < self.height:
