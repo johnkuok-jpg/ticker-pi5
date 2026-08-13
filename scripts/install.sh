@@ -14,10 +14,10 @@ fi
 
 cd "$TARGET"
 sudo apt update
-sudo apt install -y python3-venv python3-dev build-essential libcairo2-dev libgirepository1.0-dev pkg-config git raspotify python3-gi
+sudo apt install -y python3-venv python3-dev build-essential pkg-config git
 
 if [[ ! -d venv ]]; then
-  # pydbus uses the distro-provided GI bindings, so make them visible in the venv.
+  # PioMatter needs the distro-provided GPIO bindings, so keep system packages visible.
   python3 -m venv --system-site-packages venv
 fi
 venv/bin/python -m pip install --upgrade pip

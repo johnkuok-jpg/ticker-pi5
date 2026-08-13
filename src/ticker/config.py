@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "spotify")
+VALID_MODES = ("stocks", "news", "weather", "flights")
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -126,7 +126,6 @@ class Config:
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
     timezone: str = ""
     clock_24h: bool = False
-    raspotify_log_path: Path = Path("/var/log/raspotify/raspotify.log")
     state_dir: Path = Path.home() / ".ticker"
 
     def now(self):  # noqa: ANN201 - datetime, kept loose to avoid a module-level import cycle
@@ -334,6 +333,5 @@ def load_config(env_file: Path | None = None) -> Config:
         ),
         timezone=os.getenv("TICKER_TIMEZONE", ""),
         clock_24h=os.getenv("TICKER_CLOCK_24H", "false").strip().lower() in {"1", "true", "yes"},
-        raspotify_log_path=Path(os.getenv("RASPOTIFY_LOG_PATH", "/var/log/raspotify/raspotify.log")),
         state_dir=_first_writable_state_dir(),
     )

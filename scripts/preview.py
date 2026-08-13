@@ -53,7 +53,6 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
         "stride": 60,
         "live_flight": True,
     },
-    "spotify": {"mode": "spotify"},
 }
 
 

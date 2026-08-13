@@ -22,7 +22,6 @@ dependencies = [
   "feedparser>=6.0.0",
   "requests>=2.31.0",
   "python-dotenv>=1.0.0",
-  "pydbus>=0.6.0",
 ]
 
 [project.urls]

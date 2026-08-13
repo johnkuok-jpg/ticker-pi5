@@ -36,7 +36,7 @@ Read the script before piping it to `bash`; it installs system packages, clones 
 git clone https://github.com/johnkuok-jpg/ticker-pi5.git /home/pi/ticker-pi5
 cd /home/pi/ticker-pi5
 sudo apt update
-sudo apt install -y python3-venv python3-dev build-essential libcairo2-dev libgirepository1.0-dev pkg-config git raspotify python3-gi
+sudo apt install -y python3-venv python3-dev build-essential pkg-config git
 python3 -m venv --system-site-packages venv
 venv/bin/python -m pip install --upgrade pip
 venv/bin/python -m pip install -r requirements.txt
@@ -48,7 +48,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ticker ticker-web
 ```
 
-Open `http://ticker.local:8080` from a phone on the same network. The page selects `stocks`, `news`, `weather`, or `spotify` by writing `/var/lib/ticker/current_mode`. When that directory cannot be written, the program uses `~/.ticker/current_mode` instead.
+Open `http://ticker.local:8080` from a phone on the same network. The page selects `stocks`, `news`, `weather`, or `flights` by writing `/var/lib/ticker/current_mode`. When that directory cannot be written, the program uses `~/.ticker/current_mode` instead.
 
 ## Configuration
 
@@ -66,7 +66,6 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 | `NEWS_SOURCE_NAME` | Dim prefix shown above news headlines. |
 | `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast. Required by weather mode. |
 | `WEATHER_USER_AGENT` | NWS-compliant identifier sent with its requests. Leave the supplied value unless you host a fork. |
-| `RASPOTIFY_LOG_PATH` | Optional raspotify log fallback path when MPRIS is unavailable. |
 
 After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 
@@ -75,7 +74,7 @@ After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 - **stocks** — cached Yahoo Finance prices and percentage change; green is up and red is down.
 - **news** — RSS headlines refresh every five minutes and scroll continuously.
 - **weather** — NWS point + grid forecast API, cached for 10 minutes; shows temperature, condition, high/low, and wind.
-- **spotify** — local raspotify now-playing data from MPRIS (`org.mpris.MediaPlayer2.spotifyd`) with a log-file fallback.
+- **flights** — tracks one flight number: arrival time, delay, terminal, gate and baggage carousel, with a progress bar and airline tile. Schedule data comes from Flightradar24's web endpoints; live ADS-B positions are the fallback when no schedule is published.
 
 ### Add a mode
 

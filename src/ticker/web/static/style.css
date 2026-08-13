@@ -10,7 +10,7 @@ h1 { margin: 8px 0 4px; font-size: 2rem; }
 .mode-button { min-height: 72px; border: 2px solid transparent; border-radius: 14px; color: #fff; font-size: 1rem; font-weight: 800; text-transform: capitalize; cursor: pointer; transition: transform .15s, border-color .15s, filter .15s; }
 .mode-button:active { transform: scale(.97); }
 .mode-button.active { border-color: #fff; filter: brightness(1.2); box-shadow: 0 0 0 3px #ffffff22; }
-.mode-stocks { background: #087a4b; }.mode-news { background: #2b61c9; }.mode-weather { background: #b66e08; }.mode-flights { background: #1f6f8b; }.mode-spotify { background: #168840; }
+.mode-stocks { background: #087a4b; }.mode-news { background: #2b61c9; }.mode-weather { background: #b66e08; }.mode-flights { background: #1f6f8b; }
 .brightness { margin-top: 26px; padding-top: 20px; border-top: 1px solid #2a3449; }
 .brightness label { display: flex; justify-content: space-between; color: #cbd5e1; font-weight: 700; }.brightness output { color: #78b6ff; }
 input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
