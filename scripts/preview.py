@@ -42,7 +42,17 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     "stocks": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
     "stocks-scroll": {"mode": "stocks", "layout": "scroll"},
     "news": {"mode": "news"},
-    "flights": {"mode": "flights", "frames": 1, "fps": 1, "live_flight": True},
+    # The detail field rotates every few seconds, so a single frame would hide
+    # the gate and baggage readouts. Walk one full rotation instead.
+    "flights": {
+        "mode": "flights",
+        # One item holds for DETAIL_ROTATE_SECONDS * config.fps == 120 ticks, so
+        # a stride of 60 gives two captured frames per item.
+        "frames": 12,
+        "fps": 2,
+        "stride": 60,
+        "live_flight": True,
+    },
     "spotify": {"mode": "spotify"},
 }
 
