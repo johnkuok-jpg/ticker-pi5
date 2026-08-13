@@ -62,6 +62,7 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 | `TICKER_BRIGHTNESS` | Default brightness fraction, from `0.05` to `1.0`. The web slider overrides it persistently. |
 | `TICKER_FPS` | Render loop target rate; default `30`. |
 | `TICKER_SYMBOLS` | Comma-separated symbols, for example `AAPL,NVDA,SPY,BTC-USD`. Quotes use Yahoo Finance and are cached for 60 seconds. |
+| `CRYPTO_SYMBOLS` | Comma-separated coins for crypto mode, quoted in USD, for example `BTC,ETH,SOL`. Up to three are shown. |
 | `NEWS_FEED_URL` | RSS/Atom feed URL; defaults to AP top news. |
 | `NEWS_SOURCE_NAME` | Dim prefix shown above news headlines. |
 | `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast. Required by weather mode. |
@@ -75,6 +76,8 @@ After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 - **news** — RSS headlines refresh every five minutes and scroll continuously.
 - **weather** — NWS point + grid forecast API, cached for 10 minutes; shows temperature, condition, high/low, and wind.
 - **flights** — tracks one flight number: arrival time, delay, terminal, gate and baggage carousel, with a progress bar and airline tile. Schedule data comes from Flightradar24's web endpoints; live ADS-B positions are the fallback when no schedule is published.
+- **market** — US market session clock: `OPEN`, `PRE`, `AFTER`, `CLOSED` or `WEEKEND`, a countdown to the next change, and a bar showing progress through the trading day. The [NYSE holiday and hours calendar](https://www.nyse.com/markets/hours-calendars) is compiled in for 2026–2027, including the 1:00 pm early closes, so it knows Thanksgiving from a Thursday. Needs no network. Past 2027 it falls back to weekday arithmetic and says `NO HOLIDAY DATA` rather than guessing — extend `HOLIDAYS` and `EARLY_CLOSES` in `src/ticker/market.py` when the NYSE publishes the next year.
+- **crypto** — 24-hour price and change for up to three coins from Coinbase's keyless public endpoint, set with `CRYPTO_SYMBOLS`. Two coins render in 6×12 type; a third drops all rows to 5×8. Something stays live on the panel when the equity market is shut.
 
 ### Add a mode
 

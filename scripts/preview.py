@@ -42,6 +42,8 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     "stocks": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
     "stocks-scroll": {"mode": "stocks", "layout": "scroll"},
     "news": {"mode": "news"},
+    "market": {"mode": "market"},
+    "crypto": {"mode": "crypto"},
     # The detail field rotates every few seconds, so a single frame would hide
     # the gate and baggage readouts. Walk one full rotation instead.
     "flights": {

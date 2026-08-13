@@ -20,12 +20,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import time as clock_time
-from zoneinfo import ZoneInfo
 
 from PIL import Image
 
-from ticker import icons
+from ticker import icons, market
 from ticker.canvas import LARGE, SMALL, Canvas
 from ticker.modes.base import Mode
 
@@ -37,12 +35,6 @@ GREEN_FILL = (10, 66, 28)
 RED_FILL = (74, 18, 18)
 GREY = (62, 72, 92)
 DIM = (96, 108, 132)
-
-MARKET_TZ = ZoneInfo("America/New_York")
-MARKET_OPEN = clock_time(9, 30)
-MARKET_CLOSE = clock_time(16, 0)
-PREMARKET_OPEN = clock_time(4, 0)
-AFTERHOURS_CLOSE = clock_time(20, 0)
 
 
 @dataclass(slots=True)
@@ -90,22 +82,12 @@ class Quote:
 def market_status(now) -> tuple[str, tuple[int, int, int]]:  # type: ignore[no-untyped-def]
     """Label and colour for the current US market session.
 
-    Weekday clock arithmetic only. Exchange holidays are not tracked, so this
-    will claim OPEN on Thanksgiving; it drives a two-pixel status bar, and
-    pulling a holiday calendar onto the Pi to colour two pixels is not a
-    trade worth making.
+    Delegates to :mod:`ticker.market`, which carries the NYSE holiday and
+    early-close calendar, so the two-pixel stripe on this screen and the market
+    clock screen can never disagree with each other.
     """
-    local = now.astimezone(MARKET_TZ)
-    if local.weekday() >= 5:
-        return "CLOSED", RED
-    current = local.time()
-    if MARKET_OPEN <= current < MARKET_CLOSE:
-        return "OPEN", GREEN
-    if PREMARKET_OPEN <= current < MARKET_OPEN:
-        return "PRE", AMBER
-    if MARKET_CLOSE <= current < AFTERHOURS_CLOSE:
-        return "AFTER", AMBER
-    return "CLOSED", RED
+    state = market.session_state(now)
+    return state.label, state.color
 
 
 def compact_price(price: float, max_chars: int) -> str:

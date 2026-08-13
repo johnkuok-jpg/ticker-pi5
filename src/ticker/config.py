@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto")
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -121,6 +121,7 @@ class Config:
     news_feed_url: str = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
     news_source_name: str = "CNBC MARKETS"
     flight_number: str = ""
+    crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -314,6 +315,11 @@ def load_config(env_file: Path | None = None) -> Config:
         for symbol in os.getenv("TICKER_SYMBOLS", "AAPL,NVDA,SPY,BTC-USD").split(",")
         if symbol.strip()
     )
+    crypto_symbols = tuple(
+        symbol.strip().upper()
+        for symbol in os.getenv("CRYPTO_SYMBOLS", "BTC,ETH").split(",")
+        if symbol.strip()
+    ) or ("BTC", "ETH")
     return Config(
         width=int(os.getenv("TICKER_WIDTH", "128")),
         height=int(os.getenv("TICKER_HEIGHT", "32")),
@@ -326,6 +332,7 @@ def load_config(env_file: Path | None = None) -> Config:
         news_feed_url=os.getenv("NEWS_FEED_URL", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
         news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
         flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
+        crypto_symbols=crypto_symbols,
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(
