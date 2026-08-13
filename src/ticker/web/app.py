@@ -112,7 +112,9 @@ def create_app() -> Flask:
         config.set_mode("bart")
         return jsonify(
             station=station,
-            station_name=bart.panel_name(station).title(),
+            # BART's own casing, not title case: .title() turns MacArthur into
+            # "Macarthur" and 12th St. into "12Th St.".
+            station_name=bart.STATION_NAMES.get(station, station),
             current_mode=config.current_mode(),
         )
 

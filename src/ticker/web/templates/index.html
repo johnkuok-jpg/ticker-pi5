@@ -13,9 +13,12 @@
     <h1>Ticker Pi 5</h1>
     <p id="status" class="status">Current mode: <strong>{{ current_mode }}</strong></p>
     <section class="mode-grid" aria-label="Display mode">
+      {# Acronyms must not be title-cased: CSS capitalize would render BART as
+         "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
-        {{ mode }}
+        {{ mode_labels.get(mode, mode) }}
       </button>
       {% endfor %}
     </section>
