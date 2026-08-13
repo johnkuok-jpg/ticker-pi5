@@ -1,16 +1,12 @@
 # MIT License — Copyright (c) 2026 John Kuok
 """Yahoo Finance-backed stock and crypto ticker mode.
 
-Three layouts are available, selected with ``STOCKS_LAYOUT``:
+Two layouts are available, selected with ``STOCKS_LAYOUT``:
 
-``board`` (default)
-    All configured symbols side by side in fixed columns, nothing moving. A
-    desk ticker is glanced at, not read, and a scrolling marquee makes the
-    answer to "where is MU" depend on when you happen to look up.
-
-``card``
-    One symbol at a time in large type with a wide intraday chart. Best when
-    you want detail and can wait a few seconds for the symbol to come round.
+``card`` (default)
+    One symbol at a time in large type with a wide intraday chart. Two rows of
+    8x16 type on a 32-pixel panel is the largest this display can carry, so it
+    is the only layout readable from across a room.
 
 ``scroll``
     The classic Times Square marquee, kept for the look of the thing.
@@ -203,52 +199,10 @@ class StocksMode(Mode):
             canvas.scroll_text(12, "MARKETS: WAITING FOR PRICES", DIM, tick * 2, SMALL)
             return
 
-        layout = self.config.stocks_layout
-        if layout == "card":
-            self._render_card(canvas, tick)
-        elif layout == "scroll":
+        if self.config.stocks_layout == "scroll":
             self._render_scroll(canvas, tick)
         else:
-            self._render_board(canvas, tick)
-
-    # -- board ---------------------------------------------------------------
-
-    def _render_board(self, canvas: Canvas, tick: int) -> None:
-        """Every symbol at once in fixed columns, with a status stripe on top."""
-        _, status_color = market_status(self.config.now())
-        # Dimmed to about half: at full brightness a full-width rule reads as a
-        # decorative border and competes with the prices for attention.
-        canvas.hline(0, tuple(channel // 2 for channel in status_color))  # type: ignore[arg-type]
-
-        count = len(self.quotes)
-        gap = 1
-        column_width = (canvas.width - gap * (count - 1)) // count
-
-        for index, quote in enumerate(self.quotes):
-            x = index * (column_width + gap)
-            if index:
-                canvas.vline(x - 1, GREY, 2, canvas.height)
-            self._draw_column(canvas, quote, x, column_width)
-
-    def _draw_column(self, canvas: Canvas, quote: Quote, x: int, width: int) -> None:
-        """One symbol in a narrow column: symbol, price, percent, sparkline.
-
-        Nothing here is bolded. Thickening a 5x8 glyph floods Spleen's slashed
-        zero solid, which makes 949.90 read as 949.98 — the price is already the
-        brightest thing on the panel and needs no further emphasis.
-        """
-        limit = canvas.max_chars_in(width - 1, SMALL)
-
-        # Spleen's 5x8 cell leaves its top row blank, so a text row at y=1 still
-        # clears the status rule at y=0. Rows are stacked 8 apart, which leaves
-        # one spare row above the sparkline.
-        canvas.text(x, 1, canvas.fit(quote.symbol, width - 7, SMALL), AMBER, SMALL)
-        canvas.sprite(x + width - 6, 3, icons.arrow_for(quote.change), icons.ARROW_PALETTE)
-        canvas.text(x, 9, compact_price(quote.price, limit), WHITE, SMALL)
-        canvas.text(x, 17, compact_percent(quote.change_percent, limit), quote.color, SMALL)
-
-        if quote.intraday:
-            canvas.area_chart(x, 26, width - 1, 6, quote.intraday, quote.color, quote.fill)
+            self._render_card(canvas, tick)
 
     # -- card ----------------------------------------------------------------
 

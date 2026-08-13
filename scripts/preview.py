@@ -38,11 +38,10 @@ MAX_FRAMES = 900  # 30 seconds at 30fps
 # time defeats hash-based detection, which would see frame 2 repeat frame 1 and
 # declare the loop closed after two frames.
 PREVIEW_SCREENS: dict[str, dict[str, object]] = {
-    "stocks-board": {"mode": "stocks", "layout": "board"},
-    "stocks-card": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
+    "weather": {"mode": "weather"},
+    "stocks": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
     "stocks-scroll": {"mode": "stocks", "layout": "scroll"},
     "news": {"mode": "news"},
-    "weather": {"mode": "weather"},
     "spotify": {"mode": "spotify"},
 }
 
