@@ -8,6 +8,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
+from ticker import bart
 from ticker.config import VALID_MODES, load_config
 
 
@@ -54,6 +55,8 @@ def create_app() -> Flask:
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
             flight=config.current_flight(),
+            stations=bart.STATIONS,
+            station=config.current_bart_station(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -91,6 +94,28 @@ def create_app() -> Flask:
             config.set_mode("flights")
         return jsonify(flight=flight, current_mode=config.current_mode())
 
+    @app.post("/bart")
+    def set_bart_station():  # type: ignore[no-untyped-def]
+        """Choose the BART station, and switch to the departures mode.
+
+        Same reasoning as the flight form: picking a station is a request to see
+        it, so the panel follows rather than waiting for a second tap.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("station", request.form.get("station", ""))
+        config = load_config()
+        try:
+            config.set_bart_station(str(requested))
+        except ValueError:
+            return jsonify(error="unknown station", station=config.current_bart_station()), 400
+        station = config.current_bart_station()
+        config.set_mode("bart")
+        return jsonify(
+            station=station,
+            station_name=bart.panel_name(station).title(),
+            current_mode=config.current_mode(),
+        )
+
     @app.get("/api/status")
     def status():  # type: ignore[no-untyped-def]
         config = load_config()
@@ -102,6 +127,7 @@ def create_app() -> Flask:
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
             flight=config.current_flight(),
+            station=config.current_bart_station(),
         )
 
     return app

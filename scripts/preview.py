@@ -47,6 +47,9 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     "news": {"mode": "news"},
     "market": {"mode": "market", "frames": 4, "fps": 2, "stride": 15},
     "crypto": {"mode": "crypto"},
+    # The BART header carries the same blinking colon as weather and market.
+    "bart": {"mode": "bart", "frames": 4, "fps": 2, "stride": 15},
+    "aqi": {"mode": "aqi"},
     # The detail field rotates every few seconds, so a single frame would hide
     # the gate and baggage readouts. Walk one full rotation instead.
     "flights": {

@@ -66,6 +66,7 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 | `NEWS_FEED_URL` | RSS/Atom feed URL; defaults to AP top news. |
 | `NEWS_SOURCE_NAME` | Dim prefix shown above news headlines. |
 | `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast. Required by weather mode. |
+| `BART_STATION` | Four-letter BART station abbreviation for the departure board, for example `EMBR`. The web app's dropdown overrides it persistently. |
 | `WEATHER_USER_AGENT` | NWS-compliant identifier sent with its requests. Leave the supplied value unless you host a fork. |
 
 After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
@@ -78,6 +79,8 @@ After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 - **flights** — tracks one flight number: arrival time, delay, terminal, gate and baggage carousel, with a progress bar and airline tile. Schedule data comes from Flightradar24's web endpoints; live ADS-B positions are the fallback when no schedule is published.
 - **market** — US market session clock: `OPEN`, `PRE`, `AFTER`, `CLOSED` or `WEEKEND`, a countdown to the next change, and a bar showing progress through the trading day. The [NYSE holiday and hours calendar](https://www.nyse.com/markets/hours-calendars) is compiled in for 2026–2027, including the 1:00 pm early closes, so it knows Thanksgiving from a Thursday. Needs no network. Past 2027 it falls back to weekday arithmetic and says `NO HOLIDAY DATA` rather than guessing — extend `HOLIDAYS` and `EARLY_CLOSES` in `src/ticker/market.py` when the NYSE publishes the next year.
 - **crypto** — 24-hour price and change for up to three coins from Coinbase's keyless public endpoint, set with `CRYPTO_SYMBOLS`. Two coins render in 6×12 type; a third drops all rows to 5×8. Something stays live on the panel when the equity market is shut.
+- **bart** — the next three trains from one station, soonest first, from [BART's public real-time ETD API](https://api.bart.gov/docs/etd/etd.aspx) (no key of your own needed). Destinations are drawn in the line colour rather than beside a colour chip, because five pixels of chip is invisible across a room. Countdowns turn amber when BART reports the train delayed, and `NOW` means the doors are open. Pick the station from the web app's dropdown or set `BART_STATION`.
+- **aqi** — current US AQI and PM2.5 for the weather coordinates from [Open-Meteo's keyless air-quality API](https://open-meteo.com/en/docs/air-quality-api), with a 24-hour trend chart whose baseline sits at 50, the Good/Moderate boundary. Colours are the EPA's own category values from the [AQI technical assistance document](https://document.airnow.gov/technical-assistance-document-for-the-reporting-of-daily-air-quailty.pdf), lifted toward white only where a category would otherwise fall below the panel's legibility floor.
 
 ### Add a mode
 

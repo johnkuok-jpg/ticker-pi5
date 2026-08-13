@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi")
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -122,6 +122,7 @@ class Config:
     news_source_name: str = "CNBC MARKETS"
     flight_number: str = ""
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
+    bart_station: str = "EMBR"
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -161,6 +162,10 @@ class Config:
     @property
     def flight_file(self) -> Path:
         return self.state_dir / "flight"
+
+    @property
+    def bart_station_file(self) -> Path:
+        return self.state_dir / "bart_station"
 
     @property
     def pid_file(self) -> Path:
@@ -278,6 +283,33 @@ class Config:
         value = "".join(str(flight).split()).upper()[:12]
         self.flight_file.write_text(f"{value}\n", encoding="utf-8")
 
+    def current_bart_station(self) -> str:
+        """Station whose departures to show: the web app's pick, otherwise .env."""
+        from ticker.bart import is_station
+
+        try:
+            chosen = self.bart_station_file.read_text(encoding="utf-8").strip().upper()
+        except OSError:
+            chosen = ""
+        if is_station(chosen):
+            return chosen
+        return self.bart_station.strip().upper()
+
+    def set_bart_station(self, station: str) -> None:
+        """Persist the chosen BART station.
+
+        Validated here, unlike the flight number: the station list is a closed
+        set of fifty known abbreviations, so a bad value is a bug rather than an
+        obscure-but-real code the panel ought to try anyway.
+        """
+        from ticker.bart import is_station
+
+        value = "".join(str(station).split()).upper()
+        if not is_station(value):
+            raise ValueError(f"Unknown BART station: {station}")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.bart_station_file.write_text(f"{value}\n", encoding="utf-8")
+
     def current_brightness(self) -> float:
         """Resolve schedule and manual override into one level.
 
@@ -333,6 +365,7 @@ def load_config(env_file: Path | None = None) -> Config:
         news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
         flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
         crypto_symbols=crypto_symbols,
+        bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

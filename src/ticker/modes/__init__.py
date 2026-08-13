@@ -2,6 +2,8 @@
 """Mode registry used by the renderer."""
 
 from ticker.config import DEFAULT_MODE, Config
+from ticker.modes.airquality import AirQualityMode
+from ticker.modes.bart import BartMode
 from ticker.modes.base import Mode
 from ticker.modes.crypto import CryptoMode
 from ticker.modes.flights import FlightsMode
@@ -17,6 +19,8 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "flights": FlightsMode,
     "market": MarketMode,
     "crypto": CryptoMode,
+    "bart": BartMode,
+    "aqi": AirQualityMode,
 }
 
 
@@ -35,4 +39,6 @@ __all__ = [
     "FlightsMode",
     "MarketMode",
     "CryptoMode",
+    "BartMode",
+    "AirQualityMode",
 ]
