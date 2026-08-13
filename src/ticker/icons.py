@@ -192,3 +192,43 @@ def for_condition(condition: str, is_daytime: bool = True) -> list[str]:
         if any(keyword in text for keyword in keywords):
             return glyph
     return SUN if is_daytime else MOON
+
+
+# --- Market direction arrows -------------------------------------------------
+#
+# Solid triangles rather than stemmed arrows: at five pixels wide a stem steals
+# rows from the head and the glyph stops reading as a direction. Three rows tall
+# so an arrow sits inside an 8-pixel text row without crowding it.
+
+ARROW_PALETTE: dict[str, Color] = {
+    "U": (40, 230, 90),  # up, green
+    "D": (255, 70, 70),  # down, red
+    "F": (255, 176, 0),  # flat, amber
+}
+
+ARROW_UP = [
+    "..U..",
+    ".UUU.",
+    "UUUUU",
+]
+
+ARROW_DOWN = [
+    "DDDDD",
+    ".DDD.",
+    "..D..",
+]
+
+ARROW_FLAT = [
+    ".....",
+    "FFFFF",
+    ".....",
+]
+
+
+def arrow_for(change: float) -> list[str]:
+    """Pick the arrow glyph for a signed change."""
+    if change > 0:
+        return ARROW_UP
+    if change < 0:
+        return ARROW_DOWN
+    return ARROW_FLAT

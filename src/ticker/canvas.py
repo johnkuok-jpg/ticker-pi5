@@ -17,6 +17,7 @@ Available sizes, chosen so useful layouts fit in 32 rows:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TypeAlias
@@ -211,6 +212,81 @@ class Canvas:
     def hline(self, y: int, color: Color, x0: int = 0, x1: int | None = None) -> None:
         """Thin horizontal rule, handy for separating rows."""
         self._draw.line((x0, y, (self.width if x1 is None else x1) - 1, y), fill=color)
+
+    def vline(self, x: int, color: Color, y0: int = 0, y1: int | None = None) -> None:
+        """Thin vertical rule, for separating side-by-side columns."""
+        self._draw.line((x, y0, x, (self.height if y1 is None else y1) - 1), fill=color)
+
+    def dotted_hline(self, y: int, color: Color, x0: int = 0, x1: int | None = None, step: int = 3) -> None:
+        """Dashed rule, used for the previous-close reference on a chart.
+
+        A solid line at this size competes with the price trace for attention;
+        lighting every *step*-th LED reads as a reference mark instead.
+        """
+        for x in range(x0, self.width if x1 is None else x1, step):
+            self.pixel(x, y, color)
+
+    def area_chart(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        values: Sequence[float],
+        line_color: Color,
+        fill_color: Color,
+        baseline: float | None = None,
+        baseline_color: Color | None = None,
+    ) -> None:
+        """Draw a filled area chart of *values* in the given box.
+
+        Filled rather than a bare polyline: at this size a one-pixel trace over
+        a long flat stretch nearly vanishes, whereas a solid block of colour
+        still reads as a shape from across a room. The topmost pixel of each
+        column is drawn brighter so the trace itself stays legible against the
+        fill.
+
+        *values* is resampled to *width* columns by bucket averaging, so a
+        78-point intraday series survives being squeezed into 40 columns
+        without the aliasing that plain index-stride sampling produces.
+
+        *baseline* (typically the previous close) is marked with a dashed rule,
+        and is included in the vertical range so a price that never crosses it
+        still shows which side of it the day has been spent on.
+        """
+        if width <= 0 or height <= 0 or len(values) == 0:
+            return
+
+        columns: list[float] = []
+        count = len(values)
+        for index in range(width):
+            start = index * count // width
+            end = max(start + 1, (index + 1) * count // width)
+            bucket = values[start:end]
+            columns.append(sum(bucket) / len(bucket))
+
+        low, high = min(columns), max(columns)
+        if baseline is not None:
+            low, high = min(low, baseline), max(high, baseline)
+        span = high - low
+        if span <= 0:
+            # A dead-flat series would otherwise divide by zero; centre it.
+            span = 1.0
+            low -= 0.5
+
+        def row_for(value: float) -> int:
+            fraction = (value - low) / span
+            return y + height - 1 - int(round(fraction * (height - 1)))
+
+        if baseline is not None and baseline_color is not None:
+            self.dotted_hline(row_for(baseline), baseline_color, x, x + width)
+
+        for index, value in enumerate(columns):
+            column_x = x + index
+            top = row_for(value)
+            for row in range(top, y + height):
+                self.pixel(column_x, row, fill_color)
+            self.pixel(column_x, top, line_color)
 
     def degree(self, x: int, y: int, color: Color, size: int = 3) -> None:
         """Draw a degree ring by hand.

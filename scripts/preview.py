@@ -15,6 +15,7 @@ import hashlib
 import json
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from PIL import Image
@@ -28,8 +29,31 @@ from ticker.modes import MODE_TYPES  # noqa: E402
 
 MAX_FRAMES = 900  # 30 seconds at 30fps
 
+# Screens the preview offers, which is not the same list as the Pi's runtime
+# modes: the stocks layouts are alternative designs for one mode, shown side by
+# side so they can be compared before one is chosen.
+#
+# ``stride`` samples every Nth tick and ``frames`` fixes the count, together
+# replacing loop detection. A layout that holds a still image for seconds at a
+# time defeats hash-based detection, which would see frame 2 repeat frame 1 and
+# declare the loop closed after two frames.
+PREVIEW_SCREENS: dict[str, dict[str, object]] = {
+    "stocks-board": {"mode": "stocks", "layout": "board"},
+    "stocks-card": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
+    "stocks-scroll": {"mode": "stocks", "layout": "scroll"},
+    "news": {"mode": "news"},
+    "weather": {"mode": "weather"},
+    "spotify": {"mode": "spotify"},
+}
 
-def render_mode_frames(name: str, config, max_frames: int = MAX_FRAMES) -> list[Image.Image]:
+
+def render_mode_frames(
+    name: str,
+    config,  # type: ignore[no-untyped-def]
+    max_frames: int = MAX_FRAMES,
+    stride: int = 1,
+    fixed_frames: int | None = None,
+) -> list[Image.Image]:
     """Render frames until the animation visibly repeats, so the loop is seamless."""
     mode = MODE_TYPES[name](config)
 
@@ -44,8 +68,10 @@ def render_mode_frames(name: str, config, max_frames: int = MAX_FRAMES) -> list[
 
     frames: list[Image.Image] = []
     seen: dict[str, int] = {}
+    limit = fixed_frames if fixed_frames is not None else max_frames
 
-    for tick in range(max_frames):
+    for index in range(limit):
+        tick = index * stride
         canvas = Canvas(config.width, config.height)
         try:
             mode.render(canvas, tick)
@@ -56,12 +82,12 @@ def render_mode_frames(name: str, config, max_frames: int = MAX_FRAMES) -> list[
         frame = canvas.image_buffer.copy()
         digest = hashlib.sha1(frame.tobytes()).hexdigest()
 
-        if digest in seen and tick > 1:
+        if fixed_frames is None and digest in seen and index > 1:
             # Frame repeated: the loop closed. Keep everything before the repeat.
             print(f"  loop closes at {len(frames)} frames")
             return frames
 
-        seen[digest] = tick
+        seen[digest] = index
         frames.append(frame)
 
     print(f"  no loop detected, using {len(frames)} frames")
@@ -82,7 +108,7 @@ def build_spritesheet(frames: list[Image.Image]) -> Image.Image:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="preview_site", help="output directory")
-    parser.add_argument("--modes", default=",".join(MODE_TYPES), help="comma-separated modes")
+    parser.add_argument("--modes", default=",".join(PREVIEW_SCREENS), help="comma-separated screens")
     args = parser.parse_args()
 
     config = load_config()
@@ -102,11 +128,23 @@ def main() -> int:
     }
 
     for name in [m.strip() for m in args.modes.split(",") if m.strip()]:
-        if name not in MODE_TYPES:
-            print(f"skipping unknown mode: {name}")
+        screen = PREVIEW_SCREENS.get(name)
+        if screen is None:
+            print(f"skipping unknown screen: {name}")
             continue
         print(f"rendering {name}...")
-        frames = render_mode_frames(name, config)
+
+        screen_config = config
+        layout = screen.get("layout")
+        if layout:
+            screen_config = replace(config, stocks_layout=str(layout))
+
+        frames = render_mode_frames(
+            str(screen["mode"]),
+            screen_config,
+            stride=int(screen.get("stride", 1)),  # type: ignore[arg-type]
+            fixed_frames=screen.get("frames"),  # type: ignore[arg-type]
+        )
         if not frames:
             continue
         sheet = build_spritesheet(frames)
@@ -114,6 +152,7 @@ def main() -> int:
         manifest["modes"][name] = {  # type: ignore[index]
             "frames": len(frames),
             "sheet": f"frames/{name}.png",
+            "fps": int(screen.get("fps", config.fps)),  # type: ignore[arg-type]
         }
 
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

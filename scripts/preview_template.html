@@ -225,7 +225,7 @@ function setMode(name) {
   const info = manifest.modes[name];
   const staticNote = info.frames <= 2 ? " (static screen — no scrolling)" : "";
   els.meta.innerHTML =
-    `<b>${name}</b> &middot; ${info.frames} frame loop @ ${manifest.fps}fps${staticNote}` +
+    `<b>${name}</b> &middot; ${info.frames} frame loop @ ${modeFps(name)}fps${staticNote}` +
     `<br>tickers: <b>${(manifest.symbols || []).join(", ")}</b>`;
 }
 
@@ -236,8 +236,14 @@ function resize() {
   els.seam.style.width = cvs.width + "px";
 }
 
+// Slow-rotating screens are sampled at a lower rate so their loop stays a
+// browser-friendly length, so playback rate is per screen, not global.
+function modeFps(name) {
+  return (manifest.modes[name] && manifest.modes[name].fps) || manifest.fps;
+}
+
 function loop(now) {
-  const interval = 1000 / manifest.fps;
+  const interval = 1000 / modeFps(current);
   if (now - lastStep >= interval) {
     lastStep = now;
     draw();
