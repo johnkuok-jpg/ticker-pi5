@@ -225,6 +225,23 @@ ARROW_FLAT = [
 ]
 
 
+# Plan view, nose to the right, so the sprite reads as travelling along a
+# left-to-right progress bar. Nine columns is the narrowest that still fits a
+# swept wing and a separate tailplane: at seven the wing and tail merge and the
+# whole thing reads as a plus sign rather than an aircraft.
+PLANE_PALETTE: dict[str, Color] = {"P": (240, 245, 255), "p": (150, 165, 195)}
+
+PLANE_RIGHT = [
+    "...P.....",
+    "...P.....",
+    "..PPP....",
+    "PPPPPPPPP",
+    "..PPPPP..",
+    "...P.....",
+    "..PPP....",
+]
+
+
 def arrow_for(change: float) -> list[str]:
     """Pick the arrow glyph for a signed change."""
     if change > 0:

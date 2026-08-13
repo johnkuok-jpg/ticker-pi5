@@ -24,6 +24,16 @@
       <input id="brightness" type="range" min="5" max="100" value="{{ brightness }}" aria-label="Brightness">
       <p id="schedule" class="schedule">{{ schedule_note }}</p>
     </section>
+    <section class="flight">
+      <label for="flight-input">Flight to track</label>
+      <form id="flight-form" class="flight-row">
+        <input id="flight-input" name="flight" type="text" value="{{ flight }}"
+               placeholder="UA889" autocapitalize="characters" autocomplete="off"
+               spellcheck="false" maxlength="12" aria-label="Flight number">
+        <button type="submit" class="flight-go">Track</button>
+      </form>
+      <p id="flight-note" class="schedule">Airline flight number, e.g. UA889 or DL38.</p>
+    </section>
     <p id="renderer" class="renderer">Checking renderer…</p>
   </main>
   <script>
@@ -33,6 +43,12 @@
     const slider = document.getElementById('brightness');
     const brightnessValue = document.getElementById('brightness-value');
     const schedule = document.getElementById('schedule');
+    const flightForm = document.getElementById('flight-form');
+    const flightInput = document.getElementById('flight-input');
+    const flightNote = document.getElementById('flight-note');
+    /* Same guard as the slider's: a poll must not overwrite a flight number the
+       user is halfway through typing. */
+    let typingFlight = false;
     /* Set while the user is dragging, so a poll landing mid-drag cannot yank the
        slider out from under their thumb. */
     let dragging = false;
@@ -44,6 +60,9 @@
         slider.value = data.brightness;
         brightnessValue.textContent = `${data.brightness}%`;
       }
+      if (!typingFlight && typeof data.flight === 'string' && data.flight !== flightInput.value) {
+        flightInput.value = data.flight;
+      }
       renderer.textContent = data.renderer_alive ? `Renderer online (PID ${data.renderer_pid})` : 'Renderer offline';
       renderer.className = `renderer ${data.renderer_alive ? 'online' : 'offline'}`;
       document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));
@@ -52,6 +71,24 @@
       await fetch(`/mode/${button.dataset.mode}`, {method: 'POST'});
       refreshStatus();
     }));
+    flightInput.addEventListener('input', () => {
+      typingFlight = true;
+      flightInput.value = flightInput.value.toUpperCase();
+    });
+    flightForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const response = await fetch('/flight', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({flight: flightInput.value})
+      });
+      const data = await response.json();
+      typingFlight = false;
+      flightNote.textContent = data.flight
+        ? `Tracking ${data.flight}. It may take a few minutes to appear if it has not pushed back.`
+        : 'Cleared. The panel will ask for a flight number.';
+      refreshStatus();
+    });
     slider.addEventListener('input', () => {
       dragging = true;
       brightnessValue.textContent = `${slider.value}%`;

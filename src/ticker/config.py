@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "spotify")
+VALID_MODES = ("stocks", "news", "weather", "flights", "spotify")
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -120,6 +120,7 @@ class Config:
     stocks_layout: str = "card"  # card | scroll
     news_feed_url: str = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
     news_source_name: str = "CNBC MARKETS"
+    flight_number: str = ""
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -156,6 +157,10 @@ class Config:
     @property
     def brightness_file(self) -> Path:
         return self.state_dir / "brightness"
+
+    @property
+    def flight_file(self) -> Path:
+        return self.state_dir / "flight"
 
     @property
     def pid_file(self) -> Path:
@@ -254,6 +259,25 @@ class Config:
         except (OSError, ValueError, IndexError):
             return None
 
+    def current_flight(self) -> str:
+        """Flight number to track: the web app's value if set, otherwise .env."""
+        try:
+            typed = self.flight_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            typed = ""
+        return typed or self.flight_number
+
+    def set_flight(self, flight: str) -> None:
+        """Persist the tracked flight number; an empty string clears it.
+
+        Only length is checked, not shape: airlines issue numbers that no tidy
+        pattern covers, and rejecting an odd-looking one here would only mean a
+        real flight the panel refuses to try.
+        """
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        value = "".join(str(flight).split()).upper()[:12]
+        self.flight_file.write_text(f"{value}\n", encoding="utf-8")
+
     def current_brightness(self) -> float:
         """Resolve schedule and manual override into one level.
 
@@ -302,6 +326,7 @@ def load_config(env_file: Path | None = None) -> Config:
         stocks_layout=os.getenv("STOCKS_LAYOUT", "card").strip().lower(),
         news_feed_url=os.getenv("NEWS_FEED_URL", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
         news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
+        flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

@@ -217,6 +217,18 @@ class Canvas:
         """Thin vertical rule, for separating side-by-side columns."""
         self._draw.line((x, y0, x, (self.height if y1 is None else y1) - 1), fill=color)
 
+    def fill_rect(self, x: int, y: int, width: int, height: int, color: Color) -> None:
+        """Solid block, clipped to the panel.
+
+        Clipping here rather than at each call site means a progress bar can be
+        asked for a width its data implies and simply stop at the edge.
+        """
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(self.width, x + width), min(self.height, y + height)
+        if x1 <= x0 or y1 <= y0:
+            return
+        self._draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=color)
+
     def dotted_hline(self, y: int, color: Color, x0: int = 0, x1: int | None = None, step: int = 3) -> None:
         """Dashed rule, used for the previous-close reference on a chart.
 

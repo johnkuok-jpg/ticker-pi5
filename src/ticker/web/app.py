@@ -53,6 +53,7 @@ def create_app() -> Flask:
             current_mode=config.current_mode(),
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
+            flight=config.current_flight(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -73,6 +74,23 @@ def create_app() -> Flask:
         config.set_brightness(requested / 100 if requested > 1 else requested)
         return jsonify(brightness=round(config.current_brightness() * 100))
 
+    @app.post("/flight")
+    def set_flight():  # type: ignore[no-untyped-def]
+        """Set the tracked flight number, and switch to the flights mode.
+
+        Typing a flight number is an unambiguous request to see that flight, so
+        the mode changes too: without this the user sets a number and nothing
+        visible happens.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("flight", request.form.get("flight", ""))
+        config = load_config()
+        config.set_flight(str(requested))
+        flight = config.current_flight()
+        if flight:
+            config.set_mode("flights")
+        return jsonify(flight=flight, current_mode=config.current_mode())
+
     @app.get("/api/status")
     def status():  # type: ignore[no-untyped-def]
         config = load_config()
@@ -83,6 +101,7 @@ def create_app() -> Flask:
             renderer_alive=alive,
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
+            flight=config.current_flight(),
         )
 
     return app

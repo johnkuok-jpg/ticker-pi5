@@ -42,8 +42,47 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     "stocks": {"mode": "stocks", "layout": "card", "stride": 15, "frames": 36, "fps": 2},
     "stocks-scroll": {"mode": "stocks", "layout": "scroll"},
     "news": {"mode": "news"},
+    "flights": {"mode": "flights", "frames": 1, "fps": 1, "live_flight": True},
     "spotify": {"mode": "spotify"},
 }
+
+
+def find_live_flight(latitude: float, longitude: float) -> str:
+    """An airline flight airborne near a point that also has a known route.
+
+    A flight number written into the preview would be a dead number within hours,
+    leaving the simulator showing NO ADS-B CONTACT forever. Picking a live one at
+    build time keeps the flights screen populated whenever the preview is rebuilt.
+    """
+    import requests
+
+    try:
+        payload = requests.get(
+            f"https://api.adsb.lol/v2/point/{latitude}/{longitude}/150", timeout=20
+        ).json()
+    except Exception as error:
+        print(f"  could not reach the live feed ({error}); leaving the flight unset")
+        return ""
+
+    for aircraft in payload.get("ac", []):
+        callsign = (aircraft.get("flight") or "").strip()
+        if not callsign or aircraft.get("alt_baro") == "ground":
+            continue
+        if not (callsign[:3].isalpha() and callsign[3:].isdigit()):
+            continue
+        if not aircraft.get("gs") or float(aircraft["gs"]) < 200:
+            continue
+        try:
+            route = requests.get(
+                f"https://api.adsbdb.com/v0/callsign/{callsign}", timeout=15
+            ).json()
+        except Exception:
+            continue
+        if isinstance(route.get("response"), dict):
+            print(f"  using live flight {callsign}")
+            return callsign
+    print("  no airborne flight with a known route nearby; leaving the flight unset")
+    return ""
 
 
 def render_mode_frames(
@@ -137,6 +176,10 @@ def main() -> int:
         layout = screen.get("layout")
         if layout:
             screen_config = replace(config, stocks_layout=str(layout))
+        if screen.get("live_flight") and not config.current_flight():
+            latitude = float(config.weather_lat or 37.7749)
+            longitude = float(config.weather_lon or -122.4194)
+            screen_config = replace(screen_config, flight_number=find_live_flight(latitude, longitude))
 
         frames = render_mode_frames(
             str(screen["mode"]),
