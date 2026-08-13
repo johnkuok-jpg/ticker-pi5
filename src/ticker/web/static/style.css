@@ -1,7 +1,11 @@
 /* MIT License — Copyright (c) 2026 John Kuok */
 :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #090b10; color: #f5f7fb; }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(circle at top, #1a263c, #090b10 60%); }
+/* Launched from the home screen the status bar is translucent and the page runs
+   edge to edge, so the notch and the home indicator would otherwise sit on top
+   of the controls. The insets are zero in a normal browser tab. */
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top, #1a263c, #090b10 60%);
+  padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
 .panel { width: min(100%, 460px); background: #121722; border: 1px solid #28334a; border-radius: 20px; padding: 28px; box-shadow: 0 20px 70px #0008; }
 .eyebrow { margin: 0; color: #8ba0c5; font-size: .72rem; font-weight: 700; letter-spacing: .14em; }
 h1 { margin: 8px 0 4px; font-size: 2rem; }
