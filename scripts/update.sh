@@ -8,6 +8,11 @@ git pull --ff-only
 venv/bin/python -m pip install --upgrade -r requirements.txt
 venv/bin/python -m pip install --editable .
 sudo cp systemd/ticker.service systemd/ticker-web.service /etc/systemd/system/
+# Keep the fleet auto-update units in sync too, so a rollout that tweaks the
+# poll interval or the updater script itself takes effect on the next tick.
+# The timer is only reloaded, not restarted: an in-flight update on this Pi
+# should finish cleanly rather than getting killed and half-applied.
+sudo cp systemd/ticker-updater.service systemd/ticker-updater.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart ticker ticker-web
 echo "ticker-pi5 updated and restarted."

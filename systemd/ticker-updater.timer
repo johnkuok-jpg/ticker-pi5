@@ -1,0 +1,33 @@
+# MIT License — Copyright (c) 2026 John Kuok
+#
+# Fires ticker-updater.service every ~5 minutes to poll GitHub for new
+# commits. Delay after boot so the network is settled before the first
+# poll; RandomizedDelaySec staggers a fleet of Pis so they do not all
+# hit GitHub in the same second (nice to GitHub, but mostly it staggers
+# the LED-panel restart flicker across a household of tickers).
+#
+# Enable with:
+#   sudo systemctl enable --now ticker-updater.timer
+#
+# Disable (freeze this Pi on its current commit) with:
+#   sudo systemctl disable --now ticker-updater.timer
+
+[Unit]
+Description=Poll GitHub for ticker-pi5 updates every 5 minutes
+Requires=ticker-updater.service
+
+[Timer]
+# 2 minutes after boot for the first poll: gives Wi-Fi, DHCP, and NTP
+# time to come up on a cold start without racing them.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Up to 60s of jitter so 5 tickers on the same LAN do not restart in
+# lockstep. A tiny stagger also means one Pi's LED flicker does not sync
+# with another's during a rollout, which reads as a smoother update.
+RandomizedDelaySec=60s
+# Missed ticks (Pi was off): fire once when the timer wakes back up
+# rather than replaying every skipped interval.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

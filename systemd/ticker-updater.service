@@ -1,0 +1,33 @@
+# MIT License — Copyright (c) 2026 John Kuok
+#
+# Fleet auto-update service. Runs scripts/auto_update.sh, which polls
+# GitHub for new commits on `main` and, if any land, applies them via
+# scripts/update.sh (pip install + systemctl restart ticker ticker-web).
+#
+# Driven by ticker-updater.timer, not by [Install]. Never enable this
+# service directly -- `sudo systemctl enable --now ticker-updater.timer`
+# is the supported way to turn on auto-updates.
+#
+# We run as root because scripts/update.sh copies unit files into
+# /etc/systemd/system and runs `systemctl restart`. If you tighten this
+# down later, split update.sh into a user-mode pull step and a root-mode
+# restart step.
+
+[Unit]
+Description=Ticker Pi 5 auto-update poller
+Wants=network-online.target
+After=network-online.target
+# Do not fight the running ticker: if a manual `update.sh` is happening
+# from a login shell, ConditionPathExists on the flock file is enough
+# for auto_update.sh's own flock to bail cleanly.
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/pi/ticker-pi5
+ExecStart=/home/pi/ticker-pi5/scripts/auto_update.sh
+# The poller should be quick; if it takes longer than 10 minutes something
+# is wrong (stuck pip, stuck git). Kill it so the next timer tick can try.
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal

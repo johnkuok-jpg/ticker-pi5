@@ -174,6 +174,45 @@ journalctl -u ticker-web -f
 /home/pi/ticker-pi5/scripts/update.sh
 ```
 
+## Fleet auto-update
+
+Running more than one ticker (birthday gifts, spares, or a friend's Pi) is
+the main reason this exists. Every install ships a `ticker-updater` systemd
+timer that polls this GitHub repo every 5 minutes and, on any new commit to
+`main`, runs `scripts/update.sh` to pull and restart the services.
+
+One repo, one branch, one push -- every online Pi in the fleet converges on
+the same code within a few minutes. Offline Pis catch up when they come back.
+
+Opt in when installing:
+
+```bash
+TICKER_AUTO_UPDATE=1 scripts/install.sh
+```
+
+Or enable it on an already-installed Pi:
+
+```bash
+sudo systemctl enable --now ticker-updater.timer
+```
+
+Watch a rollout:
+
+```bash
+journalctl -u ticker-updater.service -f
+```
+
+Freeze a Pi on its current commit (e.g. the maintainer's own bench during
+active development):
+
+```bash
+sudo systemctl disable --now ticker-updater.timer
+```
+
+Tune the poll interval by editing `systemd/ticker-updater.timer` in the
+repo -- once merged, the next auto-update run installs the new timer on
+every Pi. See `systemd/README.md` for more.
+
 ## Troubleshooting
 
 | Symptom | Checks |
