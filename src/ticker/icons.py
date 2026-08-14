@@ -249,3 +249,26 @@ def arrow_for(change: float) -> list[str]:
     if change < 0:
         return ARROW_DOWN
     return ARROW_FLAT
+
+
+# A ten-pixel train for the BART header. Not the BART logo: that is a
+# trademarked wordmark, and at seven pixels tall it would be an illegible smudge.
+# Width is what makes this read as rail rather than road -- earlier seven-pixel
+# attempts all looked like a bus, because a body that short is square. The window
+# strip and the rail line underneath do the rest of the work.
+TRAIN_PALETTE: dict[str, Color] = {
+    "B": (150, 190, 255),  # car body
+    "W": (235, 240, 250),  # windows, the brightest element
+    "D": (40, 60, 100),    # trucks under the body
+    "R": (108, 122, 148),  # rail, matched to the header text so it recedes
+}
+
+TRAIN = [
+    "..........",
+    ".BBBBBBBB.",
+    "BBBBBBBBBB",
+    "BWWBWWBWWB",
+    "BBBBBBBBBB",
+    ".D.D..D.D.",
+    "RRRRRRRRRR",
+]

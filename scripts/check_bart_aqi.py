@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("/home/user/workspace/ticker-pi5/src")))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ticker import bart
 from ticker.canvas import SMALL, Canvas
@@ -470,6 +470,60 @@ for value in (7, 29, 355):
     widths.append((value, min(columns), max(columns)))
 check("single digit is centred not flush left", widths[0][1] >= 4, str(widths))
 check("every reading stays inside the panel", all(right <= 126 for _, _, right in widths), str(widths))
+
+# -- BART header train icon -------------------------------------------------
+
+section("BART header icon")
+
+from ticker import icons  # noqa: E402
+from ticker.modes.bart import ICON_WIDTH, ICON_X, ICON_Y, TITLE_X  # noqa: E402
+
+check("train glyph is 10x7", (len(icons.TRAIN[0]), len(icons.TRAIN)) == (10, 7),
+      f"{len(icons.TRAIN[0])}x{len(icons.TRAIN)}")
+check("train rows are equal width", len({len(r) for r in icons.TRAIN}) == 1)
+check("every train pixel has a colour",
+      set("".join(icons.TRAIN)) <= set(icons.TRAIN_PALETTE) | {"."})
+check("icon fits the header row", ICON_Y + len(icons.TRAIN) <= 8,
+      f"bottom row {ICON_Y + len(icons.TRAIN) - 1}")
+check("title clears the icon", TITLE_X >= ICON_X + ICON_WIDTH + 1, f"TITLE_X={TITLE_X}")
+
+# No station name may be truncated by the icon, at either clock width. This is
+# the check that would fail if a future glyph grew wider.
+name_canvas = Canvas(128, 32)
+worst = []
+for abbr, _ in bart.STATIONS:
+    panel = bart.panel_name(abbr)
+    # Widest real clock strings: 24-hour, and 12-hour with a suffix, which is
+    # what his .env actually renders.
+    for clock in ("6:31", "12:31", "6:31 PM", "12:31 PM"):
+        room = 128 - name_canvas.text_width(clock, SMALL_FONT) - 3 - TITLE_X
+        if name_canvas.fit(panel, room, SMALL_FONT) != panel:
+            worst.append((panel, clock))
+check("no station name truncated by the icon", not worst, str(worst[:4]))
+
+# Render a real board and confirm the icon is lit, separated from the text, and
+# that nothing else strayed into the icon's columns.
+icon_canvas = Canvas(128, 32)
+board_mode = BartMode(make_config())
+board_mode.board = bart.Board(
+    station="EMBR", name="EMBARCADERO",
+    departures=(
+        bart.Departure(destination="RICHMOND", label="RICHMOND", minutes=4,
+                       color=(255, 120, 120), platform="2", direction="North",
+                       cars=8, delay_seconds=0),
+    ),
+)
+board_mode._station = "EMBR"
+board_mode._last_refresh = 1e18
+board_mode.render(icon_canvas, 0)
+pixels = icon_canvas.image_buffer.load()
+icon_cols = [x for x in range(ICON_WIDTH) if any(pixels[x, y] != (0, 0, 0) for y in range(8))]
+check("icon is actually drawn", len(icon_cols) >= 8, str(icon_cols))
+header_text_cols = [x for x in range(ICON_WIDTH, 128)
+                    if any(pixels[x, y] != (0, 0, 0) for y in range(8))]
+check("blank column between icon and title", min(header_text_cols) >= ICON_WIDTH + 1,
+      f"first text col {min(header_text_cols)}")
+check("icon stays inside its own columns", max(icon_cols) < TITLE_X, str(max(icon_cols)))
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

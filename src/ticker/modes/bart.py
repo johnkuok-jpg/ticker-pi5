@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 
-from ticker import bart
+from ticker import bart, icons
 from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
@@ -29,6 +29,14 @@ HEADER_Y = 0
 ROW_Y = (8, 16, 24)
 LABEL_X = 0
 GAP = 3
+
+# The train sits in the header's spare pixels: no station name comes close to
+# filling the row, so the mode is identifiable at a glance from across the room
+# without costing a single character. Verified against every station name.
+ICON_X = 0
+ICON_Y = 1
+ICON_WIDTH = len(icons.TRAIN[0])
+TITLE_X = ICON_WIDTH + GAP
 
 
 def _rider_message(raw: str) -> str:
@@ -113,8 +121,9 @@ class BartMode(Mode):
         clock = self.clock_text(tick)
         clock_width = canvas.text_width(clock, SMALL)
         clock_x = canvas.width - clock_width
-        title = canvas.fit(bart.panel_name(station), clock_x - GAP, SMALL)
-        canvas.text(LABEL_X, HEADER_Y, title, DIM, SMALL)
+        canvas.sprite(ICON_X, ICON_Y, icons.TRAIN, icons.TRAIN_PALETTE)
+        title = canvas.fit(bart.panel_name(station), clock_x - GAP - TITLE_X, SMALL)
+        canvas.text(TITLE_X, HEADER_Y, title, DIM, SMALL)
         canvas.text(clock_x, HEADER_Y, clock, WHITE, SMALL)
 
         if self.board is None:
