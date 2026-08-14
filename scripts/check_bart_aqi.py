@@ -476,10 +476,14 @@ check("every reading stays inside the panel", all(right <= 126 for _, _, right i
 section("BART header icon")
 
 from ticker import icons  # noqa: E402
-from ticker.modes.bart import ICON_WIDTH, ICON_X, ICON_Y, TITLE_X  # noqa: E402
+from ticker.modes.bart import GAP, ICON_WIDTH, ICON_X, ICON_Y, TITLE_X  # noqa: E402
 
-check("train glyph is 10x7", (len(icons.TRAIN[0]), len(icons.TRAIN)) == (10, 7),
+# Head on, so the sprite has to stay roughly square. Wider than this and it reads
+# squat, which is what made the old side view look like a bus.
+check("train glyph is 8x7", (len(icons.TRAIN[0]), len(icons.TRAIN)) == (8, 7),
       f"{len(icons.TRAIN[0])}x{len(icons.TRAIN)}")
+check("train glyph stays roughly square", len(icons.TRAIN[0]) <= len(icons.TRAIN) + 2,
+      f"{len(icons.TRAIN[0])} wide vs {len(icons.TRAIN)} tall")
 check("train rows are equal width", len({len(r) for r in icons.TRAIN}) == 1)
 check("every train pixel has a colour",
       set("".join(icons.TRAIN)) <= set(icons.TRAIN_PALETTE) | {"."})
@@ -525,6 +529,43 @@ check("blank column between icon and title", min(header_text_cols) >= ICON_WIDTH
       f"first text col {min(header_text_cols)}")
 check("icon stays inside its own columns", max(icon_cols) < TITLE_X, str(max(icon_cols)))
 
+# The headlights are the cue that makes this read as a train front rather than a
+# lit box, so they must exist, must be the brightest thing in the sprite, and must
+# be inset rather than sitting on the outer column where they bleed into the dark.
+lamp_cols = {x for y, row in enumerate(icons.TRAIN) for x, ch in enumerate(row) if ch == "Y"}
+check("headlights present", len(lamp_cols) == 2, str(sorted(lamp_cols)))
+check("headlights inset from the body edge",
+      lamp_cols and min(lamp_cols) > 0 and max(lamp_cols) < len(icons.TRAIN[0]) - 1,
+      str(sorted(lamp_cols)))
+check("headlights are the brightest part of the sprite",
+      _luminance(icons.TRAIN_PALETTE["Y"]) == max(_luminance(c) for c in icons.TRAIN_PALETTE.values()),
+      str({k: round(_luminance(v)) for k, v in icons.TRAIN_PALETTE.items()}))
+check("headlights sit low on the face",
+      min(y for y, row in enumerate(icons.TRAIN) if "Y" in row) >= len(icons.TRAIN) - 3,
+      str([y for y, row in enumerate(icons.TRAIN) if "Y" in row]))
+
+# The windshield has to read as a hole in the body, not as a second body panel.
+check("windshield darker than the body",
+      _luminance(icons.TRAIN_PALETTE["B"]) < _luminance(icons.TRAIN_PALETTE["W"]) - 40,
+      f'{_luminance(icons.TRAIN_PALETTE["B"]):.1f} vs {_luminance(icons.TRAIN_PALETTE["W"]):.1f}')
+
+# A mode badge must not be the loudest thing in its own header. The body sits
+# between the station name and the clock: brighter than the name it labels, dimmer
+# than the clock. Checked at the 20% night step too, where the icon is the only
+# element with a large solid area and so the one most able to dominate.
+for step, tag in ((1.0, "full"), (0.20, "20% night step")):
+    body = _luminance(tuple(round(c * step) for c in icons.TRAIN_PALETTE["W"]))
+    name_lum = _luminance(tuple(round(c * step) for c in (108, 122, 148)))
+    clock_lum = _luminance(tuple(round(c * step) for c in (235, 240, 250)))
+    check(f"icon sits between station name and clock at {tag}",
+          name_lum < body < clock_lum,
+          f"name {name_lum:.1f} < body {body:.1f} < clock {clock_lum:.1f}")
+
+# Reclaiming two columns from the old glyph has to actually reach the station
+# name, not vanish into a wider gap.
+check("narrower glyph gave the station name its columns back", TITLE_X == ICON_WIDTH + GAP,
+      f"TITLE_X={TITLE_X}, icon {ICON_WIDTH}px + gap {GAP}px")
+
 # --------------------------------------------------------------------------
 # Car count. Spelled out as "10 CAR" it is twice the width of the old "10C",
 # which eats into the destination, so the budget is checked arithmetically for
@@ -532,7 +573,7 @@ check("icon stays inside its own columns", max(icon_cols) < TITLE_X, str(max(ico
 # --------------------------------------------------------------------------
 section("BART car count")
 
-from ticker.modes.bart import CARS_GAP, CARS_TINT, GAP, LABEL_X, _cars_color  # noqa: E402
+from ticker.modes.bart import CARS_GAP, CARS_TINT, LABEL_X, _cars_color  # noqa: E402
 
 cars_canvas = Canvas(128, 32)
 CW = lambda s: cars_canvas.text_width(s, SMALL_FONT)  # noqa: E731

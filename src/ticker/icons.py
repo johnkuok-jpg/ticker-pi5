@@ -251,24 +251,37 @@ def arrow_for(change: float) -> list[str]:
     return ARROW_FLAT
 
 
-# A ten-pixel train for the BART header. Not the BART logo: that is a
+# A train for the BART header, seen head on. Not the BART logo: that is a
 # trademarked wordmark, and at seven pixels tall it would be an illegible smudge.
-# Width is what makes this read as rail rather than road -- earlier seven-pixel
-# attempts all looked like a bus, because a body that short is square. The window
-# strip and the rail line underneath do the rest of the work.
+#
+# An earlier version of this was a side view, which is the easier drawing but
+# reads as a bus. Head on changes the proportions -- a real BART car is about
+# 10ft wide and 12ft tall, so the sprite has to be roughly square rather than the
+# letterbox a side view wants, and eight columns is as wide as it can go before
+# it looks squat.
+#
+# The two headlights carry the whole read. Nothing else on this panel is a pair
+# of small amber dots low in a lit rectangle, so they are what the eye resolves
+# first, and they are inset a pixel rather than pushed to the body edge so they
+# stay legible against the dark background instead of bleeding off it. Earlier
+# attempts spent rows on a dark roof edge and a dark skirt, which just shaved a
+# 7-row sprite down to a 5-row blob; the background is the shadow instead.
+#
+# The body is silver, not white. White made the icon the brightest thing in the
+# header, which put a mode badge ahead of the station name and the clock; silver
+# sits between the two.
 TRAIN_PALETTE: dict[str, Color] = {
-    "B": (150, 190, 255),  # car body
-    "W": (235, 240, 250),  # windows, the brightest element
-    "D": (40, 60, 100),    # trucks under the body
-    "R": (108, 122, 148),  # rail, matched to the header text so it recedes
+    "W": (176, 188, 208),  # car body, BART silver
+    "B": (52, 104, 190),   # windshield, dark enough to read as a hole
+    "Y": (255, 214, 120),  # headlights
 }
 
 TRAIN = [
-    "..........",
-    ".BBBBBBBB.",
-    "BBBBBBBBBB",
-    "BWWBWWBWWB",
-    "BBBBBBBBBB",
-    ".D.D..D.D.",
-    "RRRRRRRRRR",
+    ".WWWWWW.",
+    "WWWWWWWW",
+    "WBBBBBBW",
+    "WBBBBBBW",
+    "WWWWWWWW",
+    "WYWWWWYW",
+    "WWWWWWWW",
 ]
