@@ -54,7 +54,7 @@
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "pokemon": "Pokémon", "net": "Wi-Fi"} %}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "pokemon": "Pokémon", "focus": "Focus", "net": "Wi-Fi"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         <span class="mode-dot" aria-hidden="true"></span>
@@ -179,6 +179,36 @@
         {% endfor %}
       </select>
       <p id="nametag-note" class="schedule">Names that are too long scroll left-to-right.</p>
+    </section>
+    {# Focus timer. Settings surface for the focus mode: presets, start/pause,
+       nudge, and a session label. The card mirrors the LED's countdown so a
+       phone glance can replace looking at the panel. #}
+    <section class="flight focus-card" data-for="focus">
+      <label>Focus timer</label>
+      <div id="focus-clock" class="focus-clock" aria-live="polite">
+        <span id="focus-clock-digits">{{ "%02d:00"|format(focus.duration_sec // 60) }}</span>
+        <span id="focus-clock-state" class="focus-clock-state">READY</span>
+      </div>
+      <div class="focus-presets" role="group" aria-label="Session presets">
+        {% for minutes in [15, 25, 45, 60] %}
+        <button type="button" class="focus-preset" data-minutes="{{ minutes }}">{{ minutes }}m</button>
+        {% endfor %}
+      </div>
+      <div class="focus-controls">
+        <button type="button" id="focus-primary" class="flight-go focus-primary">Start</button>
+        <button type="button" id="focus-reset" class="focus-reset">Reset</button>
+      </div>
+      <div class="focus-nudge" role="group" aria-label="Nudge time">
+        <button type="button" class="focus-nudge-btn" data-delta="-300">−5 min</button>
+        <button type="button" class="focus-nudge-btn" data-delta="300">+5 min</button>
+      </div>
+      <form id="focus-label-form" class="flight-row">
+        <input id="focus-label-input" type="text" value="{{ focus.label }}"
+               autocomplete="off" spellcheck="true" maxlength="80"
+               placeholder="Session label (optional)">
+        <button type="submit" class="flight-go">Save</button>
+      </form>
+      <p id="focus-note" class="schedule">Presets start immediately. Reset returns to idle.</p>
     </section>
     {# Spotify Now Playing. The connect button hides itself when developer
        credentials are not set on the Pi (see spotify_configured) so a
@@ -645,6 +675,122 @@
         .formatToParts(now).find(p => p.type === 'timeZoneName');
       topTime.textContent = `${h}:${m}` + (tz ? ' ' + tz.value : '');
     }
+    /* -- Focus timer -------------------------------------------------------
+       A separate 1 Hz poller keeps the countdown ticking without waiting for
+       the 10 s status refresh. The status refresh still owns preset/label
+       reconciliation for cross-device edits; this loop only redraws the big
+       digits and the state label so the phone matches the LED. */
+    const focusClock = document.getElementById('focus-clock');
+    if (focusClock) {
+      const focusDigits = document.getElementById('focus-clock-digits');
+      const focusStateLabel = document.getElementById('focus-clock-state');
+      const focusPrimary = document.getElementById('focus-primary');
+      const focusResetBtn = document.getElementById('focus-reset');
+      const focusPresets = document.querySelectorAll('.focus-preset');
+      const focusNudges = document.querySelectorAll('.focus-nudge-btn');
+      const focusLabelForm = document.getElementById('focus-label-form');
+      const focusLabelInput = document.getElementById('focus-label-input');
+      const focusNote = document.getElementById('focus-note');
+      /* Server state is the source of truth; this cache is only used to time
+         local seconds between polls so the countdown does not stutter. */
+      let focusCache = {{ focus | tojson }};
+      let focusCacheAt = Date.now() / 1000;
+      let typingLabel = false;
+      focusLabelInput.addEventListener('focus', () => { typingLabel = true; });
+      focusLabelInput.addEventListener('blur', () => { typingLabel = false; });
+
+      function focusRemaining(state, nowSec) {
+        if (state.mode === 'idle') return state.duration_sec;
+        if (state.mode === 'paused') {
+          const elapsed = state.carry_sec;
+          return Math.max(0, state.duration_sec - elapsed);
+        }
+        const elapsed = (nowSec - state.start_epoch) + state.carry_sec;
+        return Math.max(0, state.duration_sec - elapsed);
+      }
+      function focusFormat(sec) {
+        const total = Math.max(0, Math.round(sec));
+        const mm = String(Math.floor(total / 60)).padStart(2, '0');
+        const ss = String(total % 60).padStart(2, '0');
+        return `${mm}:${ss}`;
+      }
+      function focusRender() {
+        const now = Date.now() / 1000;
+        const remaining = focusRemaining(focusCache, now);
+        focusDigits.textContent = focusFormat(remaining);
+        let label = 'READY';
+        if (focusCache.mode === 'running') {
+          label = remaining <= 30 ? 'ALMOST DONE' : 'FOCUS';
+          if (remaining <= 0) label = 'DONE';
+        } else if (focusCache.mode === 'paused') {
+          label = 'PAUSED';
+        }
+        focusStateLabel.textContent = label;
+        /* The primary button is start / pause / resume by state. */
+        if (focusCache.mode === 'running') {
+          focusPrimary.textContent = 'Pause';
+          focusPrimary.dataset.action = 'pause';
+        } else if (focusCache.mode === 'paused') {
+          focusPrimary.textContent = 'Resume';
+          focusPrimary.dataset.action = 'resume';
+        } else {
+          focusPrimary.textContent = 'Start';
+          focusPrimary.dataset.action = 'start';
+        }
+      }
+      function focusApply(state) {
+        focusCache = state;
+        focusCacheAt = Date.now() / 1000;
+        if (!typingLabel && typeof state.label === 'string' && state.label !== focusLabelInput.value) {
+          focusLabelInput.value = state.label;
+        }
+        focusRender();
+      }
+      async function focusPost(path, body) {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body || {})
+        });
+        const data = await response.json();
+        if (data && data.focus) focusApply(data.focus);
+      }
+      focusPresets.forEach(btn => btn.addEventListener('click', () => {
+        const minutes = parseInt(btn.dataset.minutes || '25', 10);
+        focusPost('/focus/start', {duration_sec: minutes * 60, label: focusLabelInput.value});
+      }));
+      focusPrimary.addEventListener('click', () => {
+        const action = focusPrimary.dataset.action || 'start';
+        if (action === 'start') {
+          const minutes = (focusCache.last_preset_min || 25);
+          focusPost('/focus/start', {duration_sec: minutes * 60, label: focusLabelInput.value});
+        } else if (action === 'pause') {
+          focusPost('/focus/pause');
+        } else if (action === 'resume') {
+          focusPost('/focus/resume');
+        }
+      });
+      focusResetBtn.addEventListener('click', () => focusPost('/focus/reset'));
+      focusNudges.forEach(btn => btn.addEventListener('click', () => {
+        const delta = parseInt(btn.dataset.delta || '0', 10);
+        focusPost('/focus/nudge', {delta_sec: delta});
+      }));
+      focusLabelForm.addEventListener('submit', event => {
+        event.preventDefault();
+        focusPost('/focus/label', {label: focusLabelInput.value});
+        typingLabel = false;
+      });
+      async function focusRefresh() {
+        try {
+          const data = await fetch('/api/focus').then(r => r.json());
+          if (data && data.focus) focusApply(data.focus);
+        } catch (err) { /* transient network hiccup; next tick recovers */ }
+      }
+      focusRender();
+      setInterval(focusRender, 1000);
+      setInterval(focusRefresh, 5000);
+    }
+
     tickClock();
     setInterval(tickClock, 20000);
     refreshStatus();

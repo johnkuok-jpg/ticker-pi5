@@ -374,7 +374,8 @@ body[data-mode="stocks"]  .flight[data-for~="stocks"],
 body[data-mode="flights"] .flight[data-for~="flights"],
 body[data-mode="bart"]    .flight[data-for~="bart"],
 body[data-mode="bikes"]   .flight[data-for~="bikes"],
-body[data-mode="nametag"] .flight[data-for~="nametag"] { display: block; }
+body[data-mode="nametag"] .flight[data-for~="nametag"],
+body[data-mode="focus"]   .flight[data-for~="focus"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
@@ -799,6 +800,104 @@ body[data-mode="bikes"]   { --accent: #ff5cad; --accent-soft: rgba(255, 92, 173,
 body[data-mode="nametag"] { --accent: #e6e6e6; --accent-soft: rgba(230, 230, 230, 0.16); }
 body[data-mode="pokemon"] { --accent: #ff3b3b; --accent-soft: rgba(255, 59, 59, 0.16); }
 body[data-mode="spotify"] { --accent: #1ED760; --accent-soft: rgba(30, 215, 96, 0.16); }
+body[data-mode="focus"]   { --accent: #4eb0ff; --accent-soft: rgba(78, 176, 255, 0.16); }
+
+/* -- Focus timer card ------------------------------------------------------
+ * Big countdown mirror + preset row + start/reset row + nudge row. The card
+ * inherits the .flight border/padding from earlier, so only focus-specific
+ * bits are declared here. */
+.focus-card .focus-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 8px 0 12px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--accent);
+  text-shadow: 0 0 6px var(--accent-soft);
+}
+.focus-card .focus-clock #focus-clock-digits {
+  font-size: 46px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.focus-card .focus-clock-state {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(230, 230, 230, 0.55);
+}
+.focus-card .focus-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.focus-card .focus-preset {
+  background: transparent;
+  color: #e6e6e6;
+  border: 1px dashed rgba(230, 230, 230, 0.25);
+  border-radius: 6px;
+  padding: 10px 6px;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms, background 120ms;
+}
+.focus-card .focus-preset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.focus-card .focus-controls {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.focus-card .focus-primary {
+  /* Inherits .flight-go base (accent-fill button). */
+  font-size: 14px;
+}
+.focus-card .focus-reset {
+  background: transparent;
+  color: rgba(230, 230, 230, 0.75);
+  border: 1px solid rgba(230, 230, 230, 0.22);
+  border-radius: 6px;
+  padding: 10px;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.focus-card .focus-reset:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+.focus-card .focus-nudge {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.focus-card .focus-nudge-btn {
+  background: transparent;
+  color: rgba(230, 230, 230, 0.75);
+  border: 1px dotted rgba(230, 230, 230, 0.22);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.focus-card .focus-nudge-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 body[data-mode="net"]     { --accent: #78b6ff; --accent-soft: rgba(120, 182, 255, 0.16); }
 
 /* ----- Mobile tweaks ---------------------------------------------------- */

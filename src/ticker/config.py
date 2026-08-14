@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "net")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -670,6 +670,167 @@ class Config:
         value = max(0.05, min(1.0, float(brightness)))
         stamp = self.now().timestamp()
         self.brightness_file.write_text(f"{value:.2f} {stamp:.0f}\n", encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # Focus timer state
+    #
+    # Persisted as a single JSON blob under ``focus.json`` so the mode's
+    # state machine (idle / running / paused / done) can be updated
+    # atomically. Every field is read live on each render frame; nothing
+    # is cached, so a webapp write is visible on the LED next frame.
+    # ------------------------------------------------------------------
+
+    @property
+    def focus_file(self) -> Path:
+        return self.state_dir / "focus.json"
+
+    def _focus_defaults(self) -> dict:
+        return {
+            # "idle" | "running" | "paused"
+            # "done" is derived at render time from a running timer whose
+            # remaining seconds have gone <= 0; it is not persisted here.
+            "mode": "idle",
+            # Wall-time epoch when the current running window started. On a
+            # pause+resume we advance start_epoch so ``now - start_epoch``
+            # stays the elapsed time and the digits keep counting from where
+            # the user paused.
+            "start_epoch": 0.0,
+            # Total requested session length. When mode==idle this is the
+            # duration that Start will use if you tap it with no changes.
+            "duration_sec": 25 * 60,
+            # Elapsed carry from prior pause segments. When paused, we
+            # snapshot elapsed_at_pause into carry_sec so that on resume
+            # start_epoch is set to now() and elapsed = (now - start_epoch)
+            # + carry_sec reconstructs the true elapsed time.
+            "carry_sec": 0.0,
+            # Last selected preset in minutes (drives the idle-state chip).
+            "last_preset_min": 25,
+            # User-supplied label that scrolls under the digits.
+            "label": "",
+        }
+
+    def focus_state(self) -> dict:
+        """Read the current focus-timer state, filling in defaults on miss.
+
+        The state file is optional: a fresh Pi has never touched the focus
+        mode and returns to defaults transparently. A malformed file (from
+        a partial write during a power cut, say) also falls back to
+        defaults rather than crashing the renderer.
+        """
+        try:
+            raw = self.focus_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("focus state is not a dict")
+        except (OSError, ValueError, json.JSONDecodeError):
+            return self._focus_defaults()
+        merged = self._focus_defaults()
+        for key in merged:
+            if key in data:
+                merged[key] = data[key]
+        # Coerce types defensively.
+        try:
+            merged["start_epoch"] = float(merged["start_epoch"])
+            merged["duration_sec"] = max(60, int(merged["duration_sec"]))
+            merged["carry_sec"] = max(0.0, float(merged["carry_sec"]))
+            merged["last_preset_min"] = max(1, int(merged["last_preset_min"]))
+            merged["label"] = str(merged["label"])[:80]
+            if merged["mode"] not in {"idle", "running", "paused"}:
+                merged["mode"] = "idle"
+        except (TypeError, ValueError):
+            return self._focus_defaults()
+        return merged
+
+    def _write_focus_state(self, state: dict) -> None:
+        """Atomically write the focus state blob.
+
+        Uses a temp-file + rename so a crashed webapp mid-write can never
+        leave the file half-written. The renderer reads this file every
+        frame; a torn read would flicker the mode.
+        """
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.focus_file.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp, self.focus_file)
+
+    def focus_start(self, duration_sec: int, label: str = "") -> dict:
+        """Start a new timer. Overwrites any existing running/paused state.
+
+        Called from the webapp when the user hits Start. Also called on
+        preset taps that follow a completed session, so a user can go
+        straight from "DONE" to their next 25-minute block with one tap.
+        """
+        duration = max(60, min(int(duration_sec), 8 * 60 * 60))
+        state = self.focus_state()
+        state.update({
+            "mode": "running",
+            "start_epoch": self.now().timestamp(),
+            "duration_sec": duration,
+            "carry_sec": 0.0,
+            "last_preset_min": max(1, duration // 60),
+            "label": str(label or "")[:80],
+        })
+        self._write_focus_state(state)
+        return state
+
+    def focus_pause(self) -> dict:
+        """Pause a running timer; freeze the current elapsed into carry."""
+        state = self.focus_state()
+        if state["mode"] != "running":
+            return state
+        now = self.now().timestamp()
+        elapsed = (now - state["start_epoch"]) + state["carry_sec"]
+        state["mode"] = "paused"
+        state["carry_sec"] = max(0.0, elapsed)
+        state["start_epoch"] = now  # not used while paused, but kept fresh
+        self._write_focus_state(state)
+        return state
+
+    def focus_resume(self) -> dict:
+        """Resume a paused timer; start_epoch becomes now so elapsed picks up."""
+        state = self.focus_state()
+        if state["mode"] != "paused":
+            return state
+        state["mode"] = "running"
+        state["start_epoch"] = self.now().timestamp()
+        self._write_focus_state(state)
+        return state
+
+    def focus_reset(self) -> dict:
+        """Stop and return to idle, keeping the last preset and label."""
+        state = self.focus_state()
+        state["mode"] = "idle"
+        state["start_epoch"] = 0.0
+        state["carry_sec"] = 0.0
+        self._write_focus_state(state)
+        return state
+
+    # Alias for the renderer's self-transition when the DONE hold expires.
+    focus_reset_to_idle = focus_reset
+
+    def focus_nudge(self, delta_sec: int) -> dict:
+        """Add or subtract time from the currently running/paused timer.
+
+        Positive delta extends the current session; negative shortens. The
+        timer never goes below 60 s total (so a user can't accidentally
+        press -5 four times and produce a negative timer).
+        """
+        state = self.focus_state()
+        if state["mode"] not in {"running", "paused"}:
+            return state
+        new_duration = max(60, state["duration_sec"] + int(delta_sec))
+        state["duration_sec"] = new_duration
+        self._write_focus_state(state)
+        return state
+
+    def focus_set_label(self, label: str) -> dict:
+        state = self.focus_state()
+        state["label"] = str(label or "")[:80]
+        self._write_focus_state(state)
+        return state
+
+    def focus_last_preset_min(self) -> int:
+        return self.focus_state()["last_preset_min"]
 
 
 def load_config(env_file: Path | None = None) -> Config:

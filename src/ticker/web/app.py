@@ -131,6 +131,7 @@ def create_app() -> Flask:
             nametag_font=config.current_nametag_font(),
             spotify_configured=bool(config.spotify_client_id and config.spotify_client_secret and config.spotify_redirect_uri),
             spotify_connected=_spotify_auth(config).connected,
+            focus=config.focus_state(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -378,6 +379,71 @@ def create_app() -> Flask:
             current_mode=config.current_mode(),
         )
 
+    # -- Focus timer --------------------------------------------------------
+    #
+    # Small state-machine API. Everything writes atomically to focus.json via
+    # Config helpers; render() re-reads on every frame so a POST here is
+    # visible on the LED next frame. All routes return the fresh state so
+    # the webapp can update its own countdown without a second GET.
+
+    def _focus_response(state):  # type: ignore[no-untyped-def]
+        return jsonify(focus=state)
+
+    @app.post("/focus/start")
+    def focus_start():  # type: ignore[no-untyped-def]
+        payload = request.get_json(silent=True) or {}
+        try:
+            # Accept either seconds or minutes; UI sends seconds, but a curl
+            # user is more likely to type minutes. If both are present we
+            # trust seconds because it's the precise value.
+            if "duration_sec" in payload:
+                duration = int(payload["duration_sec"])
+            elif "duration_min" in payload:
+                duration = int(payload["duration_min"]) * 60
+            else:
+                duration = 25 * 60
+        except (TypeError, ValueError):
+            return jsonify(error="duration must be a positive integer"), 400
+        label = str(payload.get("label", "") or "")
+        config = load_config()
+        return _focus_response(config.focus_start(duration, label))
+
+    @app.post("/focus/pause")
+    def focus_pause():  # type: ignore[no-untyped-def]
+        config = load_config()
+        return _focus_response(config.focus_pause())
+
+    @app.post("/focus/resume")
+    def focus_resume():  # type: ignore[no-untyped-def]
+        config = load_config()
+        return _focus_response(config.focus_resume())
+
+    @app.post("/focus/reset")
+    def focus_reset():  # type: ignore[no-untyped-def]
+        config = load_config()
+        return _focus_response(config.focus_reset())
+
+    @app.post("/focus/nudge")
+    def focus_nudge():  # type: ignore[no-untyped-def]
+        payload = request.get_json(silent=True) or {}
+        try:
+            delta = int(payload.get("delta_sec", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="delta_sec must be an integer"), 400
+        config = load_config()
+        return _focus_response(config.focus_nudge(delta))
+
+    @app.post("/focus/label")
+    def focus_label():  # type: ignore[no-untyped-def]
+        payload = request.get_json(silent=True) or {}
+        config = load_config()
+        return _focus_response(config.focus_set_label(str(payload.get("label", "") or "")))
+
+    @app.get("/api/focus")
+    def focus_state_api():  # type: ignore[no-untyped-def]
+        config = load_config()
+        return _focus_response(config.focus_state())
+
     # -- Wi-Fi ---------------------------------------------------------------
     #
     # Kept on its own page rather than on the panel of mode buttons. It is the one
@@ -475,6 +541,7 @@ def create_app() -> Flask:
             spotify_configured=bool(config.spotify_client_id and config.spotify_client_secret and config.spotify_redirect_uri),
             spotify_connected=_spotify_auth(config).connected,
             network_notice=config.network_notice(),
+            focus=config.focus_state(),
         )
 
     # --- Spotify OAuth ------------------------------------------------
