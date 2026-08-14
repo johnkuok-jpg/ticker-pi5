@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 
-from ticker import bart, baywheels, net
+from ticker import bart, baywheels, net, spotify as spotify_client
 from ticker.config import VALID_MODES, load_config
 
 
@@ -25,6 +26,44 @@ def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     """Format an (R, G, B) tuple as an uppercase #RRGGBB string for the panel."""
     r, g, b = rgb
     return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def _spotify_auth(config) -> spotify_client.SpotifyAuth:  # noqa: ANN001 - Config, avoiding an import cycle
+    """Build a :class:`SpotifyAuth` from the current config.
+
+    Rebuilt per request rather than cached because Flask may run under a
+    threaded server and Config is cheap to construct; anything more elaborate
+    would need its own locking.
+    """
+    return spotify_client.SpotifyAuth(
+        client_id=config.spotify_client_id,
+        client_secret=config.spotify_client_secret,
+        redirect_uri=config.spotify_redirect_uri,
+        token_file=config.spotify_token_file,
+    )
+
+
+def _spotify_result_page(message: str, ok: bool) -> str:
+    """Minimal HTML shown to the user after the OAuth callback.
+
+    Inlined rather than a template because the flow lands on this page exactly
+    once per connect and there is no shared header/nav. The auto-close hint
+    only fires on success so a failing callback stays visible for reading.
+    """
+    tone = "#34C759" if ok else "#FF3C3C"
+    home_link = "<p><a href=\"/\" style=\"color:#78b6ff\">← back to the ticker</a></p>"
+    return (
+        "<!doctype html><html><head><meta name=\"viewport\" "
+        "content=\"width=device-width,initial-scale=1\">"
+        "<title>Spotify · ticker</title>"
+        "<style>body{background:#0d1117;color:#eaf1ff;font-family:system-ui,sans-serif;"
+        "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;"
+        "padding:20px;text-align:center}"
+        ".card{max-width:420px}h1{color:" + tone + ";margin:0 0 12px;font-size:1.4rem}"
+        "p{margin:12px 0;line-height:1.5}</style></head><body><div class=\"card\">"
+        "<h1>" + ("Connected" if ok else "Could not connect") + "</h1>"
+        "<p>" + message + "</p>" + home_link + "</div></body></html>"
+    )
 
 
 def _describe_schedule(config) -> str:  # noqa: ANN001 - Config, avoiding an import cycle
@@ -68,6 +107,8 @@ def create_app() -> Flask:
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),
+            spotify_configured=bool(config.spotify_client_id and config.spotify_client_secret and config.spotify_redirect_uri),
+            spotify_connected=_spotify_auth(config).connected,
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -368,8 +409,75 @@ def create_app() -> Flask:
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),
+            spotify_configured=bool(config.spotify_client_id and config.spotify_client_secret and config.spotify_redirect_uri),
+            spotify_connected=_spotify_auth(config).connected,
             network_notice=config.network_notice(),
         )
+
+    # --- Spotify OAuth ------------------------------------------------
+    #
+    # Two routes: /spotify/connect kicks off the OAuth handshake, and
+    # /spotify/callback receives Spotify's redirect. A third, /spotify/disconnect,
+    # wipes the token so the user can hand the ticker to a different person.
+    #
+    # CSRF state is stored in a short-lived file rather than a Flask session,
+    # so no SECRET_KEY setup is required. Only one user hits the Pi's webapp
+    # at a time in practice; the file is single-writer and single-reader.
+
+    @app.get("/spotify/connect")
+    def spotify_connect():  # type: ignore[no-untyped-def]
+        config = load_config()
+        auth = _spotify_auth(config)
+        if not auth.configured:
+            return jsonify(error="Spotify credentials not configured on this ticker."), 400
+        state = spotify_client.new_state_token()
+        state_path = config.state_dir / "spotify_oauth_state"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        # Store token + creation time so a leftover token from an abandoned
+        # flow does not accept a callback hours later.
+        state_path.write_text(f"{state}\n{int(time.time())}\n", encoding="utf-8")
+        try:
+            state_path.chmod(0o600)
+        except OSError:
+            pass
+        return redirect(auth.build_authorize_url(state))
+
+    @app.get("/spotify/callback")
+    def spotify_callback():  # type: ignore[no-untyped-def]
+        config = load_config()
+        auth = _spotify_auth(config)
+        error = request.args.get("error")
+        if error:
+            # User denied, or Spotify refused. Show a plain page explaining it.
+            return _spotify_result_page(f"Spotify denied the request: {error}", ok=False)
+        code = request.args.get("code", "").strip()
+        received_state = request.args.get("state", "").strip()
+        state_path = config.state_dir / "spotify_oauth_state"
+        try:
+            stored_state, ts_line = state_path.read_text(encoding="utf-8").splitlines()[:2]
+            stored_ts = int(ts_line)
+        except (OSError, ValueError):
+            return _spotify_result_page("OAuth state not found. Restart the connect flow.", ok=False)
+        # One-time use, and expire after 10 minutes so a leaked state token
+        # cannot be replayed a day later.
+        state_path.unlink(missing_ok=True)
+        if time.time() - stored_ts > 600:
+            return _spotify_result_page("OAuth state expired. Restart the connect flow.", ok=False)
+        if not received_state or received_state != stored_state:
+            return _spotify_result_page("OAuth state mismatch. Restart the connect flow.", ok=False)
+        if not code:
+            return _spotify_result_page("Spotify did not return an authorisation code.", ok=False)
+        try:
+            auth.exchange_code(code)
+        except spotify_client.SpotifyAuthError as exc:
+            return _spotify_result_page(f"Could not exchange code: {exc}", ok=False)
+        return _spotify_result_page("Spotify connected. You can close this tab.", ok=True)
+
+    @app.post("/spotify/disconnect")
+    def spotify_disconnect():  # type: ignore[no-untyped-def]
+        config = load_config()
+        _spotify_auth(config).disconnect()
+        return jsonify(ok=True, connected=False)
 
     return app
 

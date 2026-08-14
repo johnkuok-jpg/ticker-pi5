@@ -51,6 +51,15 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 .nametag-font-label { display: block; margin-top: 14px; color: #cbd5e1; font-weight: 700; font-size: .9rem; }
 #nametag-font { width: 100%; margin-top: 6px; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 10px; background: #131a28; color: #eaf1ff; font-size: 1rem; font-weight: 700; -webkit-appearance: none; appearance: none; background-image: linear-gradient(45deg, transparent 50%, #78b6ff 50%), linear-gradient(135deg, #78b6ff 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 36px; }
 #nametag-font:focus { outline: none; border-color: #78b6ff; }
+
+/* Spotify Now Playing card. Matches the other cards but tinted with Spotify
+   green on the connect button so it reads as a branded auth action. */
+.spotify-card { margin-top: 14px; }
+.spotify-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.spotify-connect { display: inline-block; padding: 12px 20px; border-radius: 12px; background: #1ED760; color: #041006; font-size: 1rem; font-weight: 800; text-decoration: none; }
+.spotify-connect:active { transform: scale(.97); }
+.spotify-disconnect { padding: 10px 18px; border: 2px solid #2a3449; border-radius: 12px; background: transparent; color: #eaf1ff; font-size: .95rem; font-weight: 700; cursor: pointer; }
+.spotify-disconnect:active { transform: scale(.97); }
 .flight-go { padding: 12px 20px; border: 0; border-radius: 12px; background: #1f6f8b; color: #fff; font-size: 1rem; font-weight: 800; cursor: pointer; }
 .flight-go:active { transform: scale(.97); }
 

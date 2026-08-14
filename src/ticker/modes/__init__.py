@@ -12,6 +12,7 @@ from ticker.modes.market import MarketMode
 from ticker.modes.nametag import NametagMode
 from ticker.modes.network import NetworkMode
 from ticker.modes.news import NewsMode
+from ticker.modes.spotify import SpotifyMode
 from ticker.modes.stocks import StocksMode
 from ticker.modes.weather import WeatherMode
 
@@ -26,6 +27,7 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "aqi": AirQualityMode,
     "bikes": BikesMode,
     "nametag": NametagMode,
+    "spotify": SpotifyMode,
     "net": NetworkMode,
 }
 
@@ -50,4 +52,5 @@ __all__ = [
     "BikesMode",
     "NametagMode",
     "NetworkMode",
+    "SpotifyMode",
 ]

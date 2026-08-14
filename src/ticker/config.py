@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "net")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "net")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -180,6 +180,14 @@ class Config:
     nametag_name: str = ""
     nametag_color: str = "#FFFFFF"
     nametag_font: str = "spleen"
+    # Spotify developer app credentials. Empty by default; when either is
+    # missing, the Spotify mode renders a helpful 'set SPOTIFY_CLIENT_ID'
+    # placeholder instead of blowing up on a None token exchange.
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
+    # Where Spotify should send the user back after they authorise. Must match
+    # a redirect URI registered on the Spotify app dashboard exactly.
+    spotify_redirect_uri: str = ""
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -243,6 +251,16 @@ class Config:
     @property
     def nametag_color_file(self) -> Path:
         return self.state_dir / "nametag_color"
+
+    @property
+    def spotify_token_file(self) -> Path:
+        """Where the refresh + access tokens land after OAuth.
+
+        Kept inside :attr:`state_dir` next to the other mode state so a single
+        ``rm -rf ~/.ticker`` truly wipes the device. Permissions are tightened
+        to 0600 on write; see :meth:`SpotifyAuth._save`.
+        """
+        return self.state_dir / "spotify_tokens.json"
 
     @property
     def pid_file(self) -> Path:
@@ -601,6 +619,9 @@ def load_config(env_file: Path | None = None) -> Config:
         nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
         nametag_color=(os.getenv("NAMETAG_COLOR", "").strip() or _DEFAULT_NAMETAG_HEX),
         nametag_font=(os.getenv("NAMETAG_FONT", "").strip().lower() or "spleen"),
+        spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", "").strip(),
+        spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", "").strip(),
+        spotify_redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "").strip(),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

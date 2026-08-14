@@ -26,7 +26,7 @@
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "net": "Wi-Fi"} %}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "net": "Wi-Fi"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         {{ mode_labels.get(mode, mode) }}
@@ -129,6 +129,30 @@
         {% endfor %}
       </select>
       <p id="nametag-note" class="schedule">Names that are too long scroll left-to-right.</p>
+    </section>
+    {# Spotify Now Playing. The connect button hides itself when developer
+       credentials are not set on the Pi (see spotify_configured) so a
+       friend receiving the ticker as a gift only sees this section once
+       the setup steps are done. #}
+    <section class="card spotify-card">
+      <label>Spotify</label>
+      <p id="spotify-note" class="schedule">
+        {% if not spotify_configured %}
+          Not configured. Ask the person who set up this ticker.
+        {% elif spotify_connected %}
+          Connected. Switch to Spotify mode to see the currently playing track.
+        {% else %}
+          Sign in with Spotify to display what you are listening to.
+        {% endif %}
+      </p>
+      <div class="spotify-row">
+        {% if spotify_configured and not spotify_connected %}
+        <a id="spotify-connect" class="spotify-connect" href="/spotify/connect">Connect Spotify</a>
+        {% endif %}
+        {% if spotify_connected %}
+        <button id="spotify-disconnect" type="button" class="spotify-disconnect">Disconnect</button>
+        {% endif %}
+      </div>
     </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
@@ -373,6 +397,17 @@
     /* Font: change fires as soon as the user picks a different option; save
        immediately (like the swatches) so the LED updates on the same tap. */
     nametagFont.addEventListener('change', () => saveNametag({name: nametagInput.value, color: nametagHex.value, font: nametagFont.value}));
+    /* Spotify disconnect. Only the button exists (the connect button is a
+       plain anchor because it must fully navigate to Spotify's auth page).
+       After disconnect the whole section needs a re-render to swap the
+       button back to Connect — simplest is to reload the page. */
+    const spotifyDisconnect = document.getElementById('spotify-disconnect');
+    if (spotifyDisconnect) {
+      spotifyDisconnect.addEventListener('click', async () => {
+        await fetch('/spotify/disconnect', {method: 'POST'});
+        window.location.reload();
+      });
+    }
     slider.addEventListener('input', () => {
       dragging = true;
       brightnessValue.textContent = `${slider.value}%`;
