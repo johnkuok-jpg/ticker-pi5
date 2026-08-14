@@ -63,10 +63,14 @@ PLACEHOLDER_COLOR = (140, 140, 140)
 # --- Scroll behaviour ------------------------------------------------------
 
 SCROLL_GAP_PX = 20
-# Ticks the panel must advance before the text moves one pixel. At 1 the text
-# slides a pixel every frame, which reads as too fast on a 128px panel; 2 halves
-# it to a comfortable reading pace without dropping to a stuttery integer crawl.
-SCROLL_TICKS_PER_PX = 2
+# Pixels of travel per tick. Fractional on purpose: whole-pixel steps at this
+# speed look like a stutter because the text sits still and then jumps. See
+# _draw_line, which blends adjacent pixel offsets to render the fraction.
+SCROLL_PX_PER_TICK = 0.5
+# Ticks to hold still at the start of each loop. Motion that never stops is
+# tiring to read; a short pause gives the eye somewhere to latch on before the
+# line starts moving, and marks where the text begins.
+SCROLL_DWELL_TICKS = 45
 
 
 class SpotifyMode(Mode):
@@ -156,13 +160,29 @@ class SpotifyMode(Mode):
         # Scroll: render the whole string plus one repeat into a scratch strip,
         # then crop a text-zone-wide slice at the current offset.
         period = text_w + SCROLL_GAP_PX
-        offset = (tick // SCROLL_TICKS_PER_PX) % period
-        strip_w = period + TEXT_WIDTH + 20  # generous margin for the crop
+
+        # Where are we in the dwell-then-scroll cycle?
+        scroll_ticks = int(period / SCROLL_PX_PER_TICK)
+        cycle_ticks = scroll_ticks + SCROLL_DWELL_TICKS
+        phase = tick % cycle_ticks
+        offset_f = 0.0 if phase < SCROLL_DWELL_TICKS else (phase - SCROLL_DWELL_TICKS) * SCROLL_PX_PER_TICK
+
+        strip_w = period + TEXT_WIDTH + 24  # margin so the +1 crop never runs off the end
         scratch = Canvas(strip_w, text_h + 4)
         scratch.text_bold(0, 0, text, color, MEDIUM, weight=1)
         scratch.text_bold(period, 0, text, color, MEDIUM, weight=1)
-        piece = scratch.image_buffer.crop((offset, 0, offset + TEXT_WIDTH, text_h + 4))
-        canvas.image_buffer.paste(piece, (TEXT_LEFT, y))
+
+        # Sub-pixel step: crop at both neighbouring whole-pixel offsets and
+        # cross-fade by the fractional part. The panel's pixels stay on a grid,
+        # but weighting the two positions makes the *apparent* position land
+        # between them, which reads as smooth motion instead of a 1px jump.
+        base = int(offset_f)
+        frac = offset_f - base
+        near = scratch.image_buffer.crop((base, 0, base + TEXT_WIDTH, text_h + 4))
+        if frac > 0.0:
+            far = scratch.image_buffer.crop((base + 1, 0, base + 1 + TEXT_WIDTH, text_h + 4))
+            near = Image.blend(near, far, frac)
+        canvas.image_buffer.paste(near, (TEXT_LEFT, y))
 
     def _draw_progress(self, canvas: Canvas, snapshot: spotify_client.NowPlaying) -> None:
         """Draw the 1-pixel progress bar under the text zone (cols 33..127)."""
