@@ -35,7 +35,7 @@ DEFAULT_STATION = "EMBR"
 # because the web app needs the list to build its picker before any network call
 # has happened, and the roster changes on the order of once every few years.
 STATIONS: tuple[tuple[str, str], ...] = (
-    ("12TH", "12th St. Oakland City Center"),
+    ("12TH", "12th St. Oakland"),
     ("16TH", "16th St. Mission"),
     ("19TH", "19th St. Oakland"),
     ("24TH", "24th St. Mission"),
@@ -43,9 +43,9 @@ STATIONS: tuple[tuple[str, str], ...] = (
     ("ASHB", "Ashby"),
     ("BALB", "Balboa Park"),
     ("BAYF", "Bay Fair"),
-    ("BERY", "Berryessa/North San Jose"),
+    ("BERY", "Berryessa"),
     ("CAST", "Castro Valley"),
-    ("CIVC", "Civic Center/UN Plaza"),
+    ("CIVC", "Civic Center"),
     ("COLS", "Coliseum"),
     ("COLM", "Colma"),
     ("CONC", "Concord"),
@@ -66,30 +66,30 @@ STATIONS: tuple[tuple[str, str], ...] = (
     ("MLPT", "Milpitas"),
     ("MONT", "Montgomery St."),
     ("NBRK", "North Berkeley"),
-    ("NCON", "North Concord/Martinez"),
-    ("OAKL", "Oakland International Airport"),
+    ("NCON", "North Concord"),
+    ("OAKL", "OAK Airport"),
     ("ORIN", "Orinda"),
     ("PITT", "Pittsburg/Bay Point"),
     ("PCTR", "Pittsburg Center"),
-    ("PHIL", "Pleasant Hill/Contra Costa Centre"),
+    ("PHIL", "Pleasant Hill"),
     ("POWL", "Powell St."),
     ("RICH", "Richmond"),
     ("ROCK", "Rockridge"),
     ("SBRN", "San Bruno"),
-    ("SFIA", "San Francisco International Airport"),
+    ("SFIA", "SFO Airport"),
     ("SANL", "San Leandro"),
     ("SHAY", "South Hayward"),
     ("SSAN", "South San Francisco"),
     ("UCTY", "Union City"),
     ("WCRK", "Walnut Creek"),
-    ("WARM", "Warm Springs/South Fremont"),
-    ("WDUB", "West Dublin/Pleasanton"),
+    ("WARM", "Warm Springs"),
+    ("WDUB", "West Dublin"),
     ("WOAK", "West Oakland"),
 )
 
 STATION_NAMES: dict[str, str] = dict(STATIONS)
 
-# Station names are written for a website. "Pleasant Hill/Contra Costa Centre"
+# Station names are written for a website. "Pleasant Hill"
 # is 33 characters against a column that holds about 18, and truncating it gives
 # "PLEASANT HILL/CONT". These are the panel spellings, applied to both the board
 # title and the destination column.

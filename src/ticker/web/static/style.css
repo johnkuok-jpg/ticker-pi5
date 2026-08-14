@@ -4,7 +4,12 @@
 /* Launched from the home screen the status bar is translucent and the page runs
    edge to edge, so the notch and the home indicator would otherwise sit on top
    of the controls. The insets are zero in a normal browser tab. */
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top, #1a263c, #090b10 60%);
+/* minmax(0, ...) on the track, because an auto grid track is sized by its
+   content's minimum width -- and a <select> reports the width of its longest
+   option. That let the BART station list stretch the whole page past the
+   width of a phone, which the browser then had to crop. */
+body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr);
+  justify-items: center; align-content: center; background: radial-gradient(circle at top, #1a263c, #090b10 60%);
   padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
 .panel { width: min(100%, 460px); background: #121722; border: 1px solid #28334a; border-radius: 20px; padding: 28px; box-shadow: 0 20px 70px #0008; }
 .eyebrow { margin: 0; color: #8ba0c5; font-size: .72rem; font-weight: 700; letter-spacing: .14em; }
@@ -24,9 +29,9 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 .flight { margin-top: 22px; padding-top: 20px; border-top: 1px solid #2a3449; }
 .flight label { display: block; color: #cbd5e1; font-weight: 700; }
 .flight-row { display: flex; gap: 10px; margin-top: 12px; }
-#flight-input { flex: 1; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+#flight-input { flex: 1 1 0; width: 0; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 #flight-input:focus { outline: none; border-color: #78b6ff; }
-#station-select { flex: 1; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; }
+#station-select { flex: 1 1 0; width: 0; min-width: 0; text-overflow: ellipsis; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; }
 #station-select:focus { outline: none; border-color: #78b6ff; }
 .flight-go { padding: 12px 20px; border: 0; border-radius: 12px; background: #1f6f8b; color: #fff; font-size: 1rem; font-weight: 800; cursor: pointer; }
 .flight-go:active { transform: scale(.97); }
@@ -64,3 +69,13 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 .backlink { color: #78b6ff; font-weight: 700; text-decoration: none; }
 .netbanner { display: block; margin: 18px 0 0; padding: 12px 14px; border: 1px solid #7a5a1e; border-radius: 12px; background: #2a2110; color: #ffd98a; font-size: .88rem; font-weight: 700; text-decoration: none; }
 .wifilink { display: block; margin-top: 20px; color: #8ba0c5; font-size: .88rem; font-weight: 700; text-decoration: none; }
+
+/* A station name and a button cannot share a phone-width row: the select gets
+   184px, leaving 134px for text, and "El Cerrito del Norte" needs 153px at this
+   size -- so every long name was truncated to something ambiguous. Stacking
+   gives the name the full width and makes both controls easier to hit. */
+@media (max-width: 460px) {
+  .flight-row { flex-direction: column; align-items: stretch; }
+  .flight-row button { width: 100%; }
+  #station-select, #flight-input { width: 100%; flex: 0 0 auto; }
+}

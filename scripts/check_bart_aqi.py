@@ -82,6 +82,27 @@ check("fifty stations", len(bart.STATIONS) == 50, f"got {len(bart.STATIONS)}")
 check("abbreviations unique", len({a for a, _ in bart.STATIONS}) == 50)
 check("names unique", len({n for _, n in bart.STATIONS}) == 50)
 check("default station is real", bart.is_station(bart.DEFAULT_STATION))
+# Every label has to survive two narrow places: the phone dropdown, which has
+# about 227px for text, and the panel header, which has 128px for the whole row.
+# "San Francisco International Airport" truncated to "San Francisco...", which
+# names nothing in particular.
+longest = max(bart.STATIONS, key=lambda s: len(s[1]))
+check("no station label exceeds 20 characters", len(longest[1]) <= 20,
+      f"{longest[1]} is {len(longest[1])}")
+check("airports use the codes riders read",
+      bart.STATION_NAMES["SFIA"] == "SFO Airport" and bart.STATION_NAMES["OAKL"] == "OAK Airport",
+      f"{bart.STATION_NAMES['SFIA']} / {bart.STATION_NAMES['OAKL']}")
+
+# The control panel laid out 492px wide on a 393px phone, because an auto grid
+# track takes its minimum width from its content and a <select> reports the width
+# of its longest option. Both guards have to stay.
+# Derived from the src path inserted above, so this file works from either checkout.
+_css = (Path(sys.path[0]).parent / "src/ticker/web/static/style.css").read_text(encoding="utf-8")
+check("the page track cannot be stretched by its content",
+      "grid-template-columns: minmax(0, 1fr)" in _css)
+check("the station select can shrink below its longest option",
+      "#station-select { flex: 1 1 0; width: 0;" in _css)
+check("controls stack at phone widths", "@media (max-width: 460px)" in _css)
 check("lookup is case insensitive", bart.is_station("embr") and bart.is_station("EMBR"))
 check("rejects nonsense", not bart.is_station("XXXX") and not bart.is_station(""))
 
