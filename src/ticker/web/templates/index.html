@@ -49,6 +49,16 @@
       <p id="flight-note" class="schedule">Airline flight number, e.g. UA889 or DL38.</p>
     </section>
     <section class="flight">
+      <label for="airport-input">Or watch arrivals into</label>
+      <form id="airport-form" class="flight-row">
+        <input id="airport-input" name="airport" type="text" value="{{ flight_airport }}"
+               placeholder="SFO" autocapitalize="characters" autocomplete="off"
+               spellcheck="false" maxlength="4" aria-label="Destination airport">
+        <button type="submit" class="flight-go">Watch</button>
+      </form>
+      <p id="airport-note" class="schedule">Picks a flight already in the air, new one each time you open flights.</p>
+    </section>
+    <section class="flight">
       <label for="station-select">BART station</label>
       <form id="station-form" class="flight-row">
         <select id="station-select" name="station" aria-label="BART station">
@@ -78,6 +88,9 @@
     const flightForm = document.getElementById('flight-form');
     const flightInput = document.getElementById('flight-input');
     const flightNote = document.getElementById('flight-note');
+    const airportForm = document.getElementById('airport-form');
+    const airportInput = document.getElementById('airport-input');
+    const airportNote = document.getElementById('airport-note');
     const stationForm = document.getElementById('station-form');
     const stationSelect = document.getElementById('station-select');
     const stationNote = document.getElementById('station-note');
@@ -85,6 +98,7 @@
     /* As with the flight field: a poll must not reset a station the user has
        chosen from the list but not yet submitted. */
     let choosingStation = false;
+    let typingAirport = false;
     /* Same guard as the slider's: a poll must not overwrite a flight number the
        user is halfway through typing. */
     let typingFlight = false;
@@ -101,6 +115,10 @@
       }
       if (!typingFlight && typeof data.flight === 'string' && data.flight !== flightInput.value) {
         flightInput.value = data.flight;
+      }
+      if (!typingAirport && typeof data.flight_airport === 'string'
+          && data.flight_airport !== airportInput.value) {
+        airportInput.value = data.flight_airport;
       }
       if (!choosingStation && typeof data.station === 'string' && data.station !== stationSelect.value) {
         stationSelect.value = data.station;
@@ -127,9 +145,36 @@
       });
       const data = await response.json();
       typingFlight = false;
+      /* Setting a number clears the airport on the server, so let the next poll
+         empty that box rather than leaving a code sitting there doing nothing. */
+      typingAirport = false;
       flightNote.textContent = data.flight
         ? `Tracking ${data.flight}. It may take a few minutes to appear if it has not pushed back.`
         : 'Cleared. The panel will ask for a flight number.';
+      refreshStatus();
+    });
+
+    airportInput.addEventListener('input', () => {
+      typingAirport = true;
+      airportInput.value = airportInput.value.toUpperCase();
+    });
+    airportForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const response = await fetch('/flight-airport', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({airport: airportInput.value})
+      });
+      const data = await response.json();
+      typingAirport = false;
+      typingFlight = false;
+      if (!response.ok) {
+        airportNote.textContent = data.error || 'That is not an airport code.';
+        return;
+      }
+      airportNote.textContent = data.flight_airport
+        ? `Watching arrivals into ${data.flight_airport}. Switch away and back for a different flight.`
+        : 'Cleared. Type a flight number above instead.';
       refreshStatus();
     });
     stationSelect.addEventListener('change', () => { choosingStation = true; });

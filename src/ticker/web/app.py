@@ -55,6 +55,7 @@ def create_app() -> Flask:
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
             flight=config.current_flight(),
+            flight_airport=config.current_flight_airport(),
             stations=bart.STATIONS,
             station=config.current_bart_station(),
         )
@@ -93,6 +94,33 @@ def create_app() -> Flask:
         if flight:
             config.set_mode("flights")
         return jsonify(flight=flight, current_mode=config.current_mode())
+
+    @app.post("/flight-airport")
+    def set_flight_airport():  # type: ignore[no-untyped-def]
+        """Watch a random arrival into an airport, and switch to flights mode.
+
+        Same reasoning as the flight form: choosing what to watch is a request
+        to see it. The pick itself happens in the renderer rather than here, so
+        that every switch into the mode lands on a different aircraft.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("airport", request.form.get("airport", ""))
+        config = load_config()
+        try:
+            config.set_flight_airport(str(requested))
+        except ValueError:
+            return jsonify(
+                error="airport must be a 3 or 4 letter code",
+                flight_airport=config.current_flight_airport(),
+            ), 400
+        airport = config.current_flight_airport()
+        if airport:
+            config.set_mode("flights")
+        return jsonify(
+            flight_airport=airport,
+            flight=config.current_flight(),
+            current_mode=config.current_mode(),
+        )
 
     @app.post("/bart")
     def set_bart_station():  # type: ignore[no-untyped-def]
@@ -205,6 +233,7 @@ def create_app() -> Flask:
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
             flight=config.current_flight(),
+            flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
             network_notice=config.network_notice(),
         )

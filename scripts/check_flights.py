@@ -17,6 +17,11 @@ from ticker import airlines  # noqa: E402
 from ticker.canvas import Canvas, SMALL  # noqa: E402
 from ticker.config import VALID_MODES, load_config  # noqa: E402
 from ticker.modes import MODE_TYPES, build_mode  # noqa: E402
+from ticker.flightradar import (  # noqa: E402
+    ARRIVALS_URL,
+    FlightRadarClient,
+    airborne_arrivals,
+)
 from ticker.modes.flights import (  # noqa: E402
     FlightsMode,
     Position,
@@ -193,7 +198,34 @@ check("clearing works", cleared["flight"] == "", str(cleared))
 check("clearing leaves the mode alone", cleared["current_mode"] == "flights", str(cleared))
 missing = client.post("/flight", json={})
 check("a missing field is not an error", missing.status_code == 200, str(missing.status_code))
+
+config.set_mode("weather")
+airport_reply = client.post("/flight-airport", json={"airport": "sfo"})
+airport_payload = airport_reply.get_json()
+check("POST /flight-airport accepts a code",
+      airport_reply.status_code == 200 and airport_payload["flight_airport"] == "SFO",
+      str(airport_payload))
+check("watching an airport switches mode", airport_payload["current_mode"] == "flights",
+      str(airport_payload))
+check("watching an airport clears the number", airport_payload["flight"] == "",
+      str(airport_payload))
+check("renderer sees the airport", config.current_flight_airport() == "SFO")
+check("status reports the airport",
+      client.get("/api/status").get_json().get("flight_airport") == "SFO")
+page = client.get("/").get_data(as_text=True)
+check("page renders the airport input", 'id="airport-input"' in page)
+check("page prefills the airport", 'value="SFO"' in page)
+rejected = client.post("/flight-airport", json={"airport": "SFOOO"})
+check("a bad code is a 400, not a crash", rejected.status_code == 400, str(rejected.status_code))
+check("a rejected code leaves the old one in place",
+      rejected.get_json().get("flight_airport") == "SFO", str(rejected.get_json()))
+cleared_airport = client.post("/flight-airport", json={"airport": ""}).get_json()
+check("clearing the airport works", cleared_airport["flight_airport"] == "", str(cleared_airport))
+check("clearing the airport leaves the mode alone",
+      cleared_airport["current_mode"] == "flights", str(cleared_airport))
+
 config.flight_file.unlink(missing_ok=True)
+config.flight_airport_file.unlink(missing_ok=True)
 config.set_mode("weather")
 
 # --- plane sprite -------------------------------------------------------------
@@ -233,6 +265,169 @@ check("the tailplane brackets the fuselage", tail_rows == [2, 3, 4], str(tail_ro
 check("the tailplane is clear of the wing",
       art[2][1:5] == "...." and art[4][1:5] == "....",
       f"{art[2]} / {art[4]}")
+
+
+# --- random arrival picker -----------------------------------------------------
+# Rows on a real arrivals board, trimmed to the fields the picker reads. The
+# distinction that matters is a real departure with no real arrival: that and
+# only that means the aircraft is between the two right now.
+def _row(number, dep, arr):
+    return {"flight": {"identification": {"number": {"default": number}},
+                       "time": {"real": {"departure": dep, "arrival": arr}}}}
+
+
+BOARD = {"result": {"response": {"airport": {"pluginData": {"schedule": {"arrivals": {"data": [
+    _row("AS812", 1786661471, 1786677745),   # landed
+    _row("CI4", 1786638141, None),           # airborne
+    _row("WN3497", None, None),               # not pushed back
+    _row("UA1757", 1786667885, None),        # airborne, delayed
+    _row(" jx12 ", 1786636011, None),        # airborne, needs tidying
+    _row("CI4", 1786638141, None),           # duplicate row
+    _row(None, 1786636011, None),            # unusable number
+]}}}}}}}
+airborne = airborne_arrivals(BOARD)
+check("only airborne legs are eligible", airborne == ["CI4", "UA1757", "JX12"], str(airborne))
+check("a landed leg is excluded", "AS812" not in airborne)
+check("a leg that has not departed is excluded", "WN3497" not in airborne)
+check("numbers are deduplicated", airborne.count("CI4") == 1)
+for junk in (None, {}, {"result": None}, {"result": {"response": {"airport": None}}},
+             {"result": {"response": {"airport": {"pluginData": {"schedule":
+              {"arrivals": {"data": "nope"}}}}}}}):
+    check(f"a broken board yields nothing, not an exception: {str(junk)[:28]}",
+          airborne_arrivals(junk) == [])
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def read(self):
+        import json
+        return json.dumps(self._payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _Opener:
+    """Records the URLs asked for, and can be made to fail on demand."""
+
+    def __init__(self, payload=BOARD):
+        self.urls = []
+        self.payload = payload
+        self.fail = False
+
+    def __call__(self, request, timeout=None):  # noqa: ANN001
+        self.urls.append(request.full_url)
+        if self.fail:
+            raise OSError("network down")
+        return _FakeResponse(self.payload)
+
+
+opener = _Opener()
+client = FlightRadarClient(opener=opener)
+first = client.airborne_into("sfo")
+check("the client reads the board", first == ["CI4", "UA1757", "JX12"], str(first))
+check("a lowercase code is upper-cased for the endpoint",
+      "code=SFO" in opener.urls[0], opener.urls[0])
+# A present-but-empty timestamp answers 400, so it must not appear at all.
+check("the endpoint carries no timestamp setting", "timestamp" not in ARRIVALS_URL)
+client.airborne_into("SFO")
+check("a fresh board is served from cache", len(opener.urls) == 1, str(len(opener.urls)))
+check("an empty code asks for nothing", client.airborne_into("  ") == [] and len(opener.urls) == 1)
+
+# A failure must not empty a board the panel is already using: a stale answer is
+# better than telling the user nothing is flying when the truth is a dead endpoint.
+stale = FlightRadarClient(opener=(bad := _Opener()))
+stale.airborne_into("SFO")
+stale._arrivals_cache["SFO"] = (-1e9, ["CI4"])
+bad.fail = True
+check("a failed refresh keeps the previous board", stale.airborne_into("SFO") == ["CI4"])
+dead = _Opener()
+dead.fail = True
+check("a first-ever failure yields an empty board",
+      FlightRadarClient(opener=dead).airborne_into("SFO") == [])
+
+
+class _StubClient:
+    """Stands in for the FR24 client so the mode can be driven offline."""
+
+    def __init__(self, numbers):
+        self.numbers = numbers
+        self.calls = 0
+
+    def airborne_into(self, airport):  # noqa: ANN001
+        self.calls += 1
+        return list(self.numbers)
+
+    def lookup(self, flight):  # noqa: ANN001
+        return None
+
+
+config.flight_file.write_text("\n", encoding="utf-8")
+config.flight_airport_file.write_text("SFO\n", encoding="utf-8")
+mode = FlightsMode(config)
+mode._client = stub = _StubClient(["CI4"])
+mode.render(Canvas(config.width, config.height), 0)
+check("a watched airport picks a flight", mode._flight == "CI4", mode._flight)
+check("the board is asked for once", stub.calls == 1, str(stub.calls))
+mode.render(Canvas(config.width, config.height), 1)
+check("a pick is not re-rolled while the mode stays up", stub.calls == 1, str(stub.calls))
+
+# Each switch into the mode builds a fresh object, which is what makes the pick
+# change; over many visits a multi-flight board must produce more than one.
+seen = set()
+for _ in range(40):
+    visit = FlightsMode(config)
+    visit._client = _StubClient(["CI4", "UA1757", "JX12"])
+    visit.render(Canvas(config.width, config.height), 0)
+    seen.add(visit._flight)
+check("each visit to the mode can pick a different flight", len(seen) > 1, str(sorted(seen)))
+check("every pick comes from the board", seen <= {"CI4", "UA1757", "JX12"}, str(sorted(seen)))
+
+empty = FlightsMode(config)
+empty._client = _StubClient([])
+canvas = Canvas(config.width, config.height)
+empty.render(canvas, 0)
+check("nothing airborne leaves no flight tracked", empty._flight == "")
+check("nothing airborne still draws something", any(
+    canvas.image_buffer.getpixel((x, y)) != (0, 0, 0)
+    for x in range(config.width) for y in range(config.height)))
+empty.render(canvas, 1)
+check("an empty board is not retried every frame", empty._client.calls == 1,
+      str(empty._client.calls))
+
+switched = FlightsMode(config)
+switched._client = _StubClient(["CI4"])
+switched.render(Canvas(config.width, config.height), 0)
+config.flight_airport_file.write_text("OAK\n", encoding="utf-8")
+switched._client = _StubClient(["UA1757"])
+switched.render(Canvas(config.width, config.height), 1)
+check("changing airport re-picks immediately, ignoring the backoff",
+      switched._flight == "UA1757" and switched._airport == "OAK", switched._flight)
+
+# --- airport state ------------------------------------------------------------
+config.set_flight_airport("sfo")
+check("an airport is stored upper-cased", config.current_flight_airport() == "SFO")
+check("choosing an airport clears the flight number", config.current_flight() == "")
+config.set_flight("ua889")
+check("typing a number clears the airport", config.current_flight_airport() == "")
+check("the number survives", config.current_flight() == "UA889")
+config.set_flight_airport("KSFO")
+check("a four letter ICAO code is accepted", config.current_flight_airport() == "KSFO")
+for bad_code in ("SF", "SFOOO", "SF1", "12345", "S F"):
+    try:
+        config.set_flight_airport(bad_code)
+        check(f"a bad code is rejected: {bad_code!r}", False, "accepted")
+    except ValueError:
+        check(f"a bad code is rejected: {bad_code!r}", True)
+config.set_flight_airport("")
+check("an empty value clears the airport", config.current_flight_airport() == "")
+config.flight_file.unlink(missing_ok=True)
+config.flight_airport_file.unlink(missing_ok=True)
 
 # --- report -------------------------------------------------------------------
 failed = [c for c in checks if not c[1]]

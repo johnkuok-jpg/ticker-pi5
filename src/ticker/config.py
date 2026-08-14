@@ -139,6 +139,7 @@ class Config:
     news_feed_url: str = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
     news_source_name: str = "CNBC MARKETS"
     flight_number: str = ""
+    flight_airport: str = ""
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
     bart_station: str = "EMBR"
     weather_lat: str = ""
@@ -180,6 +181,10 @@ class Config:
     @property
     def flight_file(self) -> Path:
         return self.state_dir / "flight"
+
+    @property
+    def flight_airport_file(self) -> Path:
+        return self.state_dir / "flight_airport"
 
     @property
     def bart_station_file(self) -> Path:
@@ -328,10 +333,40 @@ class Config:
         Only length is checked, not shape: airlines issue numbers that no tidy
         pattern covers, and rejecting an odd-looking one here would only mean a
         real flight the panel refuses to try.
+
+        Also clears any watched airport. The two are alternative ways to choose
+        what the flights screen shows, and holding both would leave the panel
+        deciding silently between them -- so the most recent instruction wins.
         """
         self.state_dir.mkdir(parents=True, exist_ok=True)
         value = "".join(str(flight).split()).upper()[:12]
         self.flight_file.write_text(f"{value}\n", encoding="utf-8")
+        if value:
+            self.flight_airport_file.write_text("\n", encoding="utf-8")
+
+    def current_flight_airport(self) -> str:
+        """Airport whose arrivals to pick from, or "" when a number is tracked."""
+        try:
+            chosen = self.flight_airport_file.read_text(encoding="utf-8").strip().upper()
+        except OSError:
+            chosen = ""
+        return chosen or self.flight_airport
+
+    def set_flight_airport(self, airport: str) -> None:
+        """Watch arrivals into an airport instead of one flight number.
+
+        IATA is three letters and ICAO is four, so anything outside that is a
+        typo rather than an airport, and rejecting it here means the panel can
+        say so straight away instead of drawing an empty board later. Clears the
+        tracked flight number for the reason given in :meth:`set_flight`.
+        """
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        value = "".join(str(airport).split()).upper()
+        if value and not (value.isalpha() and 3 <= len(value) <= 4):
+            raise ValueError(f"not an airport code: {airport!r}")
+        self.flight_airport_file.write_text(f"{value}\n", encoding="utf-8")
+        if value:
+            self.flight_file.write_text("\n", encoding="utf-8")
 
     def current_bart_station(self) -> str:
         """Station whose departures to show: the web app's pick, otherwise .env."""
@@ -415,6 +450,7 @@ def load_config(env_file: Path | None = None) -> Config:
         news_feed_url=os.getenv("NEWS_FEED_URL", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
         news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
         flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
+        flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,
         bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
         weather_lat=os.getenv("WEATHER_LAT", ""),

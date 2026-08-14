@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -153,6 +154,10 @@ class FlightsMode(Mode):
     STATUS_MISS_SECONDS = 10 * 60
     #: Seconds each item stays on screen in the rotating detail field.
     DETAIL_ROTATE_SECONDS = 4
+    #: Backoff after an arrivals board yielded nothing airborne. A small airport
+    #: at 4am genuinely has nothing inbound, and asking every render pass would
+    #: be thirty requests a second for an answer that changes hourly.
+    PICK_MISS_SECONDS = 3 * 60
 
     LIVE_CACHE_SECONDS = 15
     ROUTE_CACHE_SECONDS = 6 * 60 * 60
@@ -176,6 +181,13 @@ class FlightsMode(Mode):
         # Far enough in the past that the first render always looks, whatever
         # base value this platform's monotonic clock happens to start from.
         self._status_checked = -1e9
+        # A watched airport is resolved to a flight number once per mode object.
+        # The renderer builds a fresh one whenever the panel switches into this
+        # mode, which is what makes each visit show a different aircraft, while a
+        # visit that lasts all evening stays with the one it picked.
+        self._airport = ""
+        self._picked = ""
+        self._pick_checked = -1e9
         self._static_root = Path(__file__).resolve().parents[1] / "web" / "static"
 
     # ------------------------------------------------------------------ fetch
@@ -245,8 +257,35 @@ class FlightsMode(Mode):
         finally:
             self._position_checked = time.monotonic()
 
+    def _choose_arrival(self, airport: str) -> str:
+        """Pick one flight at random from those airborne towards ``airport``."""
+        try:
+            candidates = self._client.airborne_into(airport)
+        except Exception:  # noqa: BLE001 - a mode must never break the loop
+            LOGGER.exception("arrivals lookup failed")
+            return ""
+        if not candidates:
+            return ""
+        chosen = random.choice(candidates)
+        LOGGER.info("watching %s into %s (%d airborne)", chosen, airport, len(candidates))
+        return chosen
+
     def _refresh(self) -> None:
         flight = normalise_flight_number(self.config.current_flight())
+        airport = self.config.current_flight_airport()
+        if airport:
+            if airport != self._airport:
+                # A different airport invalidates the pick, so typing OAK over
+                # SFO takes effect without waiting out the backoff.
+                self._airport = airport
+                self._picked = ""
+                self._pick_checked = -1e9
+            if not self._picked and time.monotonic() - self._pick_checked >= self.PICK_MISS_SECONDS:
+                self._pick_checked = time.monotonic()
+                self._picked = self._choose_arrival(airport)
+            flight = normalise_flight_number(self._picked)
+        elif self._airport:
+            self._airport = self._picked = ""
         if flight != self._flight:
             # A new flight number invalidates everything, including the misses.
             self._flight = flight
@@ -449,8 +488,15 @@ class FlightsMode(Mode):
         canvas.clear()
 
         if not self._flight:
-            canvas.text_centered(6, "NO FLIGHT SET", AMBER, SMALL)
-            canvas.text_centered(18, "ENTER ONE IN THE WEB APP", DIM, SMALL)
+            if self._airport:
+                # Distinguishes "you have not told me what to watch" from "I
+                # looked and there is nothing in the air", which need different
+                # things from the person reading the panel.
+                canvas.text_centered(6, f"{self._airport}: NOTHING", AMBER, SMALL)
+                canvas.text_centered(18, "AIRBORNE YET", DIM, SMALL)
+            else:
+                canvas.text_centered(6, "NO FLIGHT SET", AMBER, SMALL)
+                canvas.text_centered(18, "ENTER ONE IN THE WEB APP", DIM, SMALL)
             return
 
         if self._status is not None:

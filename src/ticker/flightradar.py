@@ -42,6 +42,17 @@ LIST_URL = (
 DETAIL_URL = "https://data-live.flightradar24.com/clickhandler/?flight={flight_id}"
 SEARCH_URL = "https://www.flightradar24.com/v1/search/web/find?query={query}&limit=10"
 
+# Every arrival on an airport's board, scheduled and airborne alike. Used to pick
+# a flight to watch when no number has been typed.
+#
+# The `timestamp` setting this endpoint also accepts must be omitted entirely: a
+# present-but-empty one answers 400 rather than defaulting to now.
+ARRIVALS_URL = (
+    "https://api.flightradar24.com/common/v1/airport.json"
+    "?code={code}&plugin[]=schedule"
+    "&plugin-setting[schedule][mode]=arrivals&page=1&limit={limit}"
+)
+
 # The endpoints reject the default urllib agent.
 BROWSER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -55,6 +66,14 @@ LIST_CACHE_SECONDS = 150.0
 DETAIL_CACHE_SECONDS = 90.0
 #: After a failure, wait this long before trying again.
 ERROR_BACKOFF_SECONDS = 120.0
+
+#: Arrivals to fetch per board. A big airport lists hundreds across several days,
+#: and only a fraction are airborne, so a small page would often return none at
+#: all. A hundred covers roughly a day either side of now at SFO.
+ARRIVALS_LIMIT = 100
+#: How long a board stays fresh. Aircraft leave the airborne set only by landing,
+#: which is gradual, so this is about not hammering the endpoint.
+ARRIVALS_CACHE_SECONDS = 180.0
 
 #: Ignore upcoming legs further out than this - we want the next arrival, not
 #: the same flight number three weeks from now.
@@ -302,6 +321,44 @@ def choose_leg(legs: list[FlightStatus], now: float | None = None) -> FlightStat
     return None
 
 
+def airborne_arrivals(payload: object) -> list[str]:
+    """Flight numbers on an arrivals board that are in the air right now.
+
+    A board is mostly noise for this purpose: most rows have either landed
+    already or not pushed back yet. The test used here is that the leg has a
+    real departure time and no real arrival time, which is true exactly while
+    an aircraft is between the two. Status text is deliberately not used --
+    "Landed 20:22" rows still come back flagged live, and a row can be marked
+    Scheduled while already airborne.
+
+    Returns numbers in board order, deduplicated. Never raises: an endpoint
+    that changes shape yields an empty list, and the caller shows a notice.
+    """
+    rows = _dig(payload, "result", "response", "airport", "pluginData", "schedule", "arrivals", "data")
+    if not isinstance(rows, list):
+        return []
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        flight = row.get("flight") if isinstance(row, dict) else None
+        if not isinstance(flight, dict):
+            continue
+        real = _dig(flight, "time", "real")
+        if not isinstance(real, dict):
+            continue
+        if not real.get("departure") or real.get("arrival"):
+            continue
+        number = _dig(flight, "identification", "number", "default")
+        if not isinstance(number, str):
+            continue
+        value = "".join(number.split()).upper()
+        if value and value not in seen:
+            seen.add(value)
+            found.append(value)
+    return found
+
+
 class FlightRadarClient:
     """Cached, failure-tolerant reader for the two FR24 endpoints."""
 
@@ -311,6 +368,7 @@ class FlightRadarClient:
         self._detail_cache: dict[str, tuple[float, dict[str, str | None]]] = {}
         self._alias: dict[str, str | None] = {}
         self._blocked_until = 0.0
+        self._arrivals_cache: dict[str, tuple[float, list[str]]] = {}
 
     def _get_json(self, url: str) -> dict | None:
         request = urllib.request.Request(
@@ -333,6 +391,32 @@ class FlightRadarClient:
             self._blocked_until = _now() + ERROR_BACKOFF_SECONDS
             return None
         return payload if isinstance(payload, dict) else None
+
+
+    def airborne_into(self, airport: str) -> list[str]:
+        """Flight numbers currently airborne towards ``airport``.
+
+        An empty list means either nothing is airborne or the board could not be
+        read; the two are not worth distinguishing, since the caller's response
+        to both is to say so and try again later. A stale cached board is
+        preferred over an empty one for the same reason the leg listing does it:
+        yesterday's answer beats no answer while an endpoint misbehaves.
+        """
+        code = "".join(str(airport).split()).upper()
+        if not code:
+            return []
+        cached = self._arrivals_cache.get(code)
+        if cached and _now() - cached[0] < ARRIVALS_CACHE_SECONDS:
+            return cached[1]
+        if _now() < self._blocked_until:
+            return cached[1] if cached else []
+
+        payload = self._get_json(ARRIVALS_URL.format(code=code, limit=ARRIVALS_LIMIT))
+        if payload is None:
+            return cached[1] if cached else []
+        numbers = airborne_arrivals(payload)
+        self._arrivals_cache[code] = (_now(), numbers)
+        return numbers
 
     def _legs(self, flight_number: str) -> list[FlightStatus] | None:
         cached = self._list_cache.get(flight_number)
