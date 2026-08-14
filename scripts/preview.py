@@ -72,6 +72,9 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     # may not be reachable from the preview host, so the mode is pre-seeded
     # with a fake station rather than trusted to fetch here.
     "bikes": {"mode": "bikes", "seed_bikes": True, "frames": 4, "fps": 2, "stride": 15},
+    # Name tag: single static frame with a sample name so the simulator shows
+    # what the coworker's desk plate will look like.
+    "nametag": {"mode": "nametag", "seed_nametag": True, "frames": 1, "fps": 1, "stride": 15},
 }
 
 
@@ -254,6 +257,15 @@ def main() -> int:
                 screen_config,
                 state_dir=Path(tempfile.mkdtemp(prefix="ticker-preview-")),
                 bike_station_id="preview",
+            )
+        if screen.get("seed_nametag"):
+            # A sample name so the frame isn't just the fallback HELLO. The
+            # temp state dir keeps this preview seed out of the real state.
+            screen_config = replace(
+                screen_config,
+                state_dir=Path(tempfile.mkdtemp(prefix="ticker-preview-")),
+                nametag_name="JOHN",
+                nametag_color="#FFFFFF",
             )
         if screen.get("live_flight") and not config.current_flight():
             latitude = float(config.weather_lat or 37.7749)

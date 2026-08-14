@@ -59,6 +59,8 @@ def create_app() -> Flask:
             stations=bart.STATIONS,
             station=config.current_bart_station(),
             bike_station=config.current_bike_station(),
+            nametag_name=config.current_nametag_name(),
+            nametag_color=_rgb_to_hex(config.current_nametag_color()),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -199,6 +201,43 @@ def create_app() -> Flask:
             config.set_mode("bikes")
         return jsonify(bike_station=chosen, current_mode=config.current_mode())
 
+    @app.post("/nametag")
+    def set_nametag():  # type: ignore[no-untyped-def]
+        """Update the desk-plate name and/or color, and switch to nametag mode.
+
+        Both fields are optional in one request: sending only 'name' leaves the
+        color alone, and vice versa. Any successful save switches the panel to
+        nametag mode so the coworker sees the update immediately.
+        """
+        payload = request.get_json(silent=True) or {}
+        raw_name = payload.get("name", request.form.get("name"))
+        raw_color = payload.get("color", request.form.get("color"))
+        config = load_config()
+
+        changed = False
+        try:
+            if raw_name is not None:
+                config.set_nametag_name(str(raw_name))
+                changed = True
+            if raw_color is not None and str(raw_color).strip():
+                config.set_nametag_color(str(raw_color))
+                changed = True
+        except ValueError as error:
+            return jsonify(
+                error=str(error),
+                name=config.current_nametag_name(),
+                color=_rgb_to_hex(config.current_nametag_color()),
+            ), 400
+
+        if changed:
+            config.set_mode("nametag")
+
+        return jsonify(
+            name=config.current_nametag_name(),
+            color=_rgb_to_hex(config.current_nametag_color()),
+            current_mode=config.current_mode(),
+        )
+
     @app.post("/bart")
     def set_bart_station():  # type: ignore[no-untyped-def]
         """Choose the BART station, and switch to the departures mode.
@@ -313,6 +352,8 @@ def create_app() -> Flask:
             flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
             bike_station=config.current_bike_station(),
+            nametag_name=config.current_nametag_name(),
+            nametag_color=_rgb_to_hex(config.current_nametag_color()),
             network_notice=config.network_notice(),
         )
 

@@ -10,7 +10,41 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "net")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "net")
+
+# Text color for the nametag mode when the wearer hasn't picked one yet.
+_DEFAULT_NAMETAG_HEX = "#FFFFFF"
+
+
+def _parse_hex_color(value: str) -> tuple[int, int, int]:
+    """'#RRGGBB' or 'RRGGBB' -> (R, G, B). Any parse error falls back to white."""
+    if not value:
+        return (255, 255, 255)
+    text = value.strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)  # '#FA0' -> 'FFAA00'
+    if len(text) != 6:
+        return (255, 255, 255)
+    try:
+        return (int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16))
+    except ValueError:
+        return (255, 255, 255)
+
+
+def _canonical_hex_color(value: str) -> str:
+    """Validate + normalize a color to '#RRGGBB'. Raises ValueError on garbage."""
+    if not isinstance(value, str):
+        raise ValueError("nametag color must be a string")
+    text = value.strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6:
+        raise ValueError("nametag color must be a 3- or 6-digit hex string")
+    try:
+        int(text, 16)
+    except ValueError as exc:
+        raise ValueError("nametag color is not valid hex") from exc
+    return f"#{text.upper()}"
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -143,6 +177,8 @@ class Config:
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
     bart_station: str = "EMBR"
     bike_station_id: str = ""
+    nametag_name: str = ""
+    nametag_color: str = "#FFFFFF"
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -194,6 +230,14 @@ class Config:
     @property
     def bike_station_file(self) -> Path:
         return self.state_dir / "bike_station"
+
+    @property
+    def nametag_name_file(self) -> Path:
+        return self.state_dir / "nametag_name"
+
+    @property
+    def nametag_color_file(self) -> Path:
+        return self.state_dir / "nametag_color"
 
     @property
     def pid_file(self) -> Path:
@@ -412,6 +456,46 @@ class Config:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.bike_station_file.write_text(f"{value}\n", encoding="utf-8")
 
+    def current_nametag_name(self) -> str:
+        """Name to display on the nametag mode: state file wins, else .env."""
+        try:
+            chosen = self.nametag_name_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            chosen = ""
+        return chosen or self.nametag_name
+
+    def set_nametag_name(self, name: str) -> None:
+        """Persist the desk-plate name. Trims whitespace, caps length at 40 chars.
+
+        The renderer's own auto-fit ladder clips at 21 characters in MEDIUM;
+        this 40-char cap here is a durability guard against pathological input
+        (someone pasting a paragraph into the field), not a display limit.
+        """
+        value = str(name).strip()
+        if len(value) > 40:
+            raise ValueError("nametag name is unreasonably long")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.nametag_name_file.write_text(f"{value}\n", encoding="utf-8")
+
+    def current_nametag_color(self) -> tuple[int, int, int]:
+        """Chosen text color as an (R, G, B) tuple; falls back to white on any error."""
+        try:
+            chosen = self.nametag_color_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            chosen = ""
+        return _parse_hex_color(chosen or self.nametag_color)
+
+    def set_nametag_color(self, hex_color: str) -> None:
+        """Persist the chosen text color. Value is stored in canonical '#RRGGBB' form.
+
+        Validated up front so a bad string never reaches disk. The renderer
+        must never crash on a color read, so the on-disk value is guaranteed
+        parseable by the same rules used here.
+        """
+        canonical = _canonical_hex_color(hex_color)
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.nametag_color_file.write_text(f"{canonical}\n", encoding="utf-8")
+
     def set_bart_station(self, station: str) -> None:
         """Persist the chosen BART station.
 
@@ -486,6 +570,8 @@ def load_config(env_file: Path | None = None) -> Config:
         crypto_symbols=crypto_symbols,
         bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
         bike_station_id=os.getenv("BIKE_STATION_ID", "").strip(),
+        nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
+        nametag_color=(os.getenv("NAMETAG_COLOR", "").strip() or _DEFAULT_NAMETAG_HEX),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

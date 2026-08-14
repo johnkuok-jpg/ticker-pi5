@@ -148,6 +148,64 @@ def test_bikes_mode_renders_seeded_station(config) -> None:  # type: ignore[no-u
     assert non_black > 150
 
 
+def test_nametag_color_parsing_roundtrip() -> None:
+    """Hex color parsing accepts 3/6-digit forms and rejects garbage."""
+    from ticker.config import _canonical_hex_color, _parse_hex_color
+
+    assert _canonical_hex_color("#fff") == "#FFFFFF"
+    assert _canonical_hex_color("AABBCC") == "#AABBCC"
+    assert _canonical_hex_color("#12abcd") == "#12ABCD"
+    assert _parse_hex_color("#FF3CB4") == (255, 60, 180)
+    assert _parse_hex_color("#f0f") == (255, 0, 255)
+    # Bad input never crashes the renderer; it just falls back to white.
+    assert _parse_hex_color("nope") == (255, 255, 255)
+    assert _parse_hex_color("") == (255, 255, 255)
+
+    for bad in ["", "#zz", "#12345", "#1234567", "not-a-color"]:
+        try:
+            _canonical_hex_color(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {bad!r}")
+
+
+def test_nametag_mode_persists_and_renders(config) -> None:  # type: ignore[no-untyped-def]
+    """Setting a name + color persists to state and shows on the panel."""
+    from ticker.modes.nametag import NametagMode
+
+    config.set_nametag_name("MANDEEP")
+    config.set_nametag_color("#ff3cb4")
+
+    assert config.current_nametag_name() == "MANDEEP"
+    assert config.current_nametag_color() == (255, 60, 180)
+
+    mode = NametagMode(config)
+    canvas = Canvas(config.width, config.height)
+    mode.render(canvas, tick=0)
+
+    pixels = list(canvas.image_buffer.getdata())
+    non_black = sum(1 for p in pixels if p != (0, 0, 0))
+    # The name draws roughly 60-120 lit pixels at LARGE bold; anything above
+    # 40 confirms the renderer actually painted something.
+    assert non_black > 40
+    # Every lit pixel should be the chosen pink; a bug in _parse_hex_color
+    # would show as white here.
+    assert any(p == (255, 60, 180) for p in pixels)
+
+
+def test_nametag_mode_falls_back_to_hello_when_unset(config) -> None:  # type: ignore[no-untyped-def]
+    """With no name configured, the panel reads HELLO rather than staying blank."""
+    from ticker.modes.nametag import NametagMode
+
+    assert config.current_nametag_name() == ""
+    mode = NametagMode(config)
+    canvas = Canvas(config.width, config.height)
+    mode.render(canvas, tick=0)
+
+    non_black = sum(1 for p in canvas.image_buffer.getdata() if p != (0, 0, 0))
+    assert non_black > 40
+
+
 def test_renderer_uses_the_adafruit_module_name() -> None:
     """Guard the exact import name Adafruit ships, since only hardware catches it."""
     source = (Path(__file__).resolve().parents[1] / "src/ticker/renderer.py").read_text()

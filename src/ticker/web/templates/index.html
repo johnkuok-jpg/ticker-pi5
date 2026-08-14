@@ -26,7 +26,7 @@
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "net": "Wi-Fi"} %}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "net": "Wi-Fi"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         {{ mode_labels.get(mode, mode) }}
@@ -82,6 +82,43 @@
       <div id="bike-results" class="bike-results" role="listbox" aria-label="Bay Wheels station results"></div>
       <p id="bike-note" class="schedule">Type to search all ~450 stations, or tap Nearest.</p>
     </section>
+    <section class="flight">
+      <label for="nametag-input">Name tag</label>
+      <form id="nametag-form" class="flight-row">
+        <input id="nametag-input" name="name" type="text" value="{{ nametag_name }}"
+               placeholder="John" autocomplete="off" spellcheck="false"
+               maxlength="40" aria-label="Name on the tag">
+        <button type="submit" class="flight-go nametag-go">Show</button>
+      </form>
+      <div class="nametag-colors" role="radiogroup" aria-label="Name tag color">
+        {# Preset swatches. Selected one is highlighted; tapping a swatch saves
+           immediately, so the coworker's panel updates on the same tap. #}
+        {% set swatches = [
+          ("WHITE",  "#FFFFFF"),
+          ("AMBER",  "#FFB000"),
+          ("GOLD",   "#FFD700"),
+          ("RED",    "#FF3C3C"),
+          ("PINK",   "#FF3CB4"),
+          ("PURPLE", "#AA78FF"),
+          ("CYAN",   "#00C8FF"),
+          ("GREEN",  "#34C759")
+        ] %}
+        {% for label, hexval in swatches %}
+        <button type="button"
+                class="nametag-swatch {% if hexval|upper == nametag_color|upper %}selected{% endif %}"
+                data-color="{{ hexval }}"
+                aria-label="{{ label }}"
+                style="background: {{ hexval }};"></button>
+        {% endfor %}
+        <label class="nametag-hex">
+          <span>Custom</span>
+          <input id="nametag-hex" type="text" value="{{ nametag_color }}"
+                 maxlength="7" placeholder="#RRGGBB"
+                 autocomplete="off" spellcheck="false" aria-label="Custom hex color">
+        </label>
+      </div>
+      <p id="nametag-note" class="schedule">Types up to 14 characters big; longer names auto-fit.</p>
+    </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
     <a id="net-banner" class="netbanner hidden" href="/wifi">
@@ -110,6 +147,11 @@
     const bikeResults = document.getElementById('bike-results');
     const bikeNote = document.getElementById('bike-note');
     const bikeNearest = document.getElementById('bike-nearest');
+    const nametagForm = document.getElementById('nametag-form');
+    const nametagInput = document.getElementById('nametag-input');
+    const nametagHex = document.getElementById('nametag-hex');
+    const nametagNote = document.getElementById('nametag-note');
+    const nametagSwatches = document.querySelectorAll('.nametag-swatch');
     let bikeStationId = {{ bike_station | tojson }};
     const netBanner = document.getElementById('net-banner');
     /* As with the flight field: a poll must not reset a station the user has
@@ -283,6 +325,39 @@
         finish();
       }
     });
+    /* Name tag: name + color both save to the same endpoint. Tapping a
+       preset swatch saves immediately; the hex input needs the Show button
+       (or Enter) because we do not want to save on every keystroke. */
+    async function saveNametag(fields) {
+      const response = await fetch('/nametag', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(fields)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        nametagNote.textContent = data.error || 'Could not save the name tag.';
+        return null;
+      }
+      if (typeof data.color === 'string') {
+        nametagHex.value = data.color;
+        const chosen = data.color.toUpperCase();
+        nametagSwatches.forEach(el => el.classList.toggle('selected', el.dataset.color.toUpperCase() === chosen));
+      }
+      nametagNote.textContent = data.name
+        ? `Showing "${data.name}".`
+        : 'Name cleared — tag reads HELLO.';
+      refreshStatus();
+      return data;
+    }
+    nametagForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      await saveNametag({name: nametagInput.value, color: nametagHex.value});
+    });
+    nametagSwatches.forEach(el => {
+      el.addEventListener('click', () => saveNametag({name: nametagInput.value, color: el.dataset.color}));
+    });
+    nametagHex.addEventListener('change', () => saveNametag({name: nametagInput.value, color: nametagHex.value}));
     slider.addEventListener('input', () => {
       dragging = true;
       brightnessValue.textContent = `${slider.value}%`;
