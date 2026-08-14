@@ -15,19 +15,54 @@ body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: minma
 .eyebrow { margin: 0; color: #8ba0c5; font-size: .72rem; font-weight: 700; letter-spacing: .14em; }
 h1 { margin: 8px 0 4px; font-size: 2rem; }
 .status { margin: 0 0 22px; color: #bec9db; }
-.mode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.mode-button { min-height: 72px; border: 2px solid transparent; border-radius: 14px; color: #fff; font-size: 1rem; font-weight: 800; text-transform: capitalize; cursor: pointer; transition: transform .15s, border-color .15s, filter .15s; }
+/* 3-per-row compact grid: modes read as a control surface rather than a wall
+   of paint. Every button keeps its brand color — that's the whole coding
+   system the panel-side artwork also uses — but the buttons are half their
+   old height and 33% narrower. The odd trailing tile (Wi-Fi as of writing) is
+   left dangling on purpose: the mode list is meant to keep growing. */
+.mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.mode-button { min-height: 52px; border: 2px solid transparent; border-radius: 12px; color: #fff; font-size: .9rem; font-weight: 800; text-transform: capitalize; cursor: pointer; padding: 4px 8px; transition: transform .15s, box-shadow .15s, filter .15s; }
 .mode-button:active { transform: scale(.97); }
-.mode-button.active { border-color: #fff; filter: brightness(1.2); box-shadow: 0 0 0 3px #ffffff22; }
+/* Active state is a bright blue ring + soft outer glow, chosen so it reads as
+   "selected" on every mode color (green, gray, red, blue, pink). A white
+   inner border alone was invisible on the pink/red buttons. */
+.mode-button.active { border-color: transparent; filter: brightness(1.15); box-shadow: 0 0 0 3px #78b6ff, 0 0 18px #78b6ff88; }
 .mode-stocks { background: #087a4b; }.mode-news { background: #2b61c9; }.mode-weather { background: #b66e08; }.mode-flights { background: #1f6f8b; }.mode-market { background: #6a3fb5; }.mode-crypto { background: #a4245c; }.mode-bart { background: #0d5fa6; }.mode-aqi { background: #2f7d32; }.mode-bikes { background: #d21f7c; }.mode-nametag { background: #4a5568; }.mode-pokemon { background: #cc0000; }
 .brightness { margin-top: 26px; padding-top: 20px; border-top: 1px solid #2a3449; }
-.brightness label { display: flex; justify-content: space-between; color: #cbd5e1; font-weight: 700; }.brightness output { color: #78b6ff; }
+.brightness label { display: flex; justify-content: space-between; align-items: center; color: #cbd5e1; font-weight: 700; }
+/* Number input for typing an exact percentage: same styling as the numeric
+   readout it replaces, but tap-friendly and editable. The trailing percent
+   sign lives outside the input so it doesn't confuse mobile number pads. */
+.brightness-value-wrap { display: inline-flex; align-items: center; gap: 3px; color: #78b6ff; font-weight: 800; }
+#brightness-num { width: 3.2em; padding: 4px 6px; border: 1px solid #2a3449; border-radius: 8px; background: #131a28; color: #78b6ff; font-size: 1rem; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+#brightness-num::-webkit-outer-spin-button, #brightness-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#brightness-num:focus { outline: none; border-color: #78b6ff; }
+.brightness-percent { color: #78b6ff; font-weight: 800; }
 input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
+/* End labels sit right under the slider ends so "Dim" and "Bright" are
+   attached to the value they represent, not floating in whitespace. */
+.brightness-ends { display: flex; justify-content: space-between; margin-top: -2px; color: #6d7a92; font-size: .74rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .schedule { margin: 10px 0 0; min-height: 1.1em; color: #8b97ad; font-size: .82rem; }
 .renderer { margin: 20px 0 0; font-size: .88rem; }.online { color: #57df96; }.offline { color: #ff8f87; }
 
+/* Settings sections. Each is keyed to one mode via data-for, and the page's
+   body[data-mode] controls which one is visible — walking past a phone should
+   show only the controls that belong to what's on the panel right now. The
+   visible section wears the mode's brand color as a left rail so the header,
+   the button, and the settings block all belong to the same visual group.
+   Sections without a data-for are always visible (Spotify sign-in, etc.). */
 .flight { margin-top: 22px; padding-top: 20px; border-top: 1px solid #2a3449; }
 .flight label { display: block; color: #cbd5e1; font-weight: 700; }
+.flight[data-for] { display: none; padding-left: 14px; border-left: 3px solid transparent; }
+.flight[data-for="flights"] + .flight[data-for="flights"] { border-top: 1px dashed #2a3449; }
+body[data-mode="stocks"]  .flight[data-for~="stocks"]  { display: block; border-left-color: #34c07a; }
+body[data-mode="flights"] .flight[data-for~="flights"] { display: block; border-left-color: #3a95b6; }
+body[data-mode="bart"]    .flight[data-for~="bart"]    { display: block; border-left-color: #2a83c8; }
+body[data-mode="bikes"]   .flight[data-for~="bikes"]   { display: block; border-left-color: #d21f7c; }
+body[data-mode="nametag"] .flight[data-for~="nametag"] { display: block; border-left-color: #8b95a8; }
+/* Spotify is a card, not a .flight, but the same principle applies. */
+.card[data-for] { display: none; }
+body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
 .flight-row { display: flex; gap: 10px; margin-top: 12px; }
 #flight-input { flex: 1 1 0; width: 0; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 #flight-input:focus { outline: none; border-color: #78b6ff; }
@@ -110,7 +145,7 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 @media (max-width: 460px) {
   .flight-row { flex-direction: column; align-items: stretch; }
   .flight-row button { width: 100%; }
-  #station-select, #flight-input, #nametag-input { width: 100%; flex: 0 0 auto; }
+  #station-select, #flight-input, #nametag-input, #bike-search, #airport-input, #symbol-input { width: 100%; flex: 0 0 auto; }
 }
 
 /* Stocks watchlist. Chips rather than a list: a watchlist is a set of short

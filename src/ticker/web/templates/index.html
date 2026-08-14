@@ -18,7 +18,7 @@
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body data-mode="{{ current_mode }}">
   <main class="panel">
     <p class="eyebrow">128 × 32 LED TICKER</p>
     <h1>Ticker Pi 5</h1>
@@ -34,11 +34,19 @@
       {% endfor %}
     </section>
     <section class="brightness">
-      <label for="brightness">Brightness <output id="brightness-value">{{ brightness }}%</output></label>
+      <label for="brightness">
+        Brightness
+        <span class="brightness-value-wrap">
+          <input id="brightness-num" type="number" min="5" max="100" step="1"
+                 value="{{ brightness }}" aria-label="Brightness percent">
+          <span class="brightness-percent">%</span>
+        </span>
+      </label>
       <input id="brightness" type="range" min="5" max="100" value="{{ brightness }}" aria-label="Brightness">
+      <div class="brightness-ends" aria-hidden="true"><span>Dim</span><span>Bright</span></div>
       <p id="schedule" class="schedule">{{ schedule_note }}</p>
     </section>
-    <section class="flight">
+    <section class="flight" data-for="stocks">
       <label for="symbol-input">Stocks watchlist</label>
       <form id="symbol-form" class="flight-row">
         <input id="symbol-input" name="symbol" type="text"
@@ -51,7 +59,7 @@
       <div id="symbol-list" class="symbol-list" aria-label="Watchlist"></div>
       <p id="symbol-note" class="schedule">Up to {{ max_symbols }} symbols, 6 seconds each. Crypto works too: BTC-USD.</p>
     </section>
-    <section class="flight">
+    <section class="flight" data-for="flights">
       <label for="flight-input">Flight to track</label>
       <form id="flight-form" class="flight-row">
         <input id="flight-input" name="flight" type="text" value="{{ flight }}"
@@ -61,7 +69,7 @@
       </form>
       <p id="flight-note" class="schedule">Airline flight number, e.g. UA889 or DL38.</p>
     </section>
-    <section class="flight">
+    <section class="flight" data-for="flights">
       <label for="airport-input">Or watch arrivals into</label>
       <form id="airport-form" class="flight-row">
         <input id="airport-input" name="airport" type="text" value="{{ flight_airport }}"
@@ -71,7 +79,7 @@
       </form>
       <p id="airport-note" class="schedule">Picks a flight already in the air, new one each time you open flights.</p>
     </section>
-    <section class="flight">
+    <section class="flight" data-for="bart">
       <label for="station-select">BART station</label>
       <form id="station-form" class="flight-row">
         <select id="station-select" name="station" aria-label="BART station">
@@ -83,7 +91,7 @@
       </form>
       <p id="station-note" class="schedule">Next three trains, soonest first.</p>
     </section>
-    <section class="flight">
+    <section class="flight" data-for="bikes">
       <label for="bike-search">Bay Wheels station</label>
       <form id="bike-form" class="flight-row">
         <input id="bike-search" name="query" type="search"
@@ -95,7 +103,7 @@
       <div id="bike-results" class="bike-results" role="listbox" aria-label="Bay Wheels station results"></div>
       <p id="bike-note" class="schedule">Type to search all ~450 stations, or tap Nearest.</p>
     </section>
-    <section class="flight">
+    <section class="flight" data-for="nametag">
       <label for="nametag-input">Name tag</label>
       <form id="nametag-form" class="flight-row">
         <input id="nametag-input" name="name" type="text" value="{{ nametag_name }}"
@@ -147,7 +155,7 @@
        credentials are not set on the Pi (see spotify_configured) so a
        friend receiving the ticker as a gift only sees this section once
        the setup steps are done. #}
-    <section class="card spotify-card">
+    <section class="card spotify-card" data-for="spotify">
       <label>Spotify</label>
       <p id="spotify-note" class="schedule">
         {% if not spotify_configured %}
@@ -198,7 +206,7 @@
     const status = document.getElementById('status');
     const renderer = document.getElementById('renderer');
     const slider = document.getElementById('brightness');
-    const brightnessValue = document.getElementById('brightness-value');
+    const brightnessNum = document.getElementById('brightness-num');
     const schedule = document.getElementById('schedule');
     const symbolForm = document.getElementById('symbol-form');
     const symbolInput = document.getElementById('symbol-input');
@@ -243,7 +251,14 @@
       schedule.textContent = data.schedule_note || '';
       if (!dragging && typeof data.brightness === 'number') {
         slider.value = data.brightness;
-        brightnessValue.textContent = `${data.brightness}%`;
+        if (document.activeElement !== brightnessNum) {
+          brightnessNum.value = data.brightness;
+        }
+      }
+      /* Keep the visual mode class in step with what the panel is actually
+         showing, in case another phone switched modes mid-session. */
+      if (typeof data.current_mode === 'string' && document.body.dataset.mode !== data.current_mode) {
+        document.body.dataset.mode = data.current_mode;
       }
       /* Keep the watchlist in step if it was edited from another phone. */
       if (Array.isArray(data.symbols) && data.symbols.join(',') !== symbols.join(',')) {
@@ -266,6 +281,11 @@
       document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));
     }
     document.querySelectorAll('.mode-button').forEach(button => button.addEventListener('click', async () => {
+      /* Flip the body-level data-mode immediately so the settings section
+         swap feels instant. refreshStatus() will confirm it or roll it back
+         if the server rejects the change. */
+      document.body.dataset.mode = button.dataset.mode;
+      document.querySelectorAll('.mode-button').forEach(b => b.classList.toggle('active', b === button));
       await fetch(`/mode/${button.dataset.mode}`, {method: 'POST'});
       refreshStatus();
     }));
@@ -542,12 +562,26 @@
     }
     slider.addEventListener('input', () => {
       dragging = true;
-      brightnessValue.textContent = `${slider.value}%`;
+      brightnessNum.value = slider.value;
     });
     slider.addEventListener('change', async () => {
       await fetch('/brightness', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({brightness: slider.value})});
       dragging = false;
       refreshStatus();
+    });
+    /* Typing a specific value: commit on blur or Enter so single keystrokes
+       don't hammer the server. Clamp to the same 5-100 range as the slider. */
+    function commitBrightnessNum() {
+      let value = parseInt(brightnessNum.value, 10);
+      if (Number.isNaN(value)) { value = parseInt(slider.value, 10) || 50; }
+      value = Math.max(5, Math.min(100, value));
+      brightnessNum.value = value;
+      slider.value = value;
+      fetch('/brightness', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({brightness: value})}).then(refreshStatus);
+    }
+    brightnessNum.addEventListener('change', commitBrightnessNum);
+    brightnessNum.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); brightnessNum.blur(); commitBrightnessNum(); }
     });
     refreshStatus();
     setInterval(refreshStatus, 10000);
