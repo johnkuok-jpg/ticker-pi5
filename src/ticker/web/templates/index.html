@@ -117,7 +117,18 @@
                  autocomplete="off" spellcheck="false" aria-label="Custom hex color">
         </label>
       </div>
-      <p id="nametag-note" class="schedule">Types up to 14 characters big; longer names auto-fit.</p>
+      <label class="nametag-font-label" for="nametag-font">Font</label>
+      <select id="nametag-font" class="nametag-font" aria-label="Name tag font">
+        {% set fonts = [
+          ("spleen",      "Spleen (auto-fit)"),
+          ("terminus",    "Terminus 14 bold"),
+          ("scientifica", "Scientifica 11")
+        ] %}
+        {% for value, label in fonts %}
+        <option value="{{ value }}" {% if value == nametag_font %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <p id="nametag-note" class="schedule">Names that are too long scroll left-to-right.</p>
     </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
@@ -152,6 +163,7 @@
     const nametagHex = document.getElementById('nametag-hex');
     const nametagNote = document.getElementById('nametag-note');
     const nametagSwatches = document.querySelectorAll('.nametag-swatch');
+    const nametagFont = document.getElementById('nametag-font');
     let bikeStationId = {{ bike_station | tojson }};
     const netBanner = document.getElementById('net-banner');
     /* As with the flight field: a poll must not reset a station the user has
@@ -352,12 +364,15 @@
     }
     nametagForm.addEventListener('submit', async event => {
       event.preventDefault();
-      await saveNametag({name: nametagInput.value, color: nametagHex.value});
+      await saveNametag({name: nametagInput.value, color: nametagHex.value, font: nametagFont.value});
     });
     nametagSwatches.forEach(el => {
-      el.addEventListener('click', () => saveNametag({name: nametagInput.value, color: el.dataset.color}));
+      el.addEventListener('click', () => saveNametag({name: nametagInput.value, color: el.dataset.color, font: nametagFont.value}));
     });
-    nametagHex.addEventListener('change', () => saveNametag({name: nametagInput.value, color: nametagHex.value}));
+    nametagHex.addEventListener('change', () => saveNametag({name: nametagInput.value, color: nametagHex.value, font: nametagFont.value}));
+    /* Font: change fires as soon as the user picks a different option; save
+       immediately (like the swatches) so the LED updates on the same tap. */
+    nametagFont.addEventListener('change', () => saveNametag({name: nametagInput.value, color: nametagHex.value, font: nametagFont.value}));
     slider.addEventListener('input', () => {
       dragging = true;
       brightnessValue.textContent = `${slider.value}%`;

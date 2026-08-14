@@ -179,6 +179,7 @@ class Config:
     bike_station_id: str = ""
     nametag_name: str = ""
     nametag_color: str = "#FFFFFF"
+    nametag_font: str = "spleen"
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -234,6 +235,10 @@ class Config:
     @property
     def nametag_name_file(self) -> Path:
         return self.state_dir / "nametag_name"
+
+    @property
+    def nametag_font_file(self) -> Path:
+        return self.state_dir / "nametag_font"
 
     @property
     def nametag_color_file(self) -> Path:
@@ -485,6 +490,29 @@ class Config:
             chosen = ""
         return _parse_hex_color(chosen or self.nametag_color)
 
+    def current_nametag_font(self) -> str:
+        """Font family for the nametag mode: state file wins, else .env, else default.
+
+        The renderer validates this against its own family list, so an unknown
+        value here quietly falls back to the default rather than crashing.
+        """
+        try:
+            chosen = self.nametag_font_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            chosen = ""
+        return chosen or self.nametag_font
+
+    def set_nametag_font(self, family: str) -> None:
+        """Persist the chosen nametag font family. Only known families are accepted."""
+        # Kept in sync with nametag.VALID_FAMILIES; duplicated here to avoid a
+        # circular import (config is imported by nametag).
+        valid = ("spleen", "terminus", "scientifica")
+        value = str(family).strip().lower()
+        if value not in valid:
+            raise ValueError(f"Unknown nametag font family: {family!r}")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.nametag_font_file.write_text(f"{value}\n", encoding="utf-8")
+
     def set_nametag_color(self, hex_color: str) -> None:
         """Persist the chosen text color. Value is stored in canonical '#RRGGBB' form.
 
@@ -572,6 +600,7 @@ def load_config(env_file: Path | None = None) -> Config:
         bike_station_id=os.getenv("BIKE_STATION_ID", "").strip(),
         nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
         nametag_color=(os.getenv("NAMETAG_COLOR", "").strip() or _DEFAULT_NAMETAG_HEX),
+        nametag_font=(os.getenv("NAMETAG_FONT", "").strip().lower() or "spleen"),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

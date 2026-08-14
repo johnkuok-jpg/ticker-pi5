@@ -67,6 +67,7 @@ def create_app() -> Flask:
             bike_station=config.current_bike_station(),
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
+            nametag_font=config.current_nametag_font(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -218,6 +219,7 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         raw_name = payload.get("name", request.form.get("name"))
         raw_color = payload.get("color", request.form.get("color"))
+        raw_font = payload.get("font", request.form.get("font"))
         config = load_config()
 
         changed = False
@@ -228,11 +230,15 @@ def create_app() -> Flask:
             if raw_color is not None and str(raw_color).strip():
                 config.set_nametag_color(str(raw_color))
                 changed = True
+            if raw_font is not None and str(raw_font).strip():
+                config.set_nametag_font(str(raw_font))
+                changed = True
         except ValueError as error:
             return jsonify(
                 error=str(error),
                 name=config.current_nametag_name(),
                 color=_rgb_to_hex(config.current_nametag_color()),
+                font=config.current_nametag_font(),
             ), 400
 
         if changed:
@@ -241,6 +247,7 @@ def create_app() -> Flask:
         return jsonify(
             name=config.current_nametag_name(),
             color=_rgb_to_hex(config.current_nametag_color()),
+            font=config.current_nametag_font(),
             current_mode=config.current_mode(),
         )
 
@@ -360,6 +367,7 @@ def create_app() -> Flask:
             bike_station=config.current_bike_station(),
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
+            nametag_font=config.current_nametag_font(),
             network_notice=config.network_notice(),
         )
 
