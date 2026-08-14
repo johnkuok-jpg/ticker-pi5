@@ -525,5 +525,128 @@ check("blank column between icon and title", min(header_text_cols) >= ICON_WIDTH
       f"first text col {min(header_text_cols)}")
 check("icon stays inside its own columns", max(icon_cols) < TITLE_X, str(max(icon_cols)))
 
+# --------------------------------------------------------------------------
+# Car count. Spelled out as "10 CAR" it is twice the width of the old "10C",
+# which eats into the destination, so the budget is checked arithmetically for
+# every train BART actually runs before any pixels are inspected.
+# --------------------------------------------------------------------------
+section("BART car count")
+
+from ticker.modes.bart import CARS_GAP, CARS_TINT, GAP, LABEL_X, _cars_color  # noqa: E402
+
+cars_canvas = Canvas(128, 32)
+CW = lambda s: cars_canvas.text_width(s, SMALL_FONT)  # noqa: E731
+
+check("spelled out, not abbreviated", CW("10 CAR") == 2 * CW("10C"),
+      f'"10 CAR"={CW("10 CAR")}px vs "10C"={CW("10C")}px')
+check("car count separated more than other fields", CARS_GAP > GAP,
+      f"CARS_GAP={CARS_GAP} GAP={GAP}")
+
+# Every destination the system actually terminates at, so a name that only
+# appears in the station list cannot make this look worse than reality.
+DESTS = ("ANTIOCH", "BERRYESSA", "DALY CITY", "DUBLIN",
+         "MILLBRAE", "PITTSBURG", "RICHMOND", "SFO AIRPORT")
+
+
+def label_room(countdown, platform, cars):
+    """Pixels left for the destination, mirroring _draw_departure's arithmetic."""
+    x = 128 - 1 - CW(countdown)
+    if platform:
+        x -= GAP + CW(platform)
+    if cars:
+        x -= CARS_GAP + CW(f"{cars} CAR")
+    return x - LABEL_X - GAP
+
+
+# BART platforms are single digits, but a two-digit platform is priced in so the
+# layout cannot be broken by a feed surprise.
+truncated = [(d, cd, plat, cars)
+             for d in DESTS
+             for cd in ("NOW", "10M", "5M")
+             for plat in ("", "1", "12")
+             for cars in (0, 5, 9, 10)
+             if cars_canvas.fit(d, label_room(cd, plat, cars), SMALL_FONT) != d]
+check("no destination truncated by the car count", not truncated, str(truncated[:3]))
+
+check("omitted car count returns space to the destination",
+      label_room("NOW", "1", 0) > label_room("NOW", "1", 10),
+      f'{label_room("NOW", "1", 0)}px vs {label_room("NOW", "1", 10)}px')
+
+
+def render_cars(cars, destination="SFO AIRPORT", minutes=0, platform="1"):
+    canvas = Canvas(128, 32)
+    mode = BartMode(make_config())
+    mode.board = bart.Board(
+        station="EMBR", name="EMBARCADERO",
+        departures=(bart.Departure(destination=destination, label=destination,
+                                   minutes=minutes, color=(255, 225, 40),
+                                   platform=platform, direction="North",
+                                   cars=cars, delay_seconds=0),),
+    )
+    mode._station = "EMBR"
+    mode._last_refresh = 1e18
+    mode.render(canvas, 0)
+    return canvas
+
+
+def color_columns(canvas, rgb, row_y):
+    pix = canvas.image_buffer.load()
+    return [x for x in range(128) if any(pix[x, y] == rgb for y in range(row_y, row_y + 8))]
+
+
+LINE = (255, 225, 40)  # the colour render_cars() gives its departure
+CARS_RGB = _cars_color(LINE)
+
+ten = render_cars(10)
+none = render_cars(0)
+ten_cols = color_columns(ten, CARS_RGB, 8)
+check("car count drawn when the feed reports it", len(ten_cols) >= 10, str(len(ten_cols)))
+check("nothing drawn when the feed omits it", not color_columns(none, CARS_RGB, 8),
+      str(color_columns(none, CARS_RGB, 8)))
+
+# The destination must genuinely gain the reclaimed space, not merely be allowed
+# to: a bug that dropped the car count without widening the label would still
+# pass the arithmetic check above.
+lit_ten = [x for x in range(128) if any(ten.image_buffer.load()[x, y] == LINE
+                                        for y in range(8, 16))]
+lit_none = [x for x in range(128) if any(none.image_buffer.load()[x, y] == LINE
+                                         for y in range(8, 16))]
+check("destination still fully drawn either way", lit_ten and lit_none
+      and max(lit_ten) == max(lit_none), f"{max(lit_ten)} vs {max(lit_none)}")
+
+# The car count must not collide with the platform beside it.
+plat_cols = color_columns(ten, (108, 122, 148), 8)
+if plat_cols and ten_cols:
+    check("gap held between car count and platform",
+          min(plat_cols) - max(ten_cols) - 1 >= CARS_GAP - 1,
+          f"{min(plat_cols) - max(ten_cols) - 1}px")
+
+# Colour is what keeps the platform from reading as part of the car count, so the
+# two must not share a colour. This is the check that would catch someone
+# reverting the tint to a neutral grey.
+check("car count and platform are different colours", CARS_RGB != (108, 122, 148),
+      f"cars {CARS_RGB} vs platform (108, 122, 148)")
+
+# The count carries the line's hue exactly, which is what makes it read as
+# belonging to the destination rather than as a third unrelated field.
+hue_kept = []
+for name, rgb in bart.LINE_COLORS.items():
+    tinted = _cars_color(rgb)
+    if any(abs(t - round(c * CARS_TINT)) > 0 for c, t in zip(rgb, tinted)):
+        hue_kept.append(name)
+check("car count keeps the line's hue", not hue_kept, str(hue_kept))
+
+# Every line, not just the one posed above: the count must sit below its own
+# destination in weight, and must still be lit at the 20% night step. Red is the
+# darkest line colour and the one that decided the tint.
+too_loud = [n for n, rgb in bart.LINE_COLORS.items()
+            if _luminance(_cars_color(rgb)) >= _luminance(rgb)]
+check("car count dimmer than its own destination", not too_loud, str(too_loud))
+
+dark = {n: _luminance(tuple(round(c * CARS_TINT * 0.20) for c in rgb))
+        for n, rgb in bart.LINE_COLORS.items()}
+check("car count still lit at the 20% night step", min(dark.values()) > 4,
+      f"dimmest is {min(dark, key=dark.get)} at {min(dark.values()):.1f}")
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

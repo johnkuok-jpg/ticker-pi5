@@ -23,12 +23,24 @@ from ticker.modes.base import Mode
 WHITE = (235, 240, 250)
 DIM = (108, 122, 148)
 AMBER = (255, 190, 60)
+# Car count is drawn in the departure's own line colour rather than a neutral
+# grey, which groups it with the destination it describes. That matters because
+# the platform sits immediately to its right in neutral grey: without the shared
+# hue "10 CAR 1" reads as a single field, and the digit looks like part of the
+# count. Colour does that separating, so no "P" prefix is needed on the platform.
+#
+# Scaled down because it is still the lowest-priority thing on the row and a
+# saturated line colour at full strength outshouts the destination. Kept well
+# above a token dimming so it does not become the first thing to vanish at the
+# 20% night brightness step.
+CARS_TINT = 0.55
 ERROR = (255, 150, 60)
 
 HEADER_Y = 0
 ROW_Y = (8, 16, 24)
 LABEL_X = 0
 GAP = 3
+CARS_GAP = 6
 
 # The train sits in the header's spare pixels: no station name comes close to
 # filling the row, so the mode is identifiable at a glance from across the room
@@ -37,6 +49,16 @@ ICON_X = 0
 ICON_Y = 1
 ICON_WIDTH = len(icons.TRAIN[0])
 TITLE_X = ICON_WIDTH + GAP
+
+
+def _cars_color(line_color: tuple[int, int, int]) -> tuple[int, int, int]:
+    """The car count's colour: the line's own hue, scaled back.
+
+    Scaling every channel by the same factor keeps the hue exactly, so the count
+    still reads as belonging to the destination rather than looking like a
+    separate muddy colour.
+    """
+    return tuple(round(channel * CARS_TINT) for channel in line_color)  # type: ignore[return-value]
 
 
 def _rider_message(raw: str) -> str:
@@ -155,6 +177,19 @@ class BartMode(Mode):
             platform_x = countdown_x - GAP - platform_width
             canvas.text(platform_x, y, platform, DIM, SMALL)
 
-        label = canvas.fit(departure.label, platform_x - LABEL_X - GAP, SMALL)
+        # Car count. BART runs anything from five to ten cars, and a short train
+        # only covers part of the platform, so it changes where you stand. Spelled
+        # out as "10 CAR" the way station signage reads, which also stops it being
+        # mistaken for a second platform number. A zero means the feed omitted the
+        # field, so draw nothing and give the space back to the destination.
+        cars_x = platform_x
+        if departure.cars > 0:
+            cars = f"{departure.cars} CAR"
+            # A wider gap here than elsewhere: the count and the platform are both
+            # short and numeric, and three pixels apart they read as one run.
+            cars_x = platform_x - CARS_GAP - canvas.text_width(cars, SMALL)
+            canvas.text(cars_x, y, cars, _cars_color(departure.color), SMALL)
+
+        label = canvas.fit(departure.label, cars_x - LABEL_X - GAP, SMALL)
         canvas.text(LABEL_X, y, label, departure.color, SMALL)
         canvas.text(countdown_x, y, countdown, AMBER if departure.is_delayed else WHITE, SMALL)
