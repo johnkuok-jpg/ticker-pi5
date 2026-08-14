@@ -62,13 +62,17 @@ _DISSOLVE_SECS = 1.2      # cross-fade from silhouette to full color
 _REVEAL_SECS = 3.5        # colored, name scrolling
 _FADE_OUT_SECS = 0.6      # gentle exit so the panel isn't jarring between rounds
 
-# Colors. The silhouette is drawn in a very dim gray-blue rather than pure
-# black so it actually reads on the panel's black background — a black-on-black
-# silhouette is invisible. The color is dim enough that once the reveal fades
-# in it disappears under the sprite's real colors.
-_LABEL = (235, 240, 250)
-_MASK_QUESTION = (110, 118, 140)
-_SILHOUETTE_INK = (34, 40, 60)
+# Colors. The TV bumper this is imitating splits the frame in half: a warm sky
+# blue behind the silhouette and a saturated coral red behind the "who's that"
+# text. On a physical LED matrix those colors need a nudge toward the darker
+# end of the ramp — the panel is already emitting light, so the mid-tones read
+# noticeably brighter than they would on a screen. These values were picked by
+# eye against a 128×32 preview at typical brightness.
+_BG_BLUE = (24, 60, 128)      # sprite side
+_BG_RED = (150, 22, 22)       # text side
+_SILHOUETTE_INK = (0, 0, 0)   # pure black; the colored BG makes it read now
+_LABEL = (255, 240, 210)      # warm off-white on the red, matches the TV bumper
+_MASK_QUESTION = (255, 230, 90)  # ??? in yellow, echoing the reference's mask
 
 
 @dataclass
@@ -81,9 +85,8 @@ class _Round:
 
     def __post_init__(self) -> None:
         r, g, b, a = self.sprite.split()
-        # Ink the silhouette in a dim gray-blue rather than pure black so it's
-        # visible against the panel's black background — the traditional TV
-        # effect uses a bright colored panel BG, but we don't have one here.
+        # Pure black silhouette — the colored panel background provides the
+        # contrast the TV bumper gets from its bright blue frame.
         tinted = Image.new("RGBA", self.sprite.size, (*_SILHOUETTE_INK, 255))
         tinted.putalpha(a)
         self.silhouette = tinted
@@ -237,8 +240,14 @@ class PokemonMode(Mode):
             reveal_alpha = 1.0 - (elapsed - reveal_end) / _FADE_OUT_SECS
         reveal_alpha = max(0.0, min(1.0, reveal_alpha))
 
-        # Composite: silhouette underneath so it stays visible through the fade,
-        # colored sprite on top with adjusted alpha.
+        # Paint the colored background halves first — blue behind the sprite,
+        # red behind the label — then composite the silhouette/sprite over the
+        # blue half. The red half is a bare backdrop for the scrolling text.
+        canvas.fill_rect(0, 0, _SPRITE_BOX, 32, _BG_BLUE)
+        canvas.fill_rect(_SPRITE_BOX, 0, 128 - _SPRITE_BOX, 32, _BG_RED)
+
+        # Silhouette underneath so it stays visible through the fade, colored
+        # sprite on top with alpha scaled by reveal_alpha.
         composite = round_.silhouette.copy()
         color = round_.sprite.copy()
         r, g, b, a = color.split()
@@ -255,22 +264,35 @@ class PokemonMode(Mode):
         label_color = _LABEL if show_name else _MASK_QUESTION
         # scroll_text on the shared canvas would paint across the sprite area,
         # so render into a scratch canvas the width of the label zone and blit
-        # that back — same pattern spotify's now-playing scroller uses.
-        _draw_scrolling_label(canvas, label, label_color, tick)
+        # that back — same pattern spotify's now-playing scroller uses. The
+        # scratch is pre-filled with the red backdrop so the paste doesn't
+        # punch a black rectangle through the panel background.
+        _draw_scrolling_label(canvas, label, label_color, tick, backdrop=_BG_RED)
 
 
-def _draw_scrolling_label(canvas: Canvas, text: str, color: tuple[int, int, int], tick: int) -> None:
+def _draw_scrolling_label(
+    canvas: Canvas,
+    text: str,
+    color: tuple[int, int, int],
+    tick: int,
+    backdrop: tuple[int, int, int] = (0, 0, 0),
+) -> None:
     """Scroll *text* left-to-right in the label zone only, leaving the sprite alone.
 
     ``Canvas.scroll_text`` draws across the whole panel width, which would
     happily paint on top of the sprite. Instead, render one full period of the
     text into a scratch canvas the label zone's width, then paste that back at
     the label zone's origin so the sprite side stays untouched.
+
+    ``backdrop`` pre-fills the scratch canvas so the paste blends into an
+    existing panel background instead of stamping a black rectangle over it.
     """
     period = canvas.text_width(text, MEDIUM) + 12  # 12px gap matches scroll_text's default
     if period <= 12:
         return
     scratch = Canvas(_TEXT_WIDTH, _TEXT_ZONE_H)
+    if backdrop != (0, 0, 0):
+        scratch.fill_rect(0, 0, _TEXT_WIDTH, _TEXT_ZONE_H, backdrop)
     scratch.scroll_text(0, text, color, tick, MEDIUM, gap=12)
     canvas.image_buffer.paste(scratch.image_buffer, (_TEXT_LEFT, _TEXT_Y_TOP))
 
