@@ -39,6 +39,19 @@
       <p id="schedule" class="schedule">{{ schedule_note }}</p>
     </section>
     <section class="flight">
+      <label for="symbol-input">Stocks watchlist</label>
+      <form id="symbol-form" class="flight-row">
+        <input id="symbol-input" name="symbol" type="text"
+               placeholder="TSLA" autocapitalize="characters" autocomplete="off"
+               spellcheck="false" maxlength="12" aria-label="Ticker symbol to add">
+        <button type="submit" class="flight-go">Add</button>
+      </form>
+      {# Rendered server-side so the list is correct before any JS runs, then
+         replaced wholesale by renderSymbols() after every add or remove. #}
+      <div id="symbol-list" class="symbol-list" aria-label="Watchlist"></div>
+      <p id="symbol-note" class="schedule">Up to {{ max_symbols }} symbols, 6 seconds each. Crypto works too: BTC-USD.</p>
+    </section>
+    <section class="flight">
       <label for="flight-input">Flight to track</label>
       <form id="flight-form" class="flight-row">
         <input id="flight-input" name="flight" type="text" value="{{ flight }}"
@@ -187,6 +200,12 @@
     const slider = document.getElementById('brightness');
     const brightnessValue = document.getElementById('brightness-value');
     const schedule = document.getElementById('schedule');
+    const symbolForm = document.getElementById('symbol-form');
+    const symbolInput = document.getElementById('symbol-input');
+    const symbolList = document.getElementById('symbol-list');
+    const symbolNote = document.getElementById('symbol-note');
+    let symbols = {{ symbols | list | tojson }};
+    const maxSymbols = {{ max_symbols | tojson }};
     const flightForm = document.getElementById('flight-form');
     const flightInput = document.getElementById('flight-input');
     const flightNote = document.getElementById('flight-note');
@@ -225,6 +244,11 @@
       if (!dragging && typeof data.brightness === 'number') {
         slider.value = data.brightness;
         brightnessValue.textContent = `${data.brightness}%`;
+      }
+      /* Keep the watchlist in step if it was edited from another phone. */
+      if (Array.isArray(data.symbols) && data.symbols.join(',') !== symbols.join(',')) {
+        symbols = data.symbols;
+        renderSymbols();
       }
       if (!typingFlight && typeof data.flight === 'string' && data.flight !== flightInput.value) {
         flightInput.value = data.flight;
@@ -382,6 +406,69 @@
     /* Name tag: name + color both save to the same endpoint. Tapping a
        preset swatch saves immediately; the hex input needs the Show button
        (or Enter) because we do not want to save on every keystroke. */
+    /* Watchlist. The chip list is rebuilt from the array the server returns
+       rather than patched in place, so the page and the state file cannot drift
+       apart -- and a rejected add leaves the visible list untouched. */
+    function renderSymbols() {
+      symbolList.innerHTML = '';
+      symbols.forEach(symbol => {
+        const chip = document.createElement('span');
+        chip.className = 'symbol-chip';
+        const label = document.createElement('b');
+        label.textContent = symbol;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'symbol-remove';
+        remove.textContent = '\u00d7';
+        remove.setAttribute('aria-label', `Remove ${symbol}`);
+        remove.addEventListener('click', () => removeSymbol(symbol));
+        chip.appendChild(label);
+        chip.appendChild(remove);
+        symbolList.appendChild(chip);
+      });
+      symbolInput.disabled = symbols.length >= maxSymbols;
+    }
+    async function postSymbol(path, symbol) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol})
+      });
+      const data = await response.json();
+      if (Array.isArray(data.symbols)) {
+        symbols = data.symbols;
+        renderSymbols();
+      }
+      if (!response.ok) {
+        symbolNote.textContent = data.error || 'Could not update the watchlist.';
+        return null;
+      }
+      return data;
+    }
+    async function removeSymbol(symbol) {
+      const data = await postSymbol('/stocks/remove', symbol);
+      if (data) {
+        symbolNote.textContent = `Removed ${symbol}.`;
+      }
+    }
+    symbolForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const wanted = symbolInput.value.trim().toUpperCase();
+      if (!wanted) { return; }
+      if (symbols.includes(wanted)) {
+        symbolNote.textContent = `${wanted} is already on the list.`;
+        symbolInput.value = '';
+        return;
+      }
+      symbolNote.textContent = `Adding ${wanted}\u2026`;
+      const data = await postSymbol('/stocks/add', wanted);
+      if (data) {
+        symbolInput.value = '';
+        symbolNote.textContent = `Added ${wanted}. Prices refresh within a few seconds.`;
+        refreshStatus();
+      }
+    });
+    renderSymbols();
     async function saveNametag(fields) {
       const response = await fetch('/nametag', {
         method: 'POST',

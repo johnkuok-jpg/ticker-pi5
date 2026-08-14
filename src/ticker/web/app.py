@@ -10,7 +10,7 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template, request
 
 from ticker import bart, baywheels, net, spotify as spotify_client
-from ticker.config import VALID_MODES, load_config
+from ticker.config import MAX_SYMBOLS, VALID_MODES, load_config
 
 
 def _renderer_status(pid_file: Path) -> tuple[int | None, bool]:
@@ -124,6 +124,8 @@ def create_app() -> Flask:
             stations=bart.STATIONS,
             station=config.current_bart_station(),
             bike_station=config.current_bike_station(),
+            symbols=config.current_symbols(),
+            max_symbols=MAX_SYMBOLS,
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),
@@ -268,6 +270,46 @@ def create_app() -> Flask:
         if chosen:
             config.set_mode("bikes")
         return jsonify(bike_station=chosen, current_mode=config.current_mode())
+
+    # -- Stocks watchlist ----------------------------------------------------
+    #
+    # The one mode whose settings used to live only in TICKER_SYMBOLS, which
+    # meant an SSH session and a service restart to change a symbol. Both routes
+    # return the whole resulting list, so the page never has to guess what the
+    # state file ended up holding.
+
+    @app.post("/stocks/add")
+    def add_symbol():  # type: ignore[no-untyped-def]
+        """Add a ticker to the watchlist, and switch to the stocks mode.
+
+        Same reasoning as the station pickers: adding a symbol is a request to
+        see it, so the panel follows rather than waiting for a second tap.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("symbol", request.form.get("symbol", ""))
+        config = load_config()
+        try:
+            symbols = config.add_symbol(str(requested))
+        except ValueError as error:
+            return jsonify(error=str(error), symbols=list(config.current_symbols())), 400
+        config.set_mode("stocks")
+        return jsonify(symbols=list(symbols), current_mode=config.current_mode())
+
+    @app.post("/stocks/remove")
+    def remove_symbol():  # type: ignore[no-untyped-def]
+        """Drop a ticker from the watchlist.
+
+        Deliberately does not touch the mode: removing something is not a
+        request to go and look at the panel.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("symbol", request.form.get("symbol", ""))
+        config = load_config()
+        try:
+            symbols = config.remove_symbol(str(requested))
+        except ValueError as error:
+            return jsonify(error=str(error), symbols=list(config.current_symbols())), 400
+        return jsonify(symbols=list(symbols))
 
     @app.post("/nametag")
     def set_nametag():  # type: ignore[no-untyped-def]
@@ -426,6 +468,7 @@ def create_app() -> Flask:
             flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
             bike_station=config.current_bike_station(),
+            symbols=list(config.current_symbols()),
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),

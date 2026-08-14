@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +49,12 @@ def _canonical_hex_color(value: str) -> str:
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
+
+# Watchlist ceiling. The stocks mode gives each symbol a 6-second card, so a
+# dozen symbols is already a 72-second trip round the list -- long enough that
+# the symbol you want is rarely the one on screen. The cap is a usability limit
+# first and a guard against a runaway state file second.
+MAX_SYMBOLS = 12
 
 _DAY_NUMBERS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _DAY_GROUPS = {
@@ -245,6 +252,10 @@ class Config:
     @property
     def bike_station_file(self) -> Path:
         return self.state_dir / "bike_station"
+
+    @property
+    def symbols_file(self) -> Path:
+        return self.state_dir / "symbols"
 
     @property
     def nametag_name_file(self) -> Path:
@@ -547,6 +558,75 @@ class Config:
         canonical = _canonical_hex_color(hex_color)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.nametag_color_file.write_text(f"{canonical}\n", encoding="utf-8")
+
+    def current_symbols(self) -> tuple[str, ...]:
+        """Watchlist for the stocks mode: state file wins, else ``TICKER_SYMBOLS``.
+
+        Read live on every refresh rather than captured at construction, so an
+        edit in the web app lands on the panel at the next quote refresh without
+        restarting the renderer.
+
+        An empty state file is not the same as a missing one: clearing the list
+        down to nothing is a deliberate act, but a panel with no symbols has
+        nothing to draw, so the env-var default is restored instead.
+        """
+        try:
+            raw = self.symbols_file.read_text(encoding="utf-8")
+        except OSError:
+            raw = ""
+        stored = tuple(part.strip().upper() for part in raw.split(",") if part.strip())
+        return stored or self.symbols
+
+    def set_symbols(self, symbols: Iterable[str]) -> None:
+        """Persist the whole watchlist, de-duplicated, in the order given.
+
+        Every ticker is validated for shape. The universe of real symbols is not
+        knowable offline -- exchange suffixes, index carets and crypto pairs are
+        all legitimate -- so this checks the character set rather than trying to
+        keep a list of every symbol that exists.
+        """
+        cleaned: list[str] = []
+        for symbol in symbols:
+            value = "".join(str(symbol).split()).upper()
+            if not value:
+                continue
+            if len(value) > 12:
+                raise ValueError(f"Symbol is unreasonably long: {symbol!r}")
+            if not all(char.isalnum() or char in ".-^=" for char in value):
+                raise ValueError(f"Not a valid ticker symbol: {symbol!r}")
+            if value not in cleaned:
+                cleaned.append(value)
+        if len(cleaned) > MAX_SYMBOLS:
+            raise ValueError(f"Watchlist is limited to {MAX_SYMBOLS} symbols")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.symbols_file.write_text(",".join(cleaned) + "\n", encoding="utf-8")
+
+    def add_symbol(self, symbol: str) -> tuple[str, ...]:
+        """Append one symbol to the watchlist and return the new list.
+
+        Adding a symbol already on the list is a no-op rather than an error: the
+        user's intent ("I want to see this") is already satisfied, and a red
+        error for a duplicate tap would be noise.
+        """
+        current = list(self.current_symbols())
+        current.append(symbol)
+        self.set_symbols(current)
+        return self.current_symbols()
+
+    def remove_symbol(self, symbol: str) -> tuple[str, ...]:
+        """Drop one symbol from the watchlist and return the new list.
+
+        Removing the last remaining symbol is refused. An empty list would fall
+        back to the env-var default, so the delete button would appear to undo
+        itself and repopulate four symbols the user never asked for; a plain
+        "keep at least one" is easier to understand than that.
+        """
+        target = "".join(str(symbol).split()).upper()
+        remaining = [item for item in self.current_symbols() if item != target]
+        if not remaining:
+            raise ValueError("Keep at least one symbol on the watchlist")
+        self.set_symbols(remaining)
+        return self.current_symbols()
 
     def set_bart_station(self, station: str) -> None:
         """Persist the chosen BART station.

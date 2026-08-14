@@ -126,6 +126,7 @@ class StocksMode(Mode):
         super().__init__(config)
         self.quotes: list[Quote] = []
         self._last_refresh = 0.0
+        self._watched: tuple[str, ...] = ()
 
     # -- data ----------------------------------------------------------------
 
@@ -134,7 +135,7 @@ class StocksMode(Mode):
             import yfinance as yf
 
             quotes: list[Quote] = []
-            for symbol in self.config.symbols:
+            for symbol in self.config.current_symbols():
                 ticker = yf.Ticker(symbol)
                 daily = ticker.history(period="5d", interval="1d", auto_adjust=False)
                 closes = daily["Close"].dropna()
@@ -156,6 +157,13 @@ class StocksMode(Mode):
                 quotes.append(Quote(symbol, price, previous_close, intraday))
             if quotes:
                 self.quotes = quotes
+                # Drop any quote whose symbol has since left the watchlist, so a
+                # removed ticker stops appearing even if its own fetch failed on
+                # this pass and the loop above skipped over it.
+                watched = set(self._watched)
+                kept = [quote for quote in self.quotes if quote.symbol in watched]
+                if kept:
+                    self.quotes = kept
         except Exception:
             # Keep the last good values when Yahoo Finance is down or rate limited.
             pass
@@ -174,7 +182,17 @@ class StocksMode(Mode):
     # -- entry point ---------------------------------------------------------
 
     def render(self, canvas: Canvas, tick: int) -> None:
-        if time.monotonic() - self._last_refresh >= self.CACHE_SECONDS:
+        # A watchlist edit in the web app should show up straight away rather
+        # than at the end of the current cache window: waiting up to a minute to
+        # see the symbol you just typed reads as the add having failed.
+        # Checked about once a second rather than every frame; this is a file
+        # read, and no edit needs 30Hz.
+        stale = False
+        if not self._watched or tick % max(1, self.config.fps) == 0:
+            watched = self.config.current_symbols()
+            stale = bool(self._watched) and watched != self._watched
+            self._watched = watched
+        if stale or time.monotonic() - self._last_refresh >= self.CACHE_SECONDS:
             self._refresh()
         canvas.clear()
         if not self.quotes:

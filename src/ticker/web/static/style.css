@@ -112,3 +112,54 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
   .flight-row button { width: 100%; }
   #station-select, #flight-input, #nametag-input { width: 100%; flex: 0 0 auto; }
 }
+
+/* Stocks watchlist. Chips rather than a list: a watchlist is a set of short
+   tokens, and a chip puts the delete control inside the thing it deletes. */
+.symbol-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.symbol-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.4rem 0.3rem 0.6rem;
+  border: 1px solid #2b3757;
+  border-radius: 999px;
+  background: #16203a;
+  font-variant-numeric: tabular-nums;
+}
+
+.symbol-chip b {
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+  color: #ffb000;
+}
+
+/* 28px hit area: this sits next to its neighbours on a phone, and a smaller
+   target makes deleting the wrong symbol easy. */
+.symbol-remove {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #24304e;
+  color: #97a3c0;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.symbol-remove:hover,
+.symbol-remove:focus-visible {
+  background: #3a2430;
+  color: #ff6b6b;
+}
+
+#symbol-input:disabled {
+  opacity: 0.5;
+}
