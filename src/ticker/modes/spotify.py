@@ -73,6 +73,43 @@ SCROLL_PX_PER_TICK = 0.5
 SCROLL_DWELL_TICKS = 45
 
 
+# --- Spotify wordmark ------------------------------------------------------
+#
+# A small, unmistakable Spotify glyph used wherever album art is missing
+# (idle placeholder, unconfigured client, connect prompt, and no-art frames).
+# We used to draw arcs with PIL's ``ImageDraw.arc``, but at this pixel scale
+# (a 17×17 disc) PIL's anti-aliased arc stubs read as random speckles — the
+# arcs came out as a couple of gray marks in the top-right rather than the
+# three parallel sound-wave arcs that give the wordmark its silhouette.
+#
+# Instead we plot the arcs pixel-by-pixel as three ``dome-down`` curves:
+# each arc's middle sits a row higher than its ends, so it curves gently
+# downward on both sides, mirroring the real logo.
+
+
+def _draw_spotify_mark(image: Image.Image, cx: int, cy: int) -> None:
+    """Draw the Spotify green-disc-with-three-arcs mark centred on (cx, cy).
+
+    Sized for a 32×32 slot: a 17-pixel disc with three arcs spanning the
+    middle 12 pixels. Safe to call on any RGB image — all drawing is inside
+    a bounded box around the centre.
+    """
+    draw = ImageDraw.Draw(image)
+    # Green disc. Radius 8 gives a 17-pixel-wide disc, which is the largest
+    # disc that still leaves a one-pixel margin inside a 32×32 art slot.
+    draw.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill=SPOTIFY_GREEN)
+
+    # Three arcs: top / middle / bottom, each a wide-shallow ``dome-down``
+    # curve. ``half_width`` shrinks toward the bottom so the arcs stay inside
+    # the disc as it narrows below the equator.
+    for y_middle, half_width in ((cy - 5, 6), (cy - 1, 5), (cy + 3, 4)):
+        for dx in range(-half_width, half_width + 1):
+            # Ends of each arc drop by one pixel; middle stays put. This is
+            # cheaper than a full parabola and reads the same at 1x.
+            drop = 1 if abs(dx) >= half_width - 1 else 0
+            draw.point((cx + dx, y_middle + drop), fill=(0, 0, 0))
+
+
 class SpotifyMode(Mode):
     """Renders the current Spotify track (or a placeholder when idle)."""
 
@@ -127,11 +164,10 @@ class SpotifyMode(Mode):
         if art is not None:
             canvas.image_buffer.paste(art, (0, 0))
             return
-        # No art yet — draw a dim square so the layout does not look broken.
+        # No art yet — dim square background, and the Spotify wordmark disc on top.
         draw = ImageDraw.Draw(canvas.image_buffer)
         draw.rectangle((0, 0, ART_SIZE - 1, ART_SIZE - 1), fill=(28, 28, 30))
-        # A tiny Spotify-green dot as a hint that it is the Spotify mode.
-        draw.ellipse((12, 12, 19, 19), fill=SPOTIFY_GREEN)
+        _draw_spotify_mark(canvas.image_buffer, cx=15, cy=15)
 
     def _draw_line(
         self,
@@ -199,23 +235,12 @@ class SpotifyMode(Mode):
             draw.point((x, BAR_ROW), fill=color)
 
     def _draw_placeholder(self, canvas: Canvas, message: str, tick: int) -> None:
-        """Idle screen: Spotify green dot on the left, message on the right.
+        """Idle screen: Spotify mark on the left, message on the right.
 
         Kept intentionally quiet so the panel does not look like an error state
         when the user simply is not playing anything.
         """
-        # Small green disc where the album art would be.
-        draw = ImageDraw.Draw(canvas.image_buffer)
-        cx, cy = 15, 15
-        draw.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill=SPOTIFY_GREEN)
-        # Three Spotify "sound wave" arcs inside the disc.
-        for radius in (3, 5, 7):
-            draw.arc(
-                (cx - radius, cy - radius - 1, cx + radius, cy + radius - 1),
-                start=290,
-                end=340,
-                fill=(0, 0, 0),
-            )
+        _draw_spotify_mark(canvas.image_buffer, cx=15, cy=15)
 
         # Message on the right, centred vertically. Scrolls if too long so a
         # long .env error message is still readable.
