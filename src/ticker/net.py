@@ -211,19 +211,62 @@ def _address(device: str) -> str:
     return ""
 
 
-def _active_signal() -> int:
-    """Signal strength of the network currently in use, 0-100."""
-    ok, output = _run(["-t", "-f", "IN-USE,SIGNAL", "device", "wifi", "list", "--rescan", "no"])
+def _active_ap() -> tuple[str, int]:
+    """(SSID, signal 0-100) of the access point currently in use.
+
+    Read from the scan list rather than from the device, because the device only
+    knows its connection *profile* name. Those usually match, but a Pi whose
+    Wi-Fi was provisioned by netplan carries profiles called things like
+    "netplan-wlan0-MiloNet", and that string on a 128x32 panel is both wrong and
+    unreadable across a room.
+    """
+    ok, output = _run(["-t", "-f", "IN-USE,SSID,SIGNAL", "device", "wifi", "list",
+                       "--rescan", "no"])
     if not ok:
-        return 0
+        return "", 0
     for line in output.splitlines():
         parts = _fields(line)
-        if parts and parts[0].strip() == "*" and len(parts) >= 2:
+        if len(parts) >= 3 and parts[0].strip() == "*":
             try:
-                return int(parts[1])
+                return parts[1], int(parts[2])
             except ValueError:
-                return 0
-    return 0
+                return parts[1], 0
+    return "", 0
+
+
+def _profile_ssid(profile: str) -> str:
+    """The SSID a stored profile actually joins, which is not always its name."""
+    if not profile:
+        return ""
+    ok, output = _run(["-t", "-f", "802-11-wireless.ssid", "connection", "show", profile])
+    if not ok:
+        return ""
+    for line in output.splitlines():
+        _, _, value = line.partition(":")
+        if value.strip():
+            return value.strip()
+    return ""
+
+
+def _wifi_profiles() -> list[tuple[str, str]]:
+    """(profile name, SSID) for every stored Wi-Fi profile except our hotspot."""
+    ok, output = _run(["-t", "-f", "NAME,TYPE", "connection", "show"])
+    if not ok:
+        return []
+    pairs = []
+    for line in output.splitlines():
+        parts = _fields(line)
+        if len(parts) >= 2 and parts[1] == "802-11-wireless" and parts[0] != HOTSPOT_CONNECTION:
+            pairs.append((parts[0], _profile_ssid(parts[0]) or parts[0]))
+    return pairs
+
+
+def _profile_for(ssid: str) -> str:
+    """The stored profile that joins this SSID, or the SSID itself if none does."""
+    for profile, profile_ssid in _wifi_profiles():
+        if profile_ssid == ssid:
+            return profile
+    return ssid
 
 
 def status() -> Status:
@@ -252,26 +295,33 @@ def status() -> Status:
     else:
         state = "unknown"
 
+    ssid, signal = _active_ap() if state == "connected" else ("", 0)
+    if state in ("connected", "connecting") and not ssid:
+        # No scan entry is marked in use yet -- mid-association, or a driver that
+        # does not flag it. The profile's own SSID is the next best answer, and
+        # the profile name is the last resort.
+        ssid = _profile_ssid(connection) or connection
     return Status(
         state=state,
-        ssid=connection if state in ("connected", "connecting") else "",
+        ssid=ssid if state in ("connected", "connecting") else "",
         ip=_address(device) if state in ("connected", "hotspot") else "",
-        signal=_active_signal() if state == "connected" else 0,
+        signal=signal,
         device=device,
     )
 
 
 def saved_networks() -> list[str]:
-    """Names of stored Wi-Fi profiles, excluding our own hotspot."""
-    ok, output = _run(["-t", "-f", "NAME,TYPE", "connection", "show"])
-    if not ok:
-        return []
-    names = []
-    for line in output.splitlines():
-        parts = _fields(line)
-        if len(parts) >= 2 and parts[1] == "802-11-wireless" and parts[0] != HOTSPOT_CONNECTION:
-            names.append(parts[0])
-    return names
+    """SSIDs the ticker has stored, excluding its own hotspot.
+
+    SSIDs rather than profile names, because these are matched against scan
+    results and shown to a person; use _profile_for() to get back the profile
+    name that nmcli's connection subcommands need.
+    """
+    seen: list[str] = []
+    for _, ssid in _wifi_profiles():
+        if ssid not in seen:
+            seen.append(ssid)
+    return seen
 
 
 def scan(rescan: bool = True) -> list[Network]:
@@ -337,7 +387,8 @@ def join(ssid: str, password: str = "", hidden: bool = False) -> tuple[bool, str
         return False, "Wi-Fi passwords are at least 8 characters"
 
     if ssid in saved_networks() and not password:
-        ok, output = _run(["connection", "up", "id", ssid], timeout=_CONNECT_TIMEOUT, root=True)
+        ok, output = _run(["connection", "up", "id", _profile_for(ssid)],
+                          timeout=_CONNECT_TIMEOUT, root=True)
         return ok, _explain(ok, output, ssid)
 
     args = ["device", "wifi", "connect", ssid]
@@ -349,7 +400,8 @@ def join(ssid: str, password: str = "", hidden: bool = False) -> tuple[bool, str
     if ok:
         # A network the user chose by hand should win over anything already
         # stored, including a hotspot left at default priority.
-        _run(["connection", "modify", ssid, "connection.autoconnect-priority", "10"], root=True)
+        _run(["connection", "modify", _profile_for(ssid),
+              "connection.autoconnect-priority", "10"], root=True)
     return ok, _explain(ok, output, ssid)
 
 
@@ -377,7 +429,7 @@ def forget(ssid: str) -> tuple[bool, str]:
         return False, "no network name given"
     if ssid == HOTSPOT_CONNECTION:
         return False, "that is the ticker's own setup network"
-    ok, output = _run(["connection", "delete", "id", ssid], root=True)
+    ok, output = _run(["connection", "delete", "id", _profile_for(ssid)], root=True)
     return ok, f"Forgot {ssid}" if ok else f"Could not forget {ssid}: {output.splitlines()[-1] if output else ''}"
 
 

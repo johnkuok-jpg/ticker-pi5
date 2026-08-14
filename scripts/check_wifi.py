@@ -73,13 +73,16 @@ def install_fake_nmcli(script: str) -> None:
 # connection at all -- there is no separate nmcli field for "I am an AP".
 # Branching on the -f field list, not just the subcommand: nmcli prints only the
 # fields it was asked for, and a fake that ignores that would let a column-order
-# bug pass. The signal lookup asks for two fields, the scan list for four.
+# bug pass. The active-AP lookup asks for three fields, the scan list for four.
+# The 802-11-wireless.ssid branch has to precede the bare "connection show" one,
+# because the property query is also a "connection show" invocation.
 CONNECTED = r'''
 case "$*" in
   *"device status"*) echo 'wlan0:wifi:connected:Kuok 5G';;
   *"device show wlan0"*) echo 'IP4.ADDRESS[1]:192.168.86.247/24';;
-  *"IN-USE,SIGNAL"*) printf '*:82\n:61\n:33\n';;
-  *"device wifi list"*) printf '*:Kuok 5G:82:WPA2\n:Neighbour\\:Net:61:WPA2\n:Guest:33:\n:Kuok 5G:70:WPA2\n';;
+  *"SIGNAL,SECURITY"*) printf '*:Kuok 5G:82:WPA2\n:Neighbour\\:Net:61:WPA2\n:Guest:33:\n:Kuok 5G:70:WPA2\n';;
+  *"IN-USE,SSID,SIGNAL"*) printf '*:Kuok 5G:82\n:Neighbour\\:Net:61\n:Guest:33\n';;
+  *"802-11-wireless.ssid"*) echo '802-11-wireless.ssid:Kuok 5G';;
   *"connection show"*) printf 'Kuok 5G:802-11-wireless\nWired connection 1:802-3-ethernet\nticker-setup:802-11-wireless\n';;
   *) echo '';;
 esac
@@ -89,8 +92,9 @@ exit 0
 OFFLINE = r'''
 case "$*" in
   *"device status"*) echo 'wlan0:wifi:disconnected:';;
-  *"IN-USE,SIGNAL"*) printf ':44\n';;
-  *"device wifi list"*) printf ':Neighbour:44:WPA2\n';;
+  *"SIGNAL,SECURITY"*) printf ':Neighbour:44:WPA2\n';;
+  *"IN-USE,SSID,SIGNAL"*) printf ':Neighbour:44\n';;
+  *"802-11-wireless.ssid"*) echo '802-11-wireless.ssid:Kuok 5G';;
   *"connection show"*) printf 'Kuok 5G:802-11-wireless\n';;
   *) echo '';;
 esac
@@ -110,6 +114,25 @@ exit 0
 CONNECTING = r'''
 case "$*" in
   *"device status"*) echo 'wlan0:wifi:connecting (getting IP configuration):Kuok 5G';;
+  *"IN-USE,SSID,SIGNAL"*) printf ':Kuok 5G:70\n';;
+  *"802-11-wireless.ssid"*) echo '802-11-wireless.ssid:Kuok 5G';;
+  *) echo '';;
+esac
+exit 0
+'''
+
+# Caught on the real Pi, not in these tests: Raspberry Pi OS provisioned by
+# netplan stores profiles under generated names, so the connection name on the
+# device is "netplan-wlan0-MiloNet" while the network is called "MiloNet". The
+# panel showed the profile name.
+NETPLAN = r'''
+case "$*" in
+  *"device status"*) echo 'wlan0:wifi:connected:netplan-wlan0-MiloNet';;
+  *"device show wlan0"*) echo 'IP4.ADDRESS[1]:192.168.86.247/24';;
+  *"SIGNAL,SECURITY"*) printf '*:MiloNet:88:WPA2\n:Neighbour:44:WPA2\n';;
+  *"IN-USE,SSID,SIGNAL"*) printf '*:MiloNet:88\n:Neighbour:44\n';;
+  *"802-11-wireless.ssid"*) echo '802-11-wireless.ssid:MiloNet';;
+  *"connection show"*) printf 'netplan-wlan0-MiloNet:802-11-wireless\nlo:loopback\n';;
   *) echo '';;
 esac
 exit 0
@@ -165,6 +188,23 @@ status = net.status()
 check("hotspot recognised by profile name", status.state == "hotspot", status.state)
 check("hotspot address read", status.ip == "10.42.0.1", status.ip)
 check("hotspot is not online", not status.online)
+
+# Regression, found on the real Pi: it reported ssid "netplan-wlan0-MiloNet".
+install_fake_nmcli(NETPLAN)
+status = net.status()
+check("netplan profile name is not shown as the ssid", status.ssid == "MiloNet", status.ssid)
+check("netplan signal still read", status.signal == 88, str(status.signal))
+check("saved list holds ssids, not profile names", net.saved_networks() == ["MiloNet"],
+      str(net.saved_networks()))
+check("the profile name is recoverable for nmcli",
+      net._profile_for("MiloNet") == "netplan-wlan0-MiloNet", net._profile_for("MiloNet"))
+# An SSID with no stored profile has to pass through untouched, or joining a new
+# network would look up a profile that does not exist yet and fail.
+check("unknown ssid falls through", net._profile_for("Hotel WiFi") == "Hotel WiFi")
+scanned = {n.ssid: n for n in net.scan(rescan=False)}
+check("the netplan network is flagged saved in the scan list", scanned["MiloNet"].saved,
+      str(scanned["MiloNet"]))
+check("a neighbour is not flagged saved", not scanned["Neighbour"].saved)
 
 install_fake_nmcli(NO_RADIO)
 check("no wifi device", net.status().state == "unavailable", net.status().state)
