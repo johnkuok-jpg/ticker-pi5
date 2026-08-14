@@ -228,21 +228,20 @@ ARROW_FLAT = [
 # Plan view, nose to the right, so the sprite reads as travelling along a
 # left-to-right progress bar.
 #
-# Eleven by nine, because seven rows only leaves three pixels per wing and the
-# result reads as a cross or a dagger, not an aircraft. Nine rows fit between
-# row two's text and the bar, and they buy the two things that make the shape
-# legible at this size: wings swept back far enough to state a direction on
-# their own, and a tailplane separated from the wing by bare fuselage.
+# Eleven wide, because the two things that make the shape legible at this size
+# both need horizontal room: wings swept back far enough to state a direction on
+# their own, and a tailplane separated from the wing by bare fuselage. The
+# earlier nine-wide sprite had neither and read as a cross with a dash through
+# it. Height is the opposite trade -- a nine-row wing reads spidery, so the
+# outermost row is shaved off each wing, leaving seven.
 PLANE_PALETTE: dict[str, Color] = {"P": (240, 245, 255)}
 
 PLANE_RIGHT = [
     "...PP......",
     "....PP.....",
-    ".....PP....",
-    "P.....PP...",
+    "P....PP....",
     "PPPPPPPPPPP",
-    "P.....PP...",
-    ".....PP....",
+    "P....PP....",
     "....PP.....",
     "...PP......",
 ]

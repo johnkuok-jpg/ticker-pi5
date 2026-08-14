@@ -204,9 +204,10 @@ from ticker.canvas import SMALL
 art = icons.PLANE_RIGHT
 check("the sprite is rectangular", len({len(row) for row in art}) == 1,
       str({len(row) for row in art}))
-# Seven rows gave each wing three pixels and the shape read as a cross. Nine is
-# the whole point of the redraw, so pin it.
-check("the sprite is nine rows tall", len(art) == 9, f"got {len(art)}")
+# Eleven wide is the whole point of the redraw: the nine-wide sprite had no room
+# for a sweep or a tail gap and read as a cross with a dash through it.
+check("the sprite is eleven columns wide", len(art[0]) == 11, f"got {len(art[0])}")
+check("the sprite is seven rows tall", len(art) == 7, f"got {len(art)}")
 check("the sprite clears row two's text", PLANE_Y >= ROW_TWO_Y + SMALL,
       f"plane at {PLANE_Y}, text ends {ROW_TWO_Y + SMALL - 1}")
 check("the sprite clears the bar", PLANE_Y + len(art) <= BAR_Y,
@@ -227,9 +228,11 @@ check("the wings sweep back from the nose",
       str(tips))
 # Bare fuselage between the wing root and the tailplane is what separates an
 # airliner from a dart.
+tail_rows = [i for i, row in enumerate(art) if row[0] == "P"]
+check("the tailplane brackets the fuselage", tail_rows == [2, 3, 4], str(tail_rows))
 check("the tailplane is clear of the wing",
-      art[3][0] == "P" and art[3][1] == "." and art[5][0] == "P",
-      f"{art[3]} / {art[5]}")
+      art[2][1:5] == "...." and art[4][1:5] == "....",
+      f"{art[2]} / {art[4]}")
 
 # --- report -------------------------------------------------------------------
 failed = [c for c in checks if not c[1]]
