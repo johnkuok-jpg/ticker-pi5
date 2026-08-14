@@ -1,0 +1,27 @@
+# MIT License — Copyright (c) 2026 John Kuok
+[Unit]
+Description=Ticker Pi 5 Wi-Fi fallback hotspot
+# Requires NetworkManager itself, not network-online.target: the entire job of
+# this daemon is to react when the network never comes up, so waiting for it
+# would deadlock exactly when the daemon is needed.
+Requires=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=simple
+# Root, because bringing an access point up and down is a privileged operation.
+# The web app stays unprivileged and reaches nmcli through a narrow sudoers rule.
+User=root
+WorkingDirectory=/home/pi/ticker-pi5
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/pi/ticker-pi5/.env
+ExecStart=/home/pi/ticker-pi5/venv/bin/python -m ticker.wifid
+# Always restart: if this dies while the ticker is off the network there is no
+# remaining way to get it back on one.
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

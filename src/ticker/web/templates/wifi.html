@@ -1,0 +1,227 @@
+<!-- MIT License — Copyright (c) 2026 John Kuok -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ticker Wi-Fi</title>
+  <meta name="theme-color" content="#1a263c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icon-180.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="panel">
+    <p class="eyebrow">TICKER PI 5</p>
+    <h1>Wi-Fi</h1>
+
+    {% if not available %}
+    <p class="warn">NetworkManager’s <code>nmcli</code> is not installed, so networks cannot be
+      changed from here. Everything else on the ticker still works.</p>
+    {% endif %}
+
+    <section class="netstatus" aria-live="polite">
+      <p id="net-state" class="netstate">Checking…</p>
+      <p id="net-detail" class="schedule"></p>
+    </section>
+
+    {# The warning has to come before the controls, not after: a user joining from
+       the setup hotspot is about to lose this page mid-tap, and reading why it
+       went blank afterwards is no use to them. #}
+    <p id="hotspot-warning" class="warn hidden">
+      You are connected to <strong>{{ setup_ssid }}</strong>. When you join a network below, the
+      ticker leaves this hotspot and <strong>this page will stop responding</strong> — that is what
+      success looks like. The panel then shows the ticker’s new address; open that in your browser.
+    </p>
+
+    <section class="flight">
+      <label>Networks in range</label>
+      <div id="net-list" class="netlist"><p class="schedule">Scanning…</p></div>
+      <button id="rescan" type="button" class="flight-go wide">Scan again</button>
+    </section>
+
+    <section class="flight">
+      <label for="ssid-input">Join a network</label>
+      <form id="join-form" class="joinform">
+        <input id="ssid-input" name="ssid" type="text" placeholder="Network name"
+               autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off">
+        <input id="password-input" name="password" type="password" placeholder="Password"
+               autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off">
+        <label class="checkline"><input id="show-password" type="checkbox"> Show password</label>
+        <label class="checkline"><input id="hidden-network" type="checkbox"> Hidden network</label>
+        <button type="submit" class="flight-go wide">Join</button>
+      </form>
+      <p id="join-note" class="schedule">Tap a network above to fill in its name.</p>
+    </section>
+
+    <section class="flight">
+      <label>Saved networks</label>
+      <div id="saved-list" class="netlist"><p class="schedule">Loading…</p></div>
+      <p class="schedule">The ticker rejoins these automatically. Forgetting the one it is
+        using now will drop it onto the setup hotspot.</p>
+    </section>
+
+    <p class="renderer"><a class="backlink" href="/">← Back to the control panel</a></p>
+  </main>
+
+  <script>
+    /* MIT License — Copyright (c) 2026 John Kuok */
+    const stateLine = document.getElementById('net-state');
+    const detailLine = document.getElementById('net-detail');
+    const list = document.getElementById('net-list');
+    const savedList = document.getElementById('saved-list');
+    const joinForm = document.getElementById('join-form');
+    const ssidInput = document.getElementById('ssid-input');
+    const passwordInput = document.getElementById('password-input');
+    const showPassword = document.getElementById('show-password');
+    const hiddenNetwork = document.getElementById('hidden-network');
+    const joinNote = document.getElementById('join-note');
+    const rescan = document.getElementById('rescan');
+    const hotspotWarning = document.getElementById('hotspot-warning');
+    const setupSsid = {{ setup_ssid | tojson }};
+
+    const STATE_TEXT = {
+      connected: 'Connected',
+      connecting: 'Connecting…',
+      hotspot: 'Setup hotspot — no network',
+      offline: 'Not connected',
+      unavailable: 'Wi-Fi radio is off',
+      unknown: 'Wi-Fi state unknown'
+    };
+
+    function bars(count) {
+      /* Four glyph bars rather than a percentage: the number is not actionable
+         and this list is read at a glance. */
+      return '▂▄▆█'.slice(0, count).padEnd(4, '·');
+    }
+
+    function renderNetworks(networks) {
+      if (!networks || !networks.length) {
+        list.innerHTML = '<p class="schedule">No networks found. Try scanning again.</p>';
+        return;
+      }
+      list.innerHTML = '';
+      networks.forEach(network => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `netrow${network.active ? ' active' : ''}`;
+        row.innerHTML = `<span class="netbars">${bars(network.bars)}</span>` +
+          `<span class="netname">${network.ssid.replace(/</g, '&lt;')}</span>` +
+          `<span class="nettags">${network.saved ? 'saved' : ''} ${network.locked ? '🔒' : 'open'}</span>`;
+        row.addEventListener('click', () => {
+          ssidInput.value = network.ssid;
+          hiddenNetwork.checked = false;
+          /* A saved network needs no password, and an open one has none, so the
+             field is only asked for when it will actually be used. */
+          passwordInput.value = '';
+          passwordInput.disabled = !network.locked || network.saved;
+          passwordInput.placeholder = network.saved ? 'Saved — leave blank' :
+            (network.locked ? 'Password' : 'No password needed');
+          joinNote.textContent = network.saved
+            ? `${network.ssid} is already saved. Join to switch to it now.`
+            : `Enter the password for ${network.ssid}.`;
+          if (!passwordInput.disabled) passwordInput.focus();
+        });
+        list.appendChild(row);
+      });
+    }
+
+    function renderSaved(saved) {
+      if (!saved || !saved.length) {
+        savedList.innerHTML = '<p class="schedule">Nothing saved yet.</p>';
+        return;
+      }
+      savedList.innerHTML = '';
+      saved.forEach(ssid => {
+        const row = document.createElement('div');
+        row.className = 'netrow static';
+        row.innerHTML = `<span class="netname">${ssid.replace(/</g, '&lt;')}</span>`;
+        const forget = document.createElement('button');
+        forget.type = 'button';
+        forget.className = 'forget';
+        forget.textContent = 'Forget';
+        forget.addEventListener('click', async () => {
+          /* Confirmed because forgetting the network in use is how you strand the
+             ticker, and the tap target sits next to every other network's. */
+          if (!window.confirm(`Forget ${ssid}?`)) return;
+          const response = await fetch('/wifi/forget', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ssid})
+          });
+          const data = await response.json();
+          joinNote.textContent = data.message || '';
+          refresh(true);
+        });
+        row.appendChild(forget);
+        savedList.appendChild(row);
+      });
+    }
+
+    async function refresh(scan) {
+      try {
+        const data = await fetch(`/api/wifi${scan ? '?scan=1' : ''}`).then(r => r.json());
+        stateLine.textContent = STATE_TEXT[data.state] || data.state;
+        stateLine.className = `netstate ${data.state}`;
+        detailLine.textContent = data.state === 'connected'
+          ? `${data.ssid || 'unknown network'} · ${data.ip || 'no address'} · signal ${data.signal}%`
+          : (data.state === 'hotspot' ? `Broadcasting ${setupSsid}` : '');
+        hotspotWarning.classList.toggle('hidden', data.state !== 'hotspot');
+        renderSaved(data.saved);
+        if (scan) renderNetworks(data.networks);
+      } catch (error) {
+        stateLine.textContent = 'Cannot reach the ticker';
+        stateLine.className = 'netstate offline';
+      }
+    }
+
+    showPassword.addEventListener('change', () => {
+      passwordInput.type = showPassword.checked ? 'text' : 'password';
+    });
+
+    rescan.addEventListener('click', async () => {
+      rescan.disabled = true;
+      rescan.textContent = 'Scanning…';
+      list.innerHTML = '<p class="schedule">Scanning…</p>';
+      await refresh(true);
+      rescan.disabled = false;
+      rescan.textContent = 'Scan again';
+    });
+
+    joinForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const ssid = ssidInput.value.trim();
+      if (!ssid) { joinNote.textContent = 'Enter or tap a network name first.'; return; }
+      joinNote.textContent = `Joining ${ssid}…`;
+      try {
+        const response = await fetch('/wifi/join', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            ssid,
+            password: passwordInput.value,
+            hidden: hiddenNetwork.checked
+          })
+        });
+        const data = await response.json();
+        joinNote.textContent = data.message || (data.ok ? `Joined ${ssid}.` : 'Could not join.');
+        passwordInput.value = '';
+        refresh(false);
+      } catch (error) {
+        /* The request dying is the expected outcome of a successful join from the
+           setup hotspot: the access point this page arrived over has just gone
+           away. Reporting a failure here would be actively misleading. */
+        joinNote.textContent = `Connection lost — the ticker is probably now on ${ssid}. ` +
+          `Check the panel for its new address.`;
+      }
+    });
+
+    refresh(true);
+    /* Slow poll, and never a rescan: this page is mostly read, and the radio is
+       needed for the thing being configured. */
+    setInterval(() => refresh(false), 8000);
+  </script>
+</body>
+</html>

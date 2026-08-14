@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "net")
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -187,6 +188,38 @@ class Config:
     @property
     def pid_file(self) -> Path:
         return self.state_dir / "renderer.pid"
+
+    @property
+    def network_notice_file(self) -> Path:
+        """Where the Wi-Fi fallback daemon parks a message for the panel.
+
+        A file rather than a query: the render loop must not shell out to nmcli
+        thirty times a second, and this state is only interesting when it changes.
+        The daemon owns the file, and the renderer only reads it.
+        """
+        return self.state_dir / "network_notice"
+
+    def network_notice(self) -> dict[str, str]:
+        """Read the Wi-Fi notice, or an empty dict when there is nothing to say."""
+        try:
+            raw = self.network_notice_file.read_text(encoding="utf-8")
+        except OSError:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {str(key): str(value) for key, value in payload.items()}
+
+    def set_network_notice(self, payload: dict[str, str] | None) -> None:
+        """Publish or clear the Wi-Fi notice."""
+        if not payload:
+            self.network_notice_file.unlink(missing_ok=True)
+            return
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.network_notice_file.write_text(json.dumps(payload), encoding="utf-8")
 
     @property
     def logos_dir(self) -> Path:

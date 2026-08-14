@@ -69,6 +69,8 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 | `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast. Required by weather mode. |
 | `BART_STATION` | Four-letter BART station abbreviation for the departure board, for example `EMBR`. The web app's dropdown overrides it persistently. |
 | `WEATHER_USER_AGENT` | NWS-compliant identifier sent with its requests. Leave the supplied value unless you host a fork. |
+| `WIFI_SETUP_SSID` | Name of the fallback setup hotspot; defaults to `TICKER-SETUP`. |
+| `WIFI_SETUP_PASSWORD` | Fixed password for that hotspot. Leave unset and one is generated once, stored in `/var/lib/ticker/hotspot_password`, and shown on the panel. Values under 8 characters are ignored, since WPA2 rejects them. |
 
 After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 
@@ -82,6 +84,7 @@ After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 - **crypto** — 24-hour price and change for up to three coins from Coinbase's keyless public endpoint, set with `CRYPTO_SYMBOLS`. Two coins render in 6×12 type; a third drops all rows to 5×8. Something stays live on the panel when the equity market is shut.
 - **bart** — the next three trains from one station, soonest first, from [BART's public real-time ETD API](https://api.bart.gov/docs/etd/etd.aspx) (no key of your own needed). Destinations are drawn in the line colour rather than beside a colour chip, because five pixels of chip is invisible across a room. Countdowns turn amber when BART reports the train delayed, and `NOW` means the doors are open. Pick the station from the web app's dropdown or set `BART_STATION`.
 - **aqi** — current US AQI and PM2.5 for the weather coordinates from [Open-Meteo's keyless air-quality API](https://open-meteo.com/en/docs/air-quality-api), with a 24-hour trend chart whose baseline sits at 50, the Good/Moderate boundary. Colours are the EPA's own category values from the [AQI technical assistance document](https://document.airnow.gov/technical-assistance-document-for-the-reporting-of-daily-air-quailty.pdf), lifted toward white only where a category would otherwise fall below the panel's legibility floor.
+- **net** — the ticker's own network: the SSID, the IPv4 address in 6×12 type, and a four-bar signal reading. The address is here because `ticker.local` depends on mDNS, and mDNS is exactly what a hotel or café network with client isolation drops. While the setup hotspot is up this screen turns itself on and shows the hotspot's name, password and address instead — see [Wi-Fi away from home](#wi-fi-away-from-home).
 
 ### Add a mode
 
@@ -93,6 +96,70 @@ After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
 ### Add ticker logos
 
 Drop a PNG named after a symbol in `src/ticker/web/static/logos/`, such as `AAPL.png` or `btc-usd.png`. The stocks mode matches names case-insensitively and resizes each image to 16×16. Keep artwork simple and high-contrast for best legibility.
+
+## Wi-Fi away from home
+
+Take the ticker somewhere it has never been and it has no way to ask for a
+password: it is headless, and the only interface is a web app that needs the
+network the ticker cannot join. So it broadcasts its own.
+
+**What you do**
+
+1. Plug it in somewhere new and wait about a minute. The panel switches itself to
+   the Wi-Fi setup screen and stays there.
+2. Read the network name (`TICKER-SETUP`), the password, and the address off the
+   panel. The panel brightens to at least 45% for this, so the password is still
+   readable if you arrive at night.
+3. Join that network from a phone and open the address it shows —
+   `http://10.42.0.1:8080/wifi`.
+4. Tap the network you want, type its password, and submit. **Your phone will lose
+   its connection at that moment** — that is the ticker leaving its own hotspot,
+   not a failure. Rejoin the house network and give it fifteen seconds.
+5. The panel returns to whatever mode you had selected, showing the new address.
+
+Networks are remembered, so the second visit needs none of this. There is no
+button to press and nothing to hold down.
+
+**What it does not handle.** Captive portals — hotel and airport networks with a
+terms-of-service page — cannot be accepted from the ticker, because there is no
+browser on it. The join will succeed and the internet will still not work.
+Enterprise networks needing a username as well as a password are out too, and
+5 GHz-only networks are invisible to the Pi 5's radio when it is configured for a
+region that restricts them.
+
+**How it works, and why not comitup.** A root daemon (`ticker-wifi.service`) polls
+NetworkManager every 20 seconds. Three consecutive readings with no connection —
+about a minute, long enough to sit out a booting router — and it raises an access
+point with `nmcli device wifi hotspot`, then writes a small JSON notice into
+`/var/lib/ticker/network_notice`. The renderer reads that notice once a second and
+forces the `net` screen on; it never writes to the saved mode, so the panel
+returns to your selection by itself. The web app, which runs unprivileged, reaches
+`nmcli` through a narrow `/etc/sudoers.d/ticker-nmcli` rule covering five
+subcommands and nothing else.
+
+Every four minutes the daemon drops the access point briefly to listen for a known
+network, because a single radio cannot scan while it is being an access point, and
+restores it if nothing familiar is in range. That is why the hotspot occasionally
+blinks out for a few seconds.
+
+[comitup](http://davesteele.github.io/comitup/) solves the same problem and was
+deliberately not used: it ships its own captive web interface on port 80, which
+would sit alongside this project's control panel as a second, competing way to
+configure the same device.
+
+**If the hotspot never appears**
+
+```bash
+systemctl status ticker-wifi
+journalctl -u ticker-wifi -n 50
+nmcli device status
+sudo -n nmcli connection show >/dev/null && echo "sudoers rule OK"
+```
+
+An `nmcli` that reports nothing is the one case where the daemon deliberately
+does nothing at all: a NetworkManager it cannot read may well be sitting on a
+working connection, and tearing that down would strand the ticker rather than
+rescue it.
 
 ## Operations
 
@@ -116,6 +183,8 @@ journalctl -u ticker-web -f
 | Flicker or dim output | Lower `TICKER_BRIGHTNESS`, verify the panel power supply is rated and connected directly to the Bonnet barrel jack, and keep the ribbon cable short. |
 | Mode does not switch | Check that `/var/lib/ticker/current_mode` exists and is writable by `pi`; run `sudo install -d -m 0775 -o pi -g pi /var/lib/ticker`, then restart both services. The renderer polls the file about once a second. |
 | Panel B is dark | Ensure Panel B's input is connected to Panel A's output, not a second Bonnet port, and that the display geometry remains 128×32. Re-seat the inter-panel ribbon cable. |
+| Hotspot appears but the page will not load | Confirm the phone joined `TICKER-SETUP` and not a remembered network, then open `http://10.42.0.1:8080/wifi` by address — `ticker.local` cannot resolve on the hotspot. |
+| Joined a network but nothing works | Almost always a captive portal. The panel will show an address; if that address is reachable and the internet is not, the network wants a browser the ticker does not have. |
 | Permission errors | The renderer intentionally runs as root for PIO/GPIO access. The web service runs as `pi`; make `/var/lib/ticker` group-writable as shown above. If `/dev/pio0` has restrictive permissions, follow the driver documentation's udev guidance. |
 
 ## Development checks

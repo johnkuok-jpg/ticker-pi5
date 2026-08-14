@@ -26,7 +26,7 @@
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI"} %}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "net": "Wi-Fi"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         {{ mode_labels.get(mode, mode) }}
@@ -60,7 +60,13 @@
       </form>
       <p id="station-note" class="schedule">Next three trains, soonest first.</p>
     </section>
+    {# Shown only while the ticker is on its own setup hotspot, which is the one
+       situation where the network is the only thing worth doing on this page. #}
+    <a id="net-banner" class="netbanner hidden" href="/wifi">
+      No Wi-Fi — the ticker is broadcasting a setup hotspot. Tap to choose a network →
+    </a>
     <p id="renderer" class="renderer">Checking renderer…</p>
+    <a class="wifilink" href="/wifi">Wi-Fi settings →</a>
   </main>
   <script>
     /* MIT License — Copyright (c) 2026 John Kuok */
@@ -75,6 +81,7 @@
     const stationForm = document.getElementById('station-form');
     const stationSelect = document.getElementById('station-select');
     const stationNote = document.getElementById('station-note');
+    const netBanner = document.getElementById('net-banner');
     /* As with the flight field: a poll must not reset a station the user has
        chosen from the list but not yet submitted. */
     let choosingStation = false;
@@ -98,6 +105,7 @@
       if (!choosingStation && typeof data.station === 'string' && data.station !== stationSelect.value) {
         stationSelect.value = data.station;
       }
+      netBanner.classList.toggle('hidden', !(data.network_notice && data.network_notice.state === 'hotspot'));
       renderer.textContent = data.renderer_alive ? `Renderer online (PID ${data.renderer_pid})` : 'Renderer offline';
       renderer.className = `renderer ${data.renderer_alive ? 'online' : 'offline'}`;
       document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from ticker import bart
+from ticker import bart, net
 from ticker.config import VALID_MODES, load_config
 
 
@@ -118,6 +118,82 @@ def create_app() -> Flask:
             current_mode=config.current_mode(),
         )
 
+    # -- Wi-Fi ---------------------------------------------------------------
+    #
+    # Kept on its own page rather than on the panel of mode buttons. It is the one
+    # screen a user reaches while the ticker is unreachable in the normal sense --
+    # joined to its own setup hotspot with no internet behind it -- and mixing a
+    # scan list and a password field into the control panel would put a
+    # destructive control (change the network, lose this connection) next to
+    # everyday taps.
+
+    @app.get("/wifi")
+    def wifi_page():  # type: ignore[no-untyped-def]
+        status = net.status()
+        return render_template(
+            "wifi.html",
+            status=status,
+            available=net.available(),
+            setup_ssid=net.HOTSPOT_SSID,
+        )
+
+    @app.get("/api/wifi")
+    def wifi_state():  # type: ignore[no-untyped-def]
+        """Current Wi-Fi state, and optionally a fresh scan.
+
+        Scanning is opt-in via ``?scan=1`` because it takes several seconds and
+        the page polls this endpoint: a poll that rescanned every time would keep
+        the radio busy and reshuffle the list under the user's thumb.
+        """
+        status = net.status()
+        payload = {
+            "available": net.available(),
+            "state": status.state,
+            "ssid": status.ssid,
+            "ip": status.ip,
+            "signal": status.signal,
+            "saved": net.saved_networks(),
+        }
+        if request.args.get("scan") in ("1", "true", "yes"):
+            payload["networks"] = [
+                {
+                    "ssid": found.ssid,
+                    "signal": found.signal,
+                    "bars": found.bars,
+                    "locked": found.locked,
+                    "saved": found.saved,
+                    "active": found.active,
+                }
+                for found in net.scan()
+            ]
+        return jsonify(**payload)
+
+    @app.post("/wifi/join")
+    def wifi_join():  # type: ignore[no-untyped-def]
+        """Join a network.
+
+        The response is sent before the switch completes where possible, but a
+        successful join from the setup hotspot necessarily kills the connection
+        this request arrived on, so the page is written to treat a dropped
+        response as a likely success rather than an error.
+        """
+        payload = request.get_json(silent=True) or {}
+        ssid = str(payload.get("ssid", request.form.get("ssid", ""))).strip()
+        password = str(payload.get("password", request.form.get("password", "")))
+        hidden = bool(payload.get("hidden", request.form.get("hidden")))
+        ok, message = net.join(ssid, password, hidden=hidden)
+        status = net.status()
+        return jsonify(ok=ok, message=message, state=status.state, ssid=status.ssid, ip=status.ip), (
+            200 if ok else 400
+        )
+
+    @app.post("/wifi/forget")
+    def wifi_forget():  # type: ignore[no-untyped-def]
+        payload = request.get_json(silent=True) or {}
+        ssid = str(payload.get("ssid", request.form.get("ssid", ""))).strip()
+        ok, message = net.forget(ssid)
+        return jsonify(ok=ok, message=message, saved=net.saved_networks()), 200 if ok else 400
+
     @app.get("/api/status")
     def status():  # type: ignore[no-untyped-def]
         config = load_config()
@@ -130,6 +206,7 @@ def create_app() -> Flask:
             schedule_note=_describe_schedule(config),
             flight=config.current_flight(),
             station=config.current_bart_station(),
+            network_notice=config.network_notice(),
         )
 
     return app

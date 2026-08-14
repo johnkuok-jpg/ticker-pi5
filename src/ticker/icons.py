@@ -285,3 +285,26 @@ TRAIN = [
     "WYWWWWYW",
     "WWWWWWWW",
 ]
+
+
+# Wi-Fi, 8x7 -- deliberately the same box as TRAIN so the network header and the
+# BART header use identical geometry and the title column does not shift between
+# modes.
+#
+# Three expanding chevrons over a detached dot. The chevrons are drawn as a
+# crown and its legs on separate rows rather than as true curves: at this size an
+# antialiasing-free arc is two pixels of guesswork, and the stepped version reads
+# as concentric because the widths are what carry the meaning, not the curvature.
+# The dot is separated by a blank row, which is what stops the innermost chevron
+# from merging with it into a single blob.
+WIFI_PALETTE: dict[str, Color] = {"W": (235, 240, 250)}
+
+WIFI = [
+    ".WWWWWW.",
+    "W......W",
+    "..WWWW..",
+    ".W....W.",
+    "...WW...",
+    "........",
+    "...WW...",
+]

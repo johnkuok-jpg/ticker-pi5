@@ -30,3 +30,37 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 #station-select:focus { outline: none; border-color: #78b6ff; }
 .flight-go { padding: 12px 20px; border: 0; border-radius: 12px; background: #1f6f8b; color: #fff; font-size: 1rem; font-weight: 800; cursor: pointer; }
 .flight-go:active { transform: scale(.97); }
+
+/* Wi-Fi page. Shares the control panel's shell so the two do not look like
+   different apps, and adds only what a scan list needs. */
+.mode-net { background: #4a5568; }
+.netstatus { margin-top: 4px; }
+.netstate { margin: 0; font-size: 1.15rem; font-weight: 800; }
+.netstate.connected { color: #57df96; }
+.netstate.connecting, .netstate.hotspot { color: #ffc25c; }
+.netstate.offline, .netstate.unavailable, .netstate.unknown { color: #ff8f87; }
+.warn { margin: 18px 0 0; padding: 12px 14px; border: 1px solid #7a5a1e; border-radius: 12px; background: #2a2110; color: #f2dfae; font-size: .86rem; line-height: 1.45; }
+.warn code { color: #ffd98a; }
+/* A utility class has to beat any component's own display rule, and
+   .netbanner below sets display:block with identical specificity -- without
+   !important the later rule wins and the banner is permanently visible. */
+.hidden { display: none !important; }
+.netlist { display: grid; gap: 8px; margin-top: 12px; }
+/* A row is a button, so the whole width is the tap target rather than the text. */
+.netrow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: .95rem; font-weight: 600; text-align: left; cursor: pointer; }
+.netrow.active { border-color: #57df96; }
+.netrow.static { cursor: default; justify-content: space-between; }
+.netbars { flex: none; color: #78b6ff; font-family: ui-monospace, monospace; letter-spacing: -1px; }
+.netname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nettags { flex: none; color: #8b97ad; font-size: .78rem; font-weight: 700; }
+.forget { flex: none; padding: 8px 14px; border: 0; border-radius: 10px; background: #6b2b2b; color: #ffdede; font-weight: 800; cursor: pointer; }
+.joinform { display: grid; gap: 10px; margin-top: 12px; }
+.joinform input[type=text], .joinform input[type=password] { width: 100%; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; }
+.joinform input:focus { outline: none; border-color: #78b6ff; }
+.joinform input:disabled { color: #6b7688; background: #0f141e; }
+.checkline { display: flex; align-items: center; gap: 8px; color: #9daabf; font-size: .88rem; font-weight: 600; }
+.checkline input { width: 18px; height: 18px; accent-color: #78b6ff; }
+.wide { width: 100%; }
+.backlink { color: #78b6ff; font-weight: 700; text-decoration: none; }
+.netbanner { display: block; margin: 18px 0 0; padding: 12px 14px; border: 1px solid #7a5a1e; border-radius: 12px; background: #2a2110; color: #ffd98a; font-size: .88rem; font-weight: 700; text-decoration: none; }
+.wifilink { display: block; margin-top: 20px; color: #8ba0c5; font-size: .88rem; font-weight: 700; text-decoration: none; }

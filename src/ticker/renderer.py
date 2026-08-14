@@ -13,6 +13,12 @@ from ticker.canvas import Canvas
 from ticker.config import Config, load_config
 from ticker.modes import build_mode
 
+# Minimum brightness while the Wi-Fi setup screen is forced on. Chosen to match
+# the lowest scheduled daytime step rather than something brighter: it has to be
+# readable across a room, not attention-grabbing, and the screen appears
+# unbidden.
+SETUP_BRIGHTNESS_FLOOR = 0.45
+
 
 def _open_matrix(config: Config) -> tuple[Any, np.ndarray]:
     """Create the Pi 5 PIO display object using the official PioMatter pattern.
@@ -80,6 +86,8 @@ def run() -> None:
     # Brightness is resolved once a second, not every frame: it reads state files
     # and walks the schedule, and no schedule step or slider drag needs 30Hz.
     target_brightness = config.current_brightness()
+    if config.network_notice():
+        target_brightness = max(target_brightness, SETUP_BRIGHTNESS_FLOOR)
     brightness = target_brightness
     # Ramp the full 0-1 range over about a second and a half. A scheduled drop
     # from 75% to off is a startling flash to black when applied in one frame.
@@ -96,11 +104,27 @@ def run() -> None:
         while True:
             started = time.monotonic()
             if tick % check_interval == 0:
-                requested_name = config.current_mode()
+                # The Wi-Fi notice outranks the selected mode. This is the only
+                # place anything overrides the web app's choice, and it has to:
+                # the notice is written when the ticker is off the network, which
+                # is exactly when the web app cannot be reached to select the
+                # screen that explains how to fix it. The selection itself is
+                # left untouched on disk, so the panel returns to whatever was
+                # chosen the moment a network comes back.
+                notice = config.network_notice()
+                requested_name = "net" if notice else config.current_mode()
                 if requested_name != current_name:
                     current_name = requested_name
                     current_mode = build_mode(current_name, config)
                 target_brightness = config.current_brightness()
+                # A brightness floor while the setup screen is up. The night
+                # schedule drops to 8%, at which point an eight-character
+                # password is not readable off the panel -- and with the hotspot
+                # up the panel is the only place it exists. The floor is lifted
+                # again the moment the notice clears, so the schedule still owns
+                # brightness for every other screen.
+                if notice:
+                    target_brightness = max(target_brightness, SETUP_BRIGHTNESS_FLOOR)
             canvas.clear()
             try:
                 current_mode.render(canvas, tick)

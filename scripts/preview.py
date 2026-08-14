@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import tempfile
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -25,6 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from ticker.canvas import Canvas  # noqa: E402
 from ticker.config import load_config  # noqa: E402
+from ticker import net  # noqa: E402
 from ticker.modes import MODE_TYPES  # noqa: E402
 
 MAX_FRAMES = 900  # 30 seconds at 30fps
@@ -50,6 +52,11 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     # The BART header carries the same blinking colon as weather and market.
     "bart": {"mode": "bart", "frames": 4, "fps": 2, "stride": 15},
     "aqi": {"mode": "aqi"},
+    # Both network screens are posed rather than read from the radio: this script
+    # runs off-Pi, where there is no nmcli to ask, and the setup screen is by
+    # definition a state a machine with a working network cannot be in.
+    "wifi": {"mode": "net", "pose": "connected", "frames": 4, "fps": 2, "stride": 15},
+    "wifi-setup": {"mode": "net", "pose": "setup", "frames": 4, "fps": 2, "stride": 15},
     # The detail field rotates every few seconds, so a single frame would hide
     # the gate and baggage readouts. Walk one full rotation instead.
     "flights": {
@@ -108,9 +115,25 @@ def render_mode_frames(
     max_frames: int = MAX_FRAMES,
     stride: int = 1,
     fixed_frames: int | None = None,
+    pose: str | None = None,
 ) -> list[Image.Image]:
     """Render frames until the animation visibly repeats, so the loop is seamless."""
     mode = MODE_TYPES[name](config)
+
+    # The network mode is posed, never live. Off-Pi there is no nmcli to read, and
+    # the setup screen describes a hotspot this machine is not broadcasting.
+    if pose == "setup":
+        config.set_network_notice({
+            "state": "hotspot",
+            "ssid": net.HOTSPOT_SSID,
+            "password": "kq7mfp4r",
+            "url": "10.42.0.1:8080",
+        })
+    elif pose == "connected":
+        config.set_network_notice(None)
+        mode.status = net.Status(state="connected", ssid="Kuok 5G",
+                                 ip="192.168.86.247", signal=82, device="wlan0")
+        mode._last_refresh = float("inf")  # noqa: SLF001 - freeze; never touch the radio
 
     # The live news feed carries ~15 headlines, whose combined marquee is far longer
     # than a browser-friendly spritesheet. Trim to a few so the preview loop closes.
@@ -193,6 +216,11 @@ def main() -> int:
         layout = screen.get("layout")
         if layout:
             screen_config = replace(config, stocks_layout=str(layout))
+        if screen.get("pose"):
+            # A private state directory, so posing a preview screen never writes a
+            # notice into the state a real renderer would read.
+            screen_config = replace(
+                screen_config, state_dir=Path(tempfile.mkdtemp(prefix="ticker-preview-")))
         if screen.get("live_flight") and not config.current_flight():
             latitude = float(config.weather_lat or 37.7749)
             longitude = float(config.weather_lon or -122.4194)
@@ -203,6 +231,7 @@ def main() -> int:
             screen_config,
             stride=int(screen.get("stride", 1)),  # type: ignore[arg-type]
             fixed_frames=screen.get("frames"),  # type: ignore[arg-type]
+            pose=screen.get("pose"),  # type: ignore[arg-type]
         )
         if not frames:
             continue

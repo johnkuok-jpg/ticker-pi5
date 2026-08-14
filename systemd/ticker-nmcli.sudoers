@@ -1,0 +1,37 @@
+# MIT License — Copyright (c) 2026 John Kuok
+#
+# Lets the unprivileged web app change Wi-Fi networks, and nothing else.
+#
+# Installed to /etc/sudoers.d/ticker-nmcli with mode 0440. Validate before
+# trusting it -- a syntax error in a sudoers file can lock the account out of
+# sudo entirely:
+#
+#     sudo visudo -c -f /etc/sudoers.d/ticker-nmcli
+#
+# The web app runs as pi under gunicorn, while joining a network, deleting a
+# saved profile and raising an access point all need root. The alternatives were
+# worse: running the whole web app as root would put a network-facing Flask app
+# on the panel's own privileges, and adding pi to a NetworkManager polkit group
+# would grant every nmcli operation rather than these five.
+#
+# NOPASSWD is required, not a convenience: there is no terminal on a headless
+# ticker to answer a password prompt, and the app calls sudo with -n so a missing
+# rule fails immediately with a readable message instead of hanging the request.
+#
+# Each rule names the subcommand, so this does not authorise arbitrary nmcli
+# calls. Trailing "" on a rule forbids extra arguments beyond those written;
+# omitting it (as on the connect and modify lines) is deliberate, because those
+# commands legitimately carry a network name and a password. That does mean the
+# rule allows any *connection property* to be modified, which is the one place
+# this is broader than ideal; narrowing it further would require enumerating
+# every SSID in advance, which defeats the point of the feature.
+
+Cmnd_Alias TICKER_WIFI = \
+    /usr/bin/nmcli device wifi connect *, \
+    /usr/bin/nmcli device wifi hotspot *, \
+    /usr/bin/nmcli connection up id *, \
+    /usr/bin/nmcli connection down id *, \
+    /usr/bin/nmcli connection delete id *, \
+    /usr/bin/nmcli connection modify *
+
+pi ALL=(root) NOPASSWD: TICKER_WIFI

@@ -32,9 +32,36 @@ fi
 # Root renderer and pi web server deliberately share this writable, file-backed state.
 sudo install -d -m 0775 -o pi -g pi /var/lib/ticker
 sudo cp systemd/ticker.service systemd/ticker-web.service /etc/systemd/system/
+
+# Wi-Fi fallback. Only installed where NetworkManager is actually in charge of
+# the radio: on an older dhcpcd-based image the daemon would poll a tool that
+# reports nothing, and the sudoers rule would grant access to a binary that is
+# not there.
+if systemctl is-enabled --quiet NetworkManager 2>/dev/null && command -v nmcli >/dev/null; then
+  sudo cp systemd/ticker-wifi.service /etc/systemd/system/
+  # Validated before installation: a malformed file in /etc/sudoers.d can break
+  # sudo for every user on the box, so this refuses rather than risks it.
+  if sudo visudo -c -q -f systemd/ticker-nmcli.sudoers; then
+    sudo install -m 0440 -o root -g root systemd/ticker-nmcli.sudoers /etc/sudoers.d/ticker-nmcli
+  else
+    echo "WARNING: systemd/ticker-nmcli.sudoers failed validation and was not installed."
+    echo "         The Wi-Fi page will be read-only until this is fixed."
+  fi
+  WIFI_UNIT="ticker-wifi"
+else
+  echo "NetworkManager not detected; skipping the Wi-Fi fallback hotspot."
+  WIFI_UNIT=""
+fi
+
 sudo systemctl daemon-reload
-sudo systemctl enable --now ticker ticker-web
+# shellcheck disable=SC2086 - WIFI_UNIT is deliberately word-split or empty
+sudo systemctl enable --now ticker ticker-web $WIFI_UNIT
 
 echo
 echo "Installed ticker-pi5. Open http://ticker.local:8080 on your phone"
 echo "If mDNS is unavailable, use: http://$(hostname -I | awk '{print $1}'):8080"
+if [[ -n "$WIFI_UNIT" ]]; then
+  echo
+  echo "Wi-Fi fallback is on. Away from every known network the ticker broadcasts"
+  echo "${WIFI_SETUP_SSID:-TICKER-SETUP}; the panel shows the password and the address to open."
+fi
