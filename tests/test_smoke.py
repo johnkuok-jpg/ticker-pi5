@@ -75,5 +75,4 @@ def test_renderer_uses_the_adafruit_module_name() -> None:
     """Guard the exact import name Adafruit ships, since only hardware catches it."""
     source = (Path(__file__).resolve().parents[1] / "src/ticker/renderer.py").read_text()
     assert "import adafruit_blinka_raspberry_pi5_piomatter as piomatter" in source
-    assert "import adafruit_raspberry_pi5_piomatter as piomatter" in source
     assert "import piomatter" not in source.replace("as piomatter", "")

@@ -17,23 +17,33 @@ from ticker.modes import build_mode
 def _open_matrix(config: Config) -> tuple[Any, np.ndarray]:
     """Create the Pi 5 PIO display object using the official PioMatter pattern.
 
-    The distribution is ``Adafruit-Blinka-Raspberry-Pi5-Piomatter`` but the
-    importable module has been renamed across releases, and neither name is the
-    bare ``piomatter`` that the examples alias it to:
+    The distribution is ``Adafruit-Blinka-Raspberry-Pi5-Piomatter``, and the
+    importable module is NOT the bare ``piomatter`` the examples alias it to:
 
     * 1.0.0 (stable)  -> ``adafruit_blinka_raspberry_pi5_piomatter``
     * 1.0.0a3 (alpha) -> ``adafruit_raspberry_pi5_piomatter``
 
-    Both export the same five names, so the alpha fallback stays usable rather
-    than forcing an upgrade on an already-working Pi. Verified by inspecting the
-    published cp313 aarch64 wheels; see
+    Only the stable module is usable here. Inspecting the published cp313
+    aarch64 wheels shows the alpha exports just ``Geometry``, ``Orientation``,
+    and ``PioMatter`` -- it has no ``Colorspace`` or ``Pinout``, so the call
+    pattern in Adafruit's current examples cannot work against it. The alpha is
+    therefore detected only to raise an actionable error instead of dying later
+    on a confusing missing attribute. See
     https://github.com/adafruit/Adafruit_Blinka_Raspberry_Pi5_Piomatter
     examples/simpletest.py for the documented call pattern.
     """
     try:
         import adafruit_blinka_raspberry_pi5_piomatter as piomatter
-    except ModuleNotFoundError:
-        import adafruit_raspberry_pi5_piomatter as piomatter  # type: ignore[no-redef]
+    except ModuleNotFoundError as exc:
+        import importlib.util
+
+        if importlib.util.find_spec("adafruit_raspberry_pi5_piomatter") is not None:
+            raise RuntimeError(
+                "Found the 1.0.0a3 alpha of Adafruit-Blinka-Raspberry-Pi5-Piomatter, "
+                "which predates the Colorspace and Pinout API this renderer needs. "
+                "Upgrade with: venv/bin/python -m pip install -r requirements.txt"
+            ) from exc
+        raise
 
     geometry = piomatter.Geometry(
         width=config.width,
