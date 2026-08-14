@@ -208,6 +208,36 @@ def test_nametag_mode_falls_back_to_hello_when_unset(config) -> None:  # type: i
     assert non_black > 40
 
 
+def test_focus_mode_renders_with_long_label(config) -> None:  # type: ignore[no-untyped-def]
+    """A long session label must scroll rather than blow up mid-render.
+
+    Regression for a NameError where ``_draw_running`` referenced ``tick``
+    without accepting it as a parameter -- the scroll path only fires when
+    the label overflows the ~96 px label region, so the smoke render of
+    an idle focus mode did not catch it.
+    """
+    from ticker.modes import FocusMode
+    import json, time
+
+    long_label = "ship focus mode with the entire finance team review by end of day"
+    state = {
+        "mode": "running",
+        "start_epoch": time.time() - 60,
+        "duration_sec": 25 * 60,
+        "carry_sec": 0.0,
+        "last_preset_min": 25,
+        "label": long_label,
+    }
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    (config.state_dir / "focus.json").write_text(json.dumps(state), encoding="utf-8")
+
+    mode = FocusMode(config)
+    canvas = Canvas(config.width, config.height)
+    # A range of ticks covers scroll-offset math (and flip-angle changes).
+    for t in (0, 15, 60, 120, 300):
+        mode.render(canvas, tick=t)
+
+
 def test_renderer_uses_the_adafruit_module_name() -> None:
     """Guard the exact import name Adafruit ships, since only hardware catches it."""
     source = (Path(__file__).resolve().parents[1] / "src/ticker/renderer.py").read_text()

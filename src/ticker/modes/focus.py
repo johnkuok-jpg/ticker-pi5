@@ -383,7 +383,7 @@ class FocusMode(Mode):
             if remaining <= FINISHING_SEC:
                 self._draw_finishing(canvas, state, elapsed, remaining, tick)
                 return
-            self._draw_running(canvas, state, elapsed, remaining)
+            self._draw_running(canvas, state, elapsed, remaining, tick)
             return
 
         # Anything else (idle, or a paused/unknown state) shows the idle card.
@@ -405,8 +405,13 @@ class FocusMode(Mode):
         state: dict,
         elapsed: float,
         remaining: float,
+        tick: int,
     ) -> None:
-        """Standard countdown display with animated hourglass."""
+        """Standard countdown display with animated hourglass.
+
+        ``tick`` drives the label scroll for long session labels; without it
+        an overflowing label would raise ``NameError`` at render time.
+        """
         sand_pct_top = max(0.0, remaining) / state["duration_sec"]
         flip = _hourglass_flip_angle(elapsed)
         # Suppress the falling stream only during the flip's mid-arc, where
