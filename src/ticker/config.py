@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "net")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "net")
 
 # What the panel shows on a cold boot, or if the mode file is missing or corrupt.
 DEFAULT_MODE = "weather"
@@ -142,6 +142,7 @@ class Config:
     flight_airport: str = ""
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
     bart_station: str = "EMBR"
+    bike_station_id: str = ""
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -189,6 +190,10 @@ class Config:
     @property
     def bart_station_file(self) -> Path:
         return self.state_dir / "bart_station"
+
+    @property
+    def bike_station_file(self) -> Path:
+        return self.state_dir / "bike_station"
 
     @property
     def pid_file(self) -> Path:
@@ -380,6 +385,33 @@ class Config:
             return chosen
         return self.bart_station.strip().upper()
 
+    def current_bike_station(self) -> str:
+        """Bay Wheels station id: the web app's pick, otherwise .env.
+
+        Unlike BART, station ids come from a live feed rather than a fixed
+        list, so this is not validated against a closed set here. The feed
+        client returns None for an unknown id and the renderer shows a
+        "Not in feed" panel when that happens.
+        """
+        try:
+            chosen = self.bike_station_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            chosen = ""
+        return chosen or self.bike_station_id
+
+    def set_bike_station(self, station_id: str) -> None:
+        """Persist the chosen Bay Wheels station id; an empty string clears it.
+
+        A station id is opaque (a UUID-ish string in the Bay Wheels feed), so
+        the only sanity check is length: an obviously oversized value is
+        rejected to avoid stuffing garbage into a state file.
+        """
+        value = str(station_id).strip()
+        if len(value) > 64:
+            raise ValueError("bike station id is unreasonably long")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.bike_station_file.write_text(f"{value}\n", encoding="utf-8")
+
     def set_bart_station(self, station: str) -> None:
         """Persist the chosen BART station.
 
@@ -453,6 +485,7 @@ def load_config(env_file: Path | None = None) -> Config:
         flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,
         bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
+        bike_station_id=os.getenv("BIKE_STATION_ID", "").strip(),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

@@ -26,7 +26,7 @@
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "net": "Wi-Fi"} %}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "net": "Wi-Fi"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         {{ mode_labels.get(mode, mode) }}
@@ -70,6 +70,18 @@
       </form>
       <p id="station-note" class="schedule">Next three trains, soonest first.</p>
     </section>
+    <section class="flight">
+      <label for="bike-search">Bay Wheels station</label>
+      <form id="bike-form" class="flight-row">
+        <input id="bike-search" name="query" type="search"
+               placeholder="Ferry Building / Powell / Mission…"
+               autocomplete="off" autocorrect="off" spellcheck="false"
+               aria-label="Search Bay Wheels stations">
+        <button type="button" id="bike-nearest" class="flight-go">Nearest</button>
+      </form>
+      <div id="bike-results" class="bike-results" role="listbox" aria-label="Bay Wheels station results"></div>
+      <p id="bike-note" class="schedule">Type to search all ~450 stations, or tap Nearest.</p>
+    </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
     <a id="net-banner" class="netbanner hidden" href="/wifi">
@@ -94,6 +106,11 @@
     const stationForm = document.getElementById('station-form');
     const stationSelect = document.getElementById('station-select');
     const stationNote = document.getElementById('station-note');
+    const bikeSearch = document.getElementById('bike-search');
+    const bikeResults = document.getElementById('bike-results');
+    const bikeNote = document.getElementById('bike-note');
+    const bikeNearest = document.getElementById('bike-nearest');
+    let bikeStationId = {{ bike_station | tojson }};
     const netBanner = document.getElementById('net-banner');
     /* As with the flight field: a poll must not reset a station the user has
        chosen from the list but not yet submitted. */
@@ -191,6 +208,80 @@
         ? 'That station is not on the list.'
         : `Showing departures from ${data.station_name}.`;
       refreshStatus();
+    });
+    /* Bay Wheels: type-to-search, then tap a result to lock the station.
+       Nothing about the station id is user-visible (opaque UUIDs), so the
+       server confirms with the name it stored, and we show that instead. */
+    let bikeSearchTimer = null;
+    async function pickBikeStation(id, name) {
+      const response = await fetch('/bikes', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({station: id})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        bikeNote.textContent = data.error || 'Could not set that station.';
+        return;
+      }
+      bikeStationId = data.bike_station || '';
+      bikeNote.textContent = name ? `Showing ${name}.` : 'Station cleared.';
+      bikeResults.innerHTML = '';
+      bikeSearch.value = '';
+      refreshStatus();
+    }
+    async function runBikeSearch(query) {
+      if (!query || query.trim().length < 2) {
+        bikeResults.innerHTML = '';
+        return;
+      }
+      const response = await fetch(`/api/bikes/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      bikeResults.innerHTML = '';
+      (data.stations || []).forEach(station => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'bike-result';
+        button.textContent = station.name;
+        button.addEventListener('click', () => pickBikeStation(station.id, station.name));
+        bikeResults.appendChild(button);
+      });
+      if ((data.stations || []).length === 0) {
+        bikeNote.textContent = 'No matches. Try a landmark or street name.';
+      } else {
+        bikeNote.textContent = 'Tap a station to show it.';
+      }
+    }
+    bikeSearch.addEventListener('input', () => {
+      window.clearTimeout(bikeSearchTimer);
+      bikeSearchTimer = window.setTimeout(() => runBikeSearch(bikeSearch.value), 250);
+    });
+    bikeNearest.addEventListener('click', async () => {
+      bikeNote.textContent = 'Finding the closest station…';
+      /* Prefer the browser's real position, but fall back to the ticker's
+         configured weather coordinates when permission is denied or the
+         browser refuses (which is common on http:// origins). */
+      const finish = async (lat, lon) => {
+        const url = (lat !== undefined && lon !== undefined)
+          ? `/api/bikes/nearest?lat=${lat}&lon=${lon}`
+          : '/api/bikes/nearest';
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok || !data.station) {
+          bikeNote.textContent = data.error || 'Could not find a station near you.';
+          return;
+        }
+        pickBikeStation(data.station.id, data.station.name);
+      };
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          position => finish(position.coords.latitude, position.coords.longitude),
+          () => finish(),
+          {timeout: 4000, enableHighAccuracy: false}
+        );
+      } else {
+        finish();
+      }
     });
     slider.addEventListener('input', () => {
       dragging = true;

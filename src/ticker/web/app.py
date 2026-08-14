@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from ticker import bart, net
+from ticker import bart, baywheels, net
 from ticker.config import VALID_MODES, load_config
 
 
@@ -58,6 +58,7 @@ def create_app() -> Flask:
             flight_airport=config.current_flight_airport(),
             stations=bart.STATIONS,
             station=config.current_bart_station(),
+            bike_station=config.current_bike_station(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -121,6 +122,82 @@ def create_app() -> Flask:
             flight=config.current_flight(),
             current_mode=config.current_mode(),
         )
+
+    @app.get("/api/bikes/search")
+    def bikes_search():  # type: ignore[no-untyped-def]
+        """Return up to 20 Bay Wheels stations matching *q* (case-insensitive substring).
+
+        Runs against the operator's GBFS feed. Failing quietly (empty list)
+        rather than 500-ing keeps the picker responsive even when GBFS is
+        briefly unreachable.
+        """
+        query = request.args.get("q", "").strip()
+        try:
+            hits = baywheels.search_stations(query, limit=20)
+        except Exception:
+            hits = []
+        return jsonify(
+            stations=[
+                {
+                    "id": station.station_id,
+                    "name": station.name,
+                    "capacity": station.capacity,
+                    "lat": station.lat,
+                    "lon": station.lon,
+                }
+                for station in hits
+            ]
+        )
+
+    @app.get("/api/bikes/nearest")
+    def bikes_nearest():  # type: ignore[no-untyped-def]
+        """Return the Bay Wheels station closest to (lat, lon).
+
+        The web page's browser can hand over its own geolocation, but a
+        fallback to the ticker's configured weather coordinates is useful for
+        the common case of setting up from a desk laptop that would otherwise
+        prompt for permission.
+        """
+        config = load_config()
+        try:
+            lat = float(request.args.get("lat") or config.weather_lat)
+            lon = float(request.args.get("lon") or config.weather_lon)
+        except ValueError:
+            return jsonify(error="lat and lon must be numbers"), 400
+        try:
+            station = baywheels.nearest_station(lat, lon)
+        except Exception:
+            station = None
+        if station is None:
+            return jsonify(error="no stations available"), 503
+        return jsonify(
+            station={
+                "id": station.station_id,
+                "name": station.name,
+                "capacity": station.capacity,
+                "lat": station.lat,
+                "lon": station.lon,
+            }
+        )
+
+    @app.post("/bikes")
+    def set_bike_station():  # type: ignore[no-untyped-def]
+        """Pick the Bay Wheels station, and switch to the bikes mode.
+
+        Matches the flight/bart pattern: choosing what to watch is a request
+        to watch it, so the panel follows rather than waiting for a tap.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("station", request.form.get("station", ""))
+        config = load_config()
+        try:
+            config.set_bike_station(str(requested))
+        except ValueError as error:
+            return jsonify(error=str(error), bike_station=config.current_bike_station()), 400
+        chosen = config.current_bike_station()
+        if chosen:
+            config.set_mode("bikes")
+        return jsonify(bike_station=chosen, current_mode=config.current_mode())
 
     @app.post("/bart")
     def set_bart_station():  # type: ignore[no-untyped-def]
@@ -235,6 +312,7 @@ def create_app() -> Flask:
             flight=config.current_flight(),
             flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
+            bike_station=config.current_bike_station(),
             network_notice=config.network_notice(),
         )
 

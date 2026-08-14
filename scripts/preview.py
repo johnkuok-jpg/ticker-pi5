@@ -68,6 +68,10 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
         "stride": 60,
         "live_flight": True,
     },
+    # Bay Wheels: static content, one representative station. Live GBFS may or
+    # may not be reachable from the preview host, so the mode is pre-seeded
+    # with a fake station rather than trusted to fetch here.
+    "bikes": {"mode": "bikes", "seed_bikes": True, "frames": 4, "fps": 2, "stride": 15},
 }
 
 
@@ -143,6 +147,28 @@ def render_mode_frames(
         if mode.headlines:
             mode.headlines = mode.headlines[:3]
         mode._last_refresh = float("inf")  # noqa: SLF001 - freeze content while sampling
+
+    if name == "bikes" and pose == "__seed__":
+        # Preview host may be offline from GBFS; hand the mode a plausible
+        # station rather than let it draw a "Loading..." panel forever.
+        from ticker import baywheels
+
+        mode._station = baywheels.Station(  # noqa: SLF001 - preview seed
+            station_id="preview",
+            name="Market St & 10th St",
+            lat=37.775,
+            lon=-122.416,
+            capacity=23,
+            num_bikes_available=11,
+            num_ebikes_available=3,
+            num_docks_available=12,
+            is_renting=True,
+            is_installed=True,
+            last_reported=0,
+        )
+        mode._station_id = "preview"
+        mode._checked = float("inf")
+        mode._missing = False
 
     frames: list[Image.Image] = []
     seen: dict[str, int] = {}
@@ -221,17 +247,28 @@ def main() -> int:
             # notice into the state a real renderer would read.
             screen_config = replace(
                 screen_config, state_dir=Path(tempfile.mkdtemp(prefix="ticker-preview-")))
+        if screen.get("seed_bikes"):
+            # Give the bikes mode a configured station id via a temp state dir
+            # so it does not fall through to the "pick one" empty state.
+            screen_config = replace(
+                screen_config,
+                state_dir=Path(tempfile.mkdtemp(prefix="ticker-preview-")),
+                bike_station_id="preview",
+            )
         if screen.get("live_flight") and not config.current_flight():
             latitude = float(config.weather_lat or 37.7749)
             longitude = float(config.weather_lon or -122.4194)
             screen_config = replace(screen_config, flight_number=find_live_flight(latitude, longitude))
 
+        pose_arg = screen.get("pose")
+        if screen.get("seed_bikes"):
+            pose_arg = "__seed__"
         frames = render_mode_frames(
             str(screen["mode"]),
             screen_config,
             stride=int(screen.get("stride", 1)),  # type: ignore[arg-type]
             fixed_frames=screen.get("frames"),  # type: ignore[arg-type]
-            pose=screen.get("pose"),  # type: ignore[arg-type]
+            pose=pose_arg,  # type: ignore[arg-type]
         )
         if not frames:
             continue
