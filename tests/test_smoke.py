@@ -56,7 +56,13 @@ def test_renderer_opens_with_mocked_piomatter(config, monkeypatch: pytest.Monkey
         Pinout=SimpleNamespace(AdafruitMatrixBonnet="bonnet"),
         PioMatter=FakePioMatter,
     )
-    monkeypatch.setitem(sys.modules, "piomatter", fake_module)
+    # Register ONLY the real distribution name. An earlier version of this test
+    # faked a top-level "piomatter" module, which made the suite pass while the
+    # renderer failed on the Pi with ModuleNotFoundError. Faking a module that
+    # does not exist in the wild proves nothing, so the short name is left unset
+    # to keep the fallback branch honest.
+    monkeypatch.delitem(sys.modules, "piomatter", raising=False)
+    monkeypatch.setitem(sys.modules, "adafruit_blinka_raspberry_pi5_piomatter", fake_module)
 
     import ticker.renderer
 
@@ -64,3 +70,9 @@ def test_renderer_opens_with_mocked_piomatter(config, monkeypatch: pytest.Monkey
     assert isinstance(matrix, FakePioMatter)
     assert framebuffer.shape == (32, 128, 3)
     assert created["pinout"] == "bonnet"
+
+
+def test_renderer_uses_the_adafruit_module_name() -> None:
+    """Guard the exact import name Adafruit ships, since only hardware catches it."""
+    source = (Path(__file__).resolve().parents[1] / "src/ticker/renderer.py").read_text()
+    assert "import adafruit_blinka_raspberry_pi5_piomatter as piomatter" in source
