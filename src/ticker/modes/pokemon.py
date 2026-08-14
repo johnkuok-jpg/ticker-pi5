@@ -62,17 +62,40 @@ _DISSOLVE_SECS = 1.2      # cross-fade from silhouette to full color
 _REVEAL_SECS = 3.5        # colored, name scrolling
 _FADE_OUT_SECS = 0.6      # gentle exit so the panel isn't jarring between rounds
 
-# Colors. The TV bumper this is imitating splits the frame in half: a warm sky
-# blue behind the silhouette and a saturated coral red behind the "who's that"
-# text. On a physical LED matrix those colors need a nudge toward the darker
-# end of the ramp — the panel is already emitting light, so the mid-tones read
-# noticeably brighter than they would on a screen. These values were picked by
-# eye against a 128×32 preview at typical brightness.
-_BG_BLUE = (24, 60, 128)      # sprite side
-_BG_RED = (150, 22, 22)       # text side
+# Colors. The TV bumper this is imitating puts a smooth horizontal gradient
+# behind the silhouette — sky blue on the left, warm red on the right — not a
+# hard split. LED matrices exaggerate mid-tones because the pixels are
+# emissive, so both endpoint colors sit a shade darker than they would on a
+# screen. Values picked by eye against a 128×32 preview at typical brightness.
+_BG_BLUE = (24, 60, 128)      # left endpoint of the horizontal gradient
+_BG_RED = (150, 22, 22)       # right endpoint
 _SILHOUETTE_INK = (0, 0, 0)   # pure black; the colored BG makes it read now
 _LABEL = (255, 240, 210)      # warm off-white on the red, matches the TV bumper
 _MASK_QUESTION = (255, 230, 90)  # ??? in yellow, echoing the reference's mask
+
+
+def _make_gradient_bg(width: int, height: int) -> Image.Image:
+    """Blue-→-red horizontal gradient the width of the panel.
+
+    A tiny vertical falloff darkens the top and bottom row very slightly so
+    the panel doesn't look like a flat block of color — the reference bumper
+    has a subtle radial gradient from the dot pattern, and this approximates
+    that effect without introducing a whole dot-shading pass.
+    """
+    bg = Image.new("RGB", (width, height), (0, 0, 0))
+    px = bg.load()
+    for x in range(width):
+        t = x / max(1, width - 1)
+        r = int(round(_BG_BLUE[0] + (_BG_RED[0] - _BG_BLUE[0]) * t))
+        g = int(round(_BG_BLUE[1] + (_BG_RED[1] - _BG_BLUE[1]) * t))
+        b = int(round(_BG_BLUE[2] + (_BG_RED[2] - _BG_BLUE[2]) * t))
+        for y in range(height):
+            # Slight vertical darkening at the very top and bottom rows so the
+            # panel doesn't look like a solid block. Falloff peaks at the edges.
+            dy = abs(y - (height - 1) / 2) / ((height - 1) / 2)  # 0 center, 1 edge
+            k = 1.0 - 0.12 * (dy ** 2)
+            px[x, y] = (int(r * k), int(g * k), int(b * k))
+    return bg
 
 
 @dataclass
@@ -94,6 +117,13 @@ class _Round:
 
 class PokemonMode(Mode):
     """Silhouette → dissolve → reveal → dissolve loop over Kanto Pokémon."""
+
+    _bg_cache: Image.Image | None = None
+
+    def _gradient_bg(self) -> Image.Image:
+        if self._bg_cache is None:
+            self._bg_cache = _make_gradient_bg(128, 32)
+        return self._bg_cache
 
     def __init__(self, config: Config) -> None:
         super().__init__(config)
@@ -240,11 +270,11 @@ class PokemonMode(Mode):
             reveal_alpha = 1.0 - (elapsed - reveal_end) / _FADE_OUT_SECS
         reveal_alpha = max(0.0, min(1.0, reveal_alpha))
 
-        # Paint the colored background halves first — blue behind the sprite,
-        # red behind the label — then composite the silhouette/sprite over the
-        # blue half. The red half is a bare backdrop for the scrolling text.
-        canvas.fill_rect(0, 0, _SPRITE_BOX, 32, _BG_BLUE)
-        canvas.fill_rect(_SPRITE_BOX, 0, 128 - _SPRITE_BOX, 32, _BG_RED)
+        # Paint the horizontal blue→red gradient across the whole panel first.
+        # Cache the gradient row on the mode instance since neither the panel
+        # width nor the endpoint colors change at runtime; regenerating it
+        # every frame is cheap but wasteful.
+        canvas.image_buffer.paste(self._gradient_bg(), (0, 0))
 
         # Silhouette underneath so it stays visible through the fade, colored
         # sprite on top with alpha scaled by reveal_alpha.
@@ -265,9 +295,10 @@ class PokemonMode(Mode):
         # scroll_text on the shared canvas would paint across the sprite area,
         # so render into a scratch canvas the width of the label zone and blit
         # that back — same pattern spotify's now-playing scroller uses. The
-        # scratch is pre-filled with the red backdrop so the paste doesn't
-        # punch a black rectangle through the panel background.
-        _draw_scrolling_label(canvas, label, label_color, tick, backdrop=_BG_RED)
+        # scratch is pre-filled from the same gradient row as the underlying
+        # panel so the paste blends into the backdrop instead of stamping a
+        # black (or flat-red) rectangle across it.
+        _draw_scrolling_label(canvas, label, label_color, tick, backdrop_strip=self._gradient_bg())
 
 
 def _draw_scrolling_label(
@@ -275,7 +306,7 @@ def _draw_scrolling_label(
     text: str,
     color: tuple[int, int, int],
     tick: int,
-    backdrop: tuple[int, int, int] = (0, 0, 0),
+    backdrop_strip: Image.Image | None = None,
 ) -> None:
     """Scroll *text* left-to-right in the label zone only, leaving the sprite alone.
 
@@ -284,15 +315,19 @@ def _draw_scrolling_label(
     text into a scratch canvas the label zone's width, then paste that back at
     the label zone's origin so the sprite side stays untouched.
 
-    ``backdrop`` pre-fills the scratch canvas so the paste blends into an
-    existing panel background instead of stamping a black rectangle over it.
+    ``backdrop_strip``, if provided, is a same-size-as-panel image whose label
+    region is copied into the scratch canvas first so the text renders on top
+    of the real backdrop instead of black.
     """
     period = canvas.text_width(text, MEDIUM) + 12  # 12px gap matches scroll_text's default
     if period <= 12:
         return
     scratch = Canvas(_TEXT_WIDTH, _TEXT_ZONE_H)
-    if backdrop != (0, 0, 0):
-        scratch.fill_rect(0, 0, _TEXT_WIDTH, _TEXT_ZONE_H, backdrop)
+    if backdrop_strip is not None:
+        region = backdrop_strip.crop(
+            (_TEXT_LEFT, _TEXT_Y_TOP, _TEXT_LEFT + _TEXT_WIDTH, _TEXT_Y_TOP + _TEXT_ZONE_H)
+        )
+        scratch.image_buffer.paste(region, (0, 0))
     scratch.scroll_text(0, text, color, tick, MEDIUM, gap=12)
     canvas.image_buffer.paste(scratch.image_buffer, (_TEXT_LEFT, _TEXT_Y_TOP))
 
