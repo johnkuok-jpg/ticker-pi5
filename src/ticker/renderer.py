@@ -85,6 +85,13 @@ def run() -> None:
     # from 75% to off is a startling flash to black when applied in one frame.
     ramp = 1.0 / (1.5 * config.fps)
 
+    # Resolve the channel permutation once. Panels that wire green and blue the
+    # other way round render every color wrong but raise nothing, so this is a
+    # display setting rather than an error condition. "rgb" costs nothing since
+    # the reorder is skipped entirely.
+    channel_index = tuple("rgb".index(channel) for channel in config.channel_order)
+    reorder_channels = channel_index != (0, 1, 2)
+
     try:
         while True:
             started = time.monotonic()
@@ -105,6 +112,8 @@ def run() -> None:
             # brightness property; this also makes the web slider hardware-neutral.
             brightness += max(-ramp, min(ramp, target_brightness - brightness))
             pixels = np.asarray(canvas.image_buffer, dtype=np.float32)
+            if reorder_channels:
+                pixels = pixels[:, :, channel_index]
             framebuffer[:] = (pixels * brightness).astype(np.uint8)
             matrix.show()
             tick += 1

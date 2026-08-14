@@ -53,6 +53,13 @@ def main() -> int:
 
     print(f"Panel geometry: {width}x{height}. Each color holds {HOLD_SECONDS:.0f}s.")
     print("Write down what the panel ACTUALLY shows for each name.\n")
+    # This script writes the framebuffer directly and deliberately ignores
+    # TICKER_CHANNEL_ORDER. Applying the correction here would hide the very
+    # swap the script exists to identify, so colors stay wrong until the
+    # renderer runs with the setting in place.
+    if config.channel_order != "rgb":
+        print(f"NOTE: TICKER_CHANNEL_ORDER={config.channel_order} is set but NOT applied")
+        print("      here, so colors below are raw. The renderer applies it.\n")
 
     for name, rgb in STEPS:
         print(f"  showing {name:<22} -> panel should be {name.split(' ')[0]}")

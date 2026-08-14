@@ -106,6 +106,19 @@ def _first_writable_state_dir() -> Path:
     raise RuntimeError("No writable ticker state directory is available")
 
 
+def _parse_channel_order(text: str) -> str:
+    """Accept any permutation of "rgb", ignoring anything else.
+
+    A typo here would otherwise raise inside the render loop on a headless box
+    with no display to report it, so an unusable value falls back to the driver
+    default rather than taking the ticker down.
+    """
+    value = "".join(text.split()).lower()
+    if sorted(value) == ["b", "g", "r"]:
+        return value
+    return "rgb"
+
+
 @dataclass(frozen=True, slots=True)
 class Config:
     """Runtime settings read from the repository's .env file."""
@@ -113,6 +126,10 @@ class Config:
     width: int = 128
     height: int = 32
     addr_lines: int = 4
+    # Some HUB75 panels wire the color channels in a different order than the
+    # driver assumes, which shows up as swapped colors rather than as an error.
+    # Any permutation of "rgb"; see scripts/check_colors.py to identify yours.
+    channel_order: str = "rgb"
     brightness: float = 0.35
     brightness_schedule: tuple[BrightnessStep, ...] = ()
     fps: int = 30
@@ -356,6 +373,7 @@ def load_config(env_file: Path | None = None) -> Config:
         width=int(os.getenv("TICKER_WIDTH", "128")),
         height=int(os.getenv("TICKER_HEIGHT", "32")),
         addr_lines=int(os.getenv("TICKER_ADDR_LINES", "4")),
+        channel_order=_parse_channel_order(os.getenv("TICKER_CHANNEL_ORDER", "rgb")),
         brightness=float(os.getenv("TICKER_BRIGHTNESS", "0.35")),
         brightness_schedule=parse_brightness_schedule(os.getenv("TICKER_BRIGHTNESS_SCHEDULE", "")),
         fps=max(1, int(os.getenv("TICKER_FPS", "30"))),

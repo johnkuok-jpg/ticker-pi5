@@ -59,6 +59,7 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 | `TICKER_WIDTH` | Display width; use `128` for two horizontal 64-pixel panels. |
 | `TICKER_HEIGHT` | Display height; use `32`. |
 | `TICKER_ADDR_LINES` | HUB75 address lines; use `4` for these panels. |
+| `TICKER_CHANNEL_ORDER` | Channel order the panels expect, any permutation of `rgb`. Use `rbg` if yellow and pink appear swapped. |
 | `TICKER_BRIGHTNESS` | Default brightness fraction, from `0.05` to `1.0`. The web slider overrides it persistently. |
 | `TICKER_FPS` | Render loop target rate; default `30`. |
 | `TICKER_SYMBOLS` | Comma-separated symbols, for example `AAPL,NVDA,SPY,BTC-USD`. Quotes use Yahoo Finance and are cached for 60 seconds. |
