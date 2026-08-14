@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "ticker-pi5" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ticker.flightradar import (  # noqa: E402
     DELAY_THRESHOLD_MINUTES,

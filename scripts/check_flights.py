@@ -7,8 +7,9 @@ web endpoint's contract with the renderer.
 """
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/home/user/workspace/ticker-pi5/src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dataclasses import replace  # noqa: E402
 
@@ -194,6 +195,41 @@ missing = client.post("/flight", json={})
 check("a missing field is not an error", missing.status_code == 200, str(missing.status_code))
 config.flight_file.unlink(missing_ok=True)
 config.set_mode("weather")
+
+# --- plane sprite -------------------------------------------------------------
+from ticker import icons
+from ticker.modes.flights import BAR_Y, PLANE_Y, ROW_TWO_Y
+from ticker.canvas import SMALL
+
+art = icons.PLANE_RIGHT
+check("the sprite is rectangular", len({len(row) for row in art}) == 1,
+      str({len(row) for row in art}))
+# Seven rows gave each wing three pixels and the shape read as a cross. Nine is
+# the whole point of the redraw, so pin it.
+check("the sprite is nine rows tall", len(art) == 9, f"got {len(art)}")
+check("the sprite clears row two's text", PLANE_Y >= ROW_TWO_Y + SMALL,
+      f"plane at {PLANE_Y}, text ends {ROW_TWO_Y + SMALL - 1}")
+check("the sprite clears the bar", PLANE_Y + len(art) <= BAR_Y,
+      f"plane ends {PLANE_Y + len(art) - 1}, bar at {BAR_Y}")
+check("every pixel has a colour",
+      set("".join(art)) <= set(icons.PLANE_PALETTE) | {"."},
+      str(set("".join(art)) - set(icons.PLANE_PALETTE) - {"."}))
+# The fuselage is the only full-width row; the nose is its right-hand end.
+mid = art[len(art) // 2]
+check("the fuselage spans the sprite", mid == "P" * len(mid), mid)
+check("the nose points right",
+      all(row[-1] == "." for i, row in enumerate(art) if i != len(art) // 2))
+# A wing swept the wrong way points the aircraft backwards, which is the kind of
+# thing that survives code review and looks wrong on the panel.
+tips = [row.index("P") for row in art if "P" in row]
+check("the wings sweep back from the nose",
+      tips[0] > tips[len(tips) // 2] and tips[-1] > tips[len(tips) // 2],
+      str(tips))
+# Bare fuselage between the wing root and the tailplane is what separates an
+# airliner from a dart.
+check("the tailplane is clear of the wing",
+      art[3][0] == "P" and art[3][1] == "." and art[5][0] == "P",
+      f"{art[3]} / {art[5]}")
 
 # --- report -------------------------------------------------------------------
 failed = [c for c in checks if not c[1]]

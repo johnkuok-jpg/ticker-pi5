@@ -66,7 +66,7 @@ LOGO_X = 0
 TEXT_X = 18
 ROW_ONE_Y = 0
 ROW_TWO_Y = 13
-PLANE_Y = 22
+PLANE_Y = 21  # nine sprite rows end one pixel clear of the bar at 30
 BAR_Y = 30
 
 AMBER = (255, 205, 40)
