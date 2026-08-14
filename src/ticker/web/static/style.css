@@ -1,200 +1,810 @@
-/* MIT License — Copyright (c) 2026 John Kuok */
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #090b10; color: #f5f7fb; }
+/*
+ * MIT License — Copyright (c) 2026 John Kuok
+ *
+ * Ticker Pi 5 webapp — "Nothing OS / dot-matrix" visual system.
+ *
+ * The phone is meant to feel like a piece of the same product as the LED
+ * panel: dot-matrix mark, monospaced numerics, dotted dividers, and a single
+ * per-mode accent color that flows from the mode button into the readout,
+ * the slider, and the corresponding settings block. No cards, no gradients,
+ * no soft glows on the dark surface — the panel itself already has all the
+ * "glow" this design should carry.
+ *
+ * Accent is a CSS custom property driven by body[data-mode="..."] rules near
+ * the bottom of this file, so every color-tied element (readout, live pill,
+ * mode dot, brightness fill, section headers, input focus, chips, footer
+ * link) picks it up automatically without further per-selector rules.
+ */
+
+:root {
+  --bg: #0a0a0a;
+  --surface: #111;
+  --line: #1f1f1f;
+  --line-strong: #2a2a2a;
+  --ink: #f4f4f4;
+  --ink-2: #cccccc;
+  --dim: #9a9a9a;
+  --dimmer: #666;
+  --danger: #ff6a6a;
+  /* Default accent — overridden per-mode below. */
+  --accent: #78b6ff;
+  --accent-soft: rgba(120, 182, 255, 0.16);
+  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --sans: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
 * { box-sizing: border-box; }
-/* Launched from the home screen the status bar is translucent and the page runs
-   edge to edge, so the notch and the home indicator would otherwise sit on top
-   of the controls. The insets are zero in a normal browser tab. */
-/* minmax(0, ...) on the track, because an auto grid track is sized by its
-   content's minimum width -- and a <select> reports the width of its longest
-   option. That let the BART station list stretch the whole page past the
-   width of a phone, which the browser then had to crop. */
-body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr);
-  justify-items: center; align-content: center; background: radial-gradient(circle at top, #1a263c, #090b10 60%);
-  padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left)); }
-.panel { width: min(100%, 460px); background: #121722; border: 1px solid #28334a; border-radius: 20px; padding: 28px; box-shadow: 0 20px 70px #0008; }
-.eyebrow { margin: 0; color: #8ba0c5; font-size: .72rem; font-weight: 700; letter-spacing: .14em; }
-h1 { margin: 8px 0 4px; font-size: 2rem; }
-.status { margin: 0 0 22px; color: #bec9db; }
-/* 3-per-row compact grid: modes read as a control surface rather than a wall
-   of paint. Every button keeps its brand color — that's the whole coding
-   system the panel-side artwork also uses — but the buttons are half their
-   old height and 33% narrower. The odd trailing tile (Wi-Fi as of writing) is
-   left dangling on purpose: the mode list is meant to keep growing. */
-.mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.mode-button { min-height: 52px; border: 2px solid transparent; border-radius: 12px; color: #fff; font-size: .9rem; font-weight: 800; text-transform: capitalize; cursor: pointer; padding: 4px 8px; transition: transform .15s, box-shadow .15s, filter .15s; }
-.mode-button:active { transform: scale(.97); }
-/* Active state is a bright blue ring + soft outer glow, chosen so it reads as
-   "selected" on every mode color (green, gray, red, blue, pink). A white
-   inner border alone was invisible on the pink/red buttons. */
-.mode-button.active { border-color: transparent; filter: brightness(1.15); box-shadow: 0 0 0 3px #78b6ff, 0 0 18px #78b6ff88; }
-.mode-stocks { background: #087a4b; }.mode-news { background: #2b61c9; }.mode-weather { background: #b66e08; }.mode-flights { background: #1f6f8b; }.mode-market { background: #6a3fb5; }.mode-crypto { background: #a4245c; }.mode-bart { background: #0d5fa6; }.mode-aqi { background: #2f7d32; }.mode-bikes { background: #d21f7c; }.mode-nametag { background: #4a5568; }.mode-pokemon { background: #cc0000; }
-.brightness { margin-top: 26px; padding-top: 20px; border-top: 1px solid #2a3449; }
-.brightness label { display: flex; justify-content: space-between; align-items: center; color: #cbd5e1; font-weight: 700; }
-/* Number input for typing an exact percentage: same styling as the numeric
-   readout it replaces, but tap-friendly and editable. The trailing percent
-   sign lives outside the input so it doesn't confuse mobile number pads. */
-.brightness-value-wrap { display: inline-flex; align-items: center; gap: 3px; color: #78b6ff; font-weight: 800; }
-#brightness-num { width: 3.2em; padding: 4px 6px; border: 1px solid #2a3449; border-radius: 8px; background: #131a28; color: #78b6ff; font-size: 1rem; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
-#brightness-num::-webkit-outer-spin-button, #brightness-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-#brightness-num:focus { outline: none; border-color: #78b6ff; }
-.brightness-percent { color: #78b6ff; font-weight: 800; }
-input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
-/* End labels sit right under the slider ends so "Dim" and "Bright" are
-   attached to the value they represent, not floating in whitespace. */
-.brightness-ends { display: flex; justify-content: space-between; margin-top: -2px; color: #6d7a92; font-size: .74rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.schedule { margin: 10px 0 0; min-height: 1.1em; color: #8b97ad; font-size: .82rem; }
-.renderer { margin: 20px 0 0; font-size: .88rem; }.online { color: #57df96; }.offline { color: #ff8f87; }
 
-/* Settings sections. Each is keyed to one mode via data-for, and the page's
-   body[data-mode] controls which one is visible — walking past a phone should
-   show only the controls that belong to what's on the panel right now. The
-   visible section wears the mode's brand color as a left rail so the header,
-   the button, and the settings block all belong to the same visual group.
-   Sections without a data-for are always visible (Spotify sign-in, etc.). */
-.flight { margin-top: 22px; padding-top: 20px; border-top: 1px solid #2a3449; }
-.flight label { display: block; color: #cbd5e1; font-weight: 700; }
-.flight[data-for] { display: none; padding-left: 14px; border-left: 3px solid transparent; }
-.flight[data-for="flights"] + .flight[data-for="flights"] { border-top: 1px dashed #2a3449; }
-body[data-mode="stocks"]  .flight[data-for~="stocks"]  { display: block; border-left-color: #34c07a; }
-body[data-mode="flights"] .flight[data-for~="flights"] { display: block; border-left-color: #3a95b6; }
-body[data-mode="bart"]    .flight[data-for~="bart"]    { display: block; border-left-color: #2a83c8; }
-body[data-mode="bikes"]   .flight[data-for~="bikes"]   { display: block; border-left-color: #d21f7c; }
-body[data-mode="nametag"] .flight[data-for~="nametag"] { display: block; border-left-color: #8b95a8; }
-/* Spotify is a card, not a .flight, but the same principle applies. */
-.card[data-for] { display: none; }
-body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
-.flight-row { display: flex; gap: 10px; margin-top: 12px; }
-#flight-input { flex: 1 1 0; width: 0; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-#flight-input:focus { outline: none; border-color: #78b6ff; }
-#station-select { flex: 1 1 0; width: 0; min-width: 0; text-overflow: ellipsis; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; }
-#station-select:focus { outline: none; border-color: #78b6ff; }
-#bike-search { flex: 1 1 0; width: 0; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 600; }
-#bike-search:focus { outline: none; border-color: #ff4fb0; }
-#bike-nearest { background: #d21f7c; }
-.bike-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 210px; overflow-y: auto; }
-.bike-result { text-align: left; padding: 10px 12px; border: 1px solid #2a3449; border-radius: 10px; background: #131a28; color: #eaf1ff; font-size: .95rem; font-weight: 600; cursor: pointer; }
-.bike-result:hover, .bike-result:focus { border-color: #ff4fb0; outline: none; }
-.nametag-go { background: #4a5568; }
-#nametag-input { flex: 1 1 0; width: 0; min-width: 0; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; }
-#nametag-input:focus { outline: none; border-color: #78b6ff; }
-.nametag-colors { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
-.nametag-swatch { width: 40px; height: 40px; border-radius: 10px; border: 2px solid #2a3449; cursor: pointer; padding: 0; }
-.nametag-swatch.selected { border-color: #eaf1ff; box-shadow: 0 0 0 3px #ffffff33; }
-.nametag-hex { display: flex; align-items: center; gap: 8px; margin-left: auto; color: #cbd5e1; font-weight: 700; font-size: .9rem; }
-#nametag-hex { width: 96px; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 10px; background: #131a28; color: #eaf1ff; font-size: .95rem; font-weight: 700; text-transform: uppercase; }
-#nametag-hex:focus { outline: none; border-color: #78b6ff; }
-.nametag-font-label { display: block; margin-top: 14px; color: #cbd5e1; font-weight: 700; font-size: .9rem; }
-#nametag-font { width: 100%; margin-top: 6px; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 10px; background: #131a28; color: #eaf1ff; font-size: 1rem; font-weight: 700; -webkit-appearance: none; appearance: none; background-image: linear-gradient(45deg, transparent 50%, #78b6ff 50%), linear-gradient(135deg, #78b6ff 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 36px; }
-#nametag-font:focus { outline: none; border-color: #78b6ff; }
+html, body { background: var(--bg); }
 
-/* Spotify Now Playing card. Matches the other cards but tinted with Spotify
-   green on the connect button so it reads as a branded auth action. */
-.spotify-card { margin-top: 14px; }
-.spotify-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
-.spotify-connect { display: inline-block; padding: 12px 20px; border-radius: 12px; background: #1ED760; color: #041006; font-size: 1rem; font-weight: 800; text-decoration: none; }
-.spotify-connect:active { transform: scale(.97); }
-.spotify-disconnect { padding: 10px 18px; border: 2px solid #2a3449; border-radius: 12px; background: transparent; color: #eaf1ff; font-size: .95rem; font-weight: 700; cursor: pointer; }
-.spotify-disconnect:active { transform: scale(.97); }
-/* Paste-back fallback, collapsed by default so the happy path stays clean. */
-.spotify-paste { margin-top: 12px; }
-.spotify-paste summary { color: #78b6ff; font-weight: 700; font-size: .9rem; cursor: pointer; padding: 6px 0; }
-#spotify-paste-url { width: 100%; margin: 8px 0; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 10px; background: #131a28; color: #eaf1ff; font-size: .95rem; }
-#spotify-paste-url:focus { outline: none; border-color: #78b6ff; }
-#spotify-paste-go { border: 0; cursor: pointer; }
-.flight-go { padding: 12px 20px; border: 0; border-radius: 12px; background: #1f6f8b; color: #fff; font-size: 1rem; font-weight: 800; cursor: pointer; }
-.flight-go:active { transform: scale(.97); }
-
-/* Wi-Fi page. Shares the control panel's shell so the two do not look like
-   different apps, and adds only what a scan list needs. */
-.mode-net { background: #4a5568; }
-.netstatus { margin-top: 4px; }
-.netstate { margin: 0; font-size: 1.15rem; font-weight: 800; }
-.netstate.connected { color: #57df96; }
-.netstate.connecting, .netstate.hotspot { color: #ffc25c; }
-.netstate.offline, .netstate.unavailable, .netstate.unknown { color: #ff8f87; }
-.warn { margin: 18px 0 0; padding: 12px 14px; border: 1px solid #7a5a1e; border-radius: 12px; background: #2a2110; color: #f2dfae; font-size: .86rem; line-height: 1.45; }
-.warn code { color: #ffd98a; }
-/* A utility class has to beat any component's own display rule, and
-   .netbanner below sets display:block with identical specificity -- without
-   !important the later rule wins and the banner is permanently visible. */
-.hidden { display: none !important; }
-.netlist { display: grid; gap: 8px; margin-top: 12px; }
-/* A row is a button, so the whole width is the tap target rather than the text. */
-.netrow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: .95rem; font-weight: 600; text-align: left; cursor: pointer; }
-.netrow.active { border-color: #57df96; }
-.netrow.static { cursor: default; justify-content: space-between; }
-.netbars { flex: none; color: #78b6ff; font-family: ui-monospace, monospace; letter-spacing: -1px; }
-.netname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nettags { flex: none; color: #8b97ad; font-size: .78rem; font-weight: 700; }
-.forget { flex: none; padding: 8px 14px; border: 0; border-radius: 10px; background: #6b2b2b; color: #ffdede; font-weight: 800; cursor: pointer; }
-.joinform { display: grid; gap: 10px; margin-top: 12px; }
-.joinform input[type=text], .joinform input[type=password] { width: 100%; padding: 12px 14px; border: 2px solid #2a3449; border-radius: 12px; background: #131a28; color: #eaf1ff; font-size: 1.05rem; font-weight: 700; }
-.joinform input:focus { outline: none; border-color: #78b6ff; }
-.joinform input:disabled { color: #6b7688; background: #0f141e; }
-.checkline { display: flex; align-items: center; gap: 8px; color: #9daabf; font-size: .88rem; font-weight: 600; }
-.checkline input { width: 18px; height: 18px; accent-color: #78b6ff; }
-.wide { width: 100%; }
-.backlink { color: #78b6ff; font-weight: 700; text-decoration: none; }
-.netbanner { display: block; margin: 18px 0 0; padding: 12px 14px; border: 1px solid #7a5a1e; border-radius: 12px; background: #2a2110; color: #ffd98a; font-size: .88rem; font-weight: 700; text-decoration: none; }
-.wifilink { display: block; margin-top: 20px; color: #8ba0c5; font-size: .88rem; font-weight: 700; text-decoration: none; }
-
-/* A station name and a button cannot share a phone-width row: the select gets
-   184px, leaving 134px for text, and "El Cerrito del Norte" needs 153px at this
-   size -- so every long name was truncated to something ambiguous. Stacking
-   gives the name the full width and makes both controls easier to hit. */
-@media (max-width: 460px) {
-  .flight-row { flex-direction: column; align-items: stretch; }
-  .flight-row button { width: 100%; }
-  #station-select, #flight-input, #nametag-input, #bike-search, #airport-input, #symbol-input { width: 100%; flex: 0 0 auto; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
-/* Stocks watchlist. Chips rather than a list: a watchlist is a set of short
-   tokens, and a chip puts the delete control inside the thing it deletes. */
-.symbol-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.6rem;
+.panel {
+  max-width: 460px;
+  margin: 0 auto;
+  padding: 20px 20px 40px;
 }
 
-.symbol-chip {
+/* ----- Dot-matrix header ------------------------------------------------- */
+
+.dot-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px dotted var(--line-strong);
+}
+
+/* 5x5 dot mark — the accent color pulses live from the mode. Uses a plain
+   CSS grid so it inherits the same accent as everything else, no images. */
+.dot-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: repeat(5, 1fr);
+  gap: 2px;
+}
+.dot-mark span {
+  background: var(--accent);
+  border-radius: 50%;
+  transition: background .3s;
+}
+.dot-mark span.off {
+  background: var(--line-strong);
+}
+
+.top-meta {
+  text-align: center;
+}
+.live-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.4rem 0.3rem 0.6rem;
-  border: 1px solid #2b3757;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px dotted var(--line-strong);
   border-radius: 999px;
-  background: #16203a;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.top-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: .04em;
   font-variant-numeric: tabular-nums;
 }
 
-.symbol-chip b {
-  font-size: 0.95rem;
-  letter-spacing: 0.03em;
-  color: #ffb000;
-}
+/* Old .eyebrow / .status / h1 are still in the DOM only for screen readers;
+   push them out of the layout entirely. The readout block below replaces
+   both visually. */
+.eyebrow, .panel > h1 { display: none; }
+.status { position: absolute; left: -9999px; }
 
-/* 28px hit area: this sits next to its neighbours on a phone, and a smaller
-   target makes deleting the wrong symbol easy. */
-.symbol-remove {
-  width: 1.75rem;
-  height: 1.75rem;
+/* ----- Big readout block ------------------------------------------------- */
+
+.readout {
+  padding: 24px 0 18px;
+  border-bottom: 1px dotted var(--line-strong);
+}
+.readout-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+.readout-value {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 40px;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  color: var(--accent);
+  margin-top: 6px;
+  text-transform: lowercase;
+  font-variant-numeric: tabular-nums;
+}
+.readout-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dimmer);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.readout-meta #status { text-transform: lowercase; letter-spacing: .04em; color: var(--ink-2); }
+.readout-meta #readout-brightness { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ----- Mode grid: dot + monospaced name, no boxes ----------------------- */
+
+/* Every mode button collapses to its accent color; layout is a flat 2-column
+   list rather than colored tiles. This works because the "which mode is on"
+   signal is carried by the big readout above, not by button color intensity. */
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 20px;
+  padding: 20px 0 8px;
+  border-bottom: 1px dotted var(--line-strong);
+}
+/* Section header for the mode list. Attached via CSS ::before so no template
+   change is required to place it. */
+.mode-grid::before {
+  content: "Modes";
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.mode-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dotted var(--line);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-align: left;
+  text-transform: lowercase;
+  letter-spacing: .04em;
+  cursor: pointer;
+  min-height: 46px;
+}
+.mode-button:active { opacity: .7; }
+.mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  flex: 0 0 auto;
+  transition: background .2s, box-shadow .2s;
+}
+.mode-button.active {
+  color: var(--accent);
+}
+.mode-button.active .mode-dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+/* The old per-mode background utility classes are neutralized: the mode
+   picker no longer uses tile color to identify itself. */
+.mode-stocks, .mode-news, .mode-weather, .mode-flights, .mode-market,
+.mode-crypto, .mode-bart, .mode-aqi, .mode-bikes, .mode-nametag,
+.mode-pokemon, .mode-net { background: transparent; }
+
+/* ----- Brightness -------------------------------------------------------- */
+
+.brightness {
+  padding: 20px 0;
+  border-bottom: 1px dotted var(--line-strong);
+}
+.brightness label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+.brightness-value-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+}
+#brightness-num {
+  width: 2.4em;
   padding: 0;
   border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+#brightness-num::-webkit-outer-spin-button,
+#brightness-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#brightness-num:focus { outline: none; }
+.brightness-percent {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+/* Native range styled to echo the dot-matrix rail: fine track + dotted
+   backdrop, accent-colored fill, high-contrast knob. Cross-browser thumbs
+   are ugly by default so we replace them. */
+input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%;
+  margin: 14px 0 4px;
+  height: 20px;
+  background: transparent;
+  outline: none;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 2px;
+  background:
+    linear-gradient(to right, var(--accent) 0, var(--accent) var(--range-fill, 45%), transparent var(--range-fill, 45%)),
+    radial-gradient(circle, var(--line-strong) 1px, transparent 1.5px) 0 center / 8px 2px repeat-x;
+  border: 0;
+}
+input[type=range]::-moz-range-track {
+  height: 2px;
+  background: var(--line-strong);
+}
+input[type=range]::-moz-range-progress {
+  height: 2px;
+  background: var(--accent);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: #24304e;
-  color: #97a3c0;
-  font-size: 1rem;
+  background: var(--ink);
+  border: 3px solid var(--accent);
+  margin-top: -8px;
+  cursor: pointer;
+}
+input[type=range]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 3px solid var(--accent);
+  cursor: pointer;
+}
+.brightness-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  color: var(--dimmer);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+}
+.schedule {
+  margin: 12px 0 0;
+  min-height: 1em;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+}
+.renderer {
+  margin: 16px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.online { color: #57df96; }
+.offline { color: var(--danger); }
+
+/* ----- Settings sections ------------------------------------------------- */
+
+/* Every mode's settings block is a .flight[data-for="MODE"]. Only the one
+   matching the current body[data-mode] is shown, so the page becomes a
+   remote for exactly what's on the panel — not a control panel for every
+   mode ever configured. */
+.flight {
+  padding: 20px 0;
+  border-bottom: 1px dotted var(--line-strong);
+}
+.flight label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+.flight[data-for] { display: none; }
+body[data-mode="stocks"]  .flight[data-for~="stocks"],
+body[data-mode="flights"] .flight[data-for~="flights"],
+body[data-mode="bart"]    .flight[data-for~="bart"],
+body[data-mode="bikes"]   .flight[data-for~="bikes"],
+body[data-mode="nametag"] .flight[data-for~="nametag"] { display: block; }
+/* Spotify card is a .card[data-for], mirror the same rule. */
+.card[data-for] { display: none; }
+body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
+
+/* Form rows: label above, input + button share a single dotted underline. */
+.flight-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 12px;
+  border-bottom: 1px solid var(--line-strong);
+  transition: border-bottom-color .15s;
+}
+.flight-row:focus-within {
+  border-bottom-color: var(--accent);
+}
+.flight-row input[type=text],
+.flight-row input[type=search],
+.flight-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  outline: none;
+}
+.flight-row input::placeholder { color: var(--dimmer); }
+
+/* Symbol/watchlist input is uppercase like a ticker; nametag isn't. */
+#nametag-input { text-transform: none; letter-spacing: .02em; }
+#bike-search   { text-transform: none; letter-spacing: .02em; }
+
+/* Right-side "action" button: text-only, monospace, uppercase, accent-tinted. */
+.flight-go {
+  padding: 0 4px 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.flight-go:active { opacity: .7; }
+.nametag-go { color: var(--accent); background: transparent; }
+
+/* ----- Stocks watchlist chips ------------------------------------------- */
+
+.symbol-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.symbol-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 12px;
+  border: 1px dotted var(--line-strong);
+  border-radius: 0;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
+}
+.symbol-chip b {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  color: var(--accent);
+}
+.symbol-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dimmer);
+  font-family: var(--mono);
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
-
 .symbol-remove:hover,
-.symbol-remove:focus-visible {
-  background: #3a2430;
-  color: #ff6b6b;
+.symbol-remove:focus-visible { color: var(--danger); background: transparent; }
+#symbol-input:disabled { opacity: 0.5; }
+
+/* ----- Bikes results ---------------------------------------------------- */
+
+.bike-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.bike-result {
+  text-align: left;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px dotted var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bike-result:hover,
+.bike-result:focus { color: var(--accent); outline: none; }
+
+/* ----- Name tag ---------------------------------------------------------- */
+
+.nametag-colors {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+  align-items: center;
+  margin-top: 12px;
+}
+.nametag-swatch {
+  aspect-ratio: 1;
+  width: 100%;
+  height: auto;
+  border-radius: 0;
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+  padding: 0;
+}
+.nametag-swatch.selected {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-color: transparent;
+}
+.nametag-hex {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.nametag-hex span { flex: 0 0 auto; }
+#nametag-hex {
+  flex: 1;
+  width: auto;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+#nametag-hex:focus { outline: none; border-bottom-color: var(--accent); }
+.nametag-font-label {
+  display: block;
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+#nametag-font {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--accent) 50%), linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 50%, calc(100% - 7px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 24px;
+}
+#nametag-font:focus { outline: none; border-bottom-color: var(--accent); }
+
+/* ----- Spotify ---------------------------------------------------------- */
+
+.spotify-card {
+  padding: 20px 0;
+  border-bottom: 1px dotted var(--line-strong);
+}
+.spotify-card > label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+.spotify-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.spotify-connect {
+  display: inline-block;
+  padding: 10px 16px;
+  border: 0;
+  background: #1ED760;
+  color: #041006;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+.spotify-connect:active { opacity: .8; }
+.spotify-disconnect {
+  padding: 10px 14px;
+  border: 1px dotted var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.spotify-paste { margin-top: 14px; }
+.spotify-paste summary {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 0;
+}
+#spotify-paste-url {
+  width: 100%;
+  margin: 10px 0;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: .04em;
+}
+#spotify-paste-url:focus { outline: none; border-bottom-color: var(--accent); }
+#spotify-paste-go { border: 0; cursor: pointer; }
+
+/* ----- Wi-Fi ------------------------------------------------------------ */
+
+.warn {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  border: 1px dotted var(--line-strong);
+  border-left: 3px solid #ffc25c;
+  background: transparent;
+  color: #f2dfae;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: .04em;
+}
+.warn code { color: #ffd98a; font-family: var(--mono); }
+/* .hidden must beat any component's own display rule. */
+.hidden { display: none !important; }
+.netlist { display: grid; gap: 0; margin-top: 12px; }
+.netrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px dotted var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.netrow.active { color: var(--accent); }
+.netrow.static { cursor: default; justify-content: space-between; }
+.netbars { flex: none; color: var(--accent); font-family: var(--mono); letter-spacing: -1px; }
+.netname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nettags {
+  flex: none;
+  color: var(--dimmer);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.forget {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px dotted var(--danger);
+  border-radius: 0;
+  background: transparent;
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.joinform { display: grid; gap: 12px; margin-top: 14px; }
+.joinform input[type=text],
+.joinform input[type=password] {
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+.joinform input:focus { outline: none; border-bottom-color: var(--accent); }
+.joinform input:disabled { color: var(--dimmer); }
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .1em;
+  font-weight: 600;
+}
+.checkline input { width: 16px; height: 16px; accent-color: var(--accent); }
+.wide { width: 100%; }
+.backlink {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  text-decoration: none;
+}
+.netbanner {
+  display: block;
+  margin: 18px 0 0;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px dotted #7a5a1e;
+  border-bottom: 1px dotted #7a5a1e;
+  background: transparent;
+  color: #ffd98a;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-decoration: none;
+}
+.wifilink {
+  display: block;
+  margin-top: 22px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  text-decoration: none;
 }
 
-#symbol-input:disabled {
-  opacity: 0.5;
+/* ----- Per-mode accent -------------------------------------------------- */
+
+/* Every mode gets one accent color that flows through the whole page: the
+   dot-mark, live-dot, readout value, mode-picker highlight, brightness fill,
+   section labels, focus underlines, chip text, footer link. Matching the
+   panel's own brand palette so the phone and the LED are visually paired. */
+body[data-mode="stocks"]  { --accent: #34c07a; --accent-soft: rgba(52, 192, 122, 0.16); }
+body[data-mode="news"]    { --accent: #4a8fff; --accent-soft: rgba(74, 143, 255, 0.16); }
+body[data-mode="weather"] { --accent: #f3a92c; --accent-soft: rgba(243, 169, 44, 0.16); }
+body[data-mode="flights"] { --accent: #3ac8d9; --accent-soft: rgba(58, 200, 217, 0.16); }
+body[data-mode="market"]  { --accent: #a86bff; --accent-soft: rgba(168, 107, 255, 0.16); }
+body[data-mode="crypto"]  { --accent: #ff5cad; --accent-soft: rgba(255, 92, 173, 0.16); }
+body[data-mode="bart"]    { --accent: #4aa3ff; --accent-soft: rgba(74, 163, 255, 0.16); }
+body[data-mode="aqi"]     { --accent: #57df96; --accent-soft: rgba(87, 223, 150, 0.16); }
+body[data-mode="bikes"]   { --accent: #ff5cad; --accent-soft: rgba(255, 92, 173, 0.16); }
+body[data-mode="nametag"] { --accent: #e6e6e6; --accent-soft: rgba(230, 230, 230, 0.16); }
+body[data-mode="pokemon"] { --accent: #ff3b3b; --accent-soft: rgba(255, 59, 59, 0.16); }
+body[data-mode="spotify"] { --accent: #1ED760; --accent-soft: rgba(30, 215, 96, 0.16); }
+body[data-mode="net"]     { --accent: #78b6ff; --accent-soft: rgba(120, 182, 255, 0.16); }
+
+/* ----- Mobile tweaks ---------------------------------------------------- */
+
+@media (max-width: 380px) {
+  .panel { padding: 16px 16px 40px; }
+  .readout-value { font-size: 34px; }
+  .mode-grid { grid-template-columns: 1fr; gap: 0; }
 }

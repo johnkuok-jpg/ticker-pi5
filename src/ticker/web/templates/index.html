@@ -8,7 +8,10 @@
   <!-- Added to the home screen this opens without browser chrome, so the panel
        is one tap away and no URL has to be typed or remembered. theme-color
        matches the top of the page gradient so the status bar area blends in. -->
-  <meta name="theme-color" content="#1a263c">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -20,16 +23,42 @@
 </head>
 <body data-mode="{{ current_mode }}">
   <main class="panel">
-    <p class="eyebrow">128 × 32 LED TICKER</p>
-    <h1>Ticker Pi 5</h1>
-    <p id="status" class="status">Current mode: <strong>{{ current_mode }}</strong></p>
+    {# Header: dot-matrix mark (echoes the LED panel), "live" pill, wall clock.
+       The mark is a plain 5x5 CSS grid so it inherits the accent color and
+       needs no assets. #}
+    <header class="dot-header">
+      <div class="dot-mark" aria-hidden="true">
+        {# T glyph: top row all on, then a single center column. #}
+        <span></span><span></span><span></span><span></span><span></span>
+        <span class="off"></span><span class="off"></span><span></span><span class="off"></span><span class="off"></span>
+        <span class="off"></span><span class="off"></span><span></span><span class="off"></span><span class="off"></span>
+        <span class="off"></span><span class="off"></span><span></span><span class="off"></span><span class="off"></span>
+        <span class="off"></span><span class="off"></span><span></span><span class="off"></span><span class="off"></span>
+      </div>
+      <div class="top-meta">
+        <span class="live-pill"><span class="live-dot"></span> LIVE · 128 × 32</span>
+      </div>
+      <div class="top-time" id="top-time">--:--</div>
+    </header>
+    {# Readout: the big, dot-matrix-typed "what's on the panel right now" so
+       walking past the phone tells you the same thing walking past the panel
+       does. #}
+    <section class="readout" aria-label="Now showing">
+      <div class="readout-label">Now Showing</div>
+      <div class="readout-value" id="readout-value">{{ current_mode }}</div>
+      <div class="readout-meta">
+        <span id="status">{{ current_mode }}</span>
+        <span>brightness <span id="readout-brightness">{{ brightness }}</span>%</span>
+      </div>
+    </section>
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
       {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "pokemon": "Pokémon", "net": "Wi-Fi"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
-        {{ mode_labels.get(mode, mode) }}
+        <span class="mode-dot" aria-hidden="true"></span>
+        <span class="mode-name">{{ mode_labels.get(mode, mode) }}</span>
       </button>
       {% endfor %}
     </section>
@@ -247,13 +276,21 @@
     let dragging = false;
     async function refreshStatus() {
       const data = await fetch('/api/status').then(response => response.json());
-      status.innerHTML = `Current mode: <strong>${data.current_mode}</strong>`;
+      /* The readout is the primary "what's on the panel" indicator. The
+         status paragraph now doubles as a fallback for screen readers and
+         for the older "Current mode" hint, so we write both. */
+      status.textContent = data.current_mode;
+      const readoutValue = document.getElementById('readout-value');
+      if (readoutValue) readoutValue.textContent = data.current_mode;
+      const readoutBrightness = document.getElementById('readout-brightness');
+      if (readoutBrightness && typeof data.brightness === 'number') readoutBrightness.textContent = data.brightness;
       schedule.textContent = data.schedule_note || '';
       if (!dragging && typeof data.brightness === 'number') {
         slider.value = data.brightness;
         if (document.activeElement !== brightnessNum) {
           brightnessNum.value = data.brightness;
         }
+        syncSliderFill();
       }
       /* Keep the visual mode class in step with what the panel is actually
          showing, in case another phone switched modes mid-session. */
@@ -560,13 +597,25 @@
         }
       });
     }
+    /* Sync the WebKit slider's colored-fill custom property to the current
+       value so the accent color reaches all the way up to the thumb without
+       needing per-value inline styles. Firefox uses ::-moz-range-progress
+       and doesn't need this, but the same setter is harmless there. */
+    function syncSliderFill() {
+      const pct = Math.round(((Number(slider.value) - Number(slider.min || 0)) /
+                              (Number(slider.max || 100) - Number(slider.min || 0))) * 100);
+      slider.style.setProperty('--range-fill', pct + '%');
+    }
+    syncSliderFill();
     slider.addEventListener('input', () => {
       dragging = true;
       brightnessNum.value = slider.value;
+      syncSliderFill();
     });
     slider.addEventListener('change', async () => {
       await fetch('/brightness', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({brightness: slider.value})});
       dragging = false;
+      syncSliderFill();
       refreshStatus();
     });
     /* Typing a specific value: commit on blur or Enter so single keystrokes
@@ -577,12 +626,27 @@
       value = Math.max(5, Math.min(100, value));
       brightnessNum.value = value;
       slider.value = value;
+      syncSliderFill();
       fetch('/brightness', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({brightness: value})}).then(refreshStatus);
     }
     brightnessNum.addEventListener('change', commitBrightnessNum);
     brightnessNum.addEventListener('keydown', event => {
       if (event.key === 'Enter') { event.preventDefault(); brightnessNum.blur(); commitBrightnessNum(); }
     });
+    /* Wall clock in the header: updates every 20s, matches the panel-native
+       time zone assumption (the ticker itself is on America/Los_Angeles). */
+    const topTime = document.getElementById('top-time');
+    function tickClock() {
+      if (!topTime) return;
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      const tz = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' })
+        .formatToParts(now).find(p => p.type === 'timeZoneName');
+      topTime.textContent = `${h}:${m}` + (tz ? ' ' + tz.value : '');
+    }
+    tickClock();
+    setInterval(tickClock, 20000);
     refreshStatus();
     setInterval(refreshStatus, 10000);
   </script>
