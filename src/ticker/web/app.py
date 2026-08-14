@@ -21,6 +21,12 @@ def _renderer_status(pid_file: Path) -> tuple[int | None, bool]:
         return None, False
 
 
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    """Format an (R, G, B) tuple as an uppercase #RRGGBB string for the panel."""
+    r, g, b = rgb
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
 def _describe_schedule(config) -> str:  # noqa: ANN001 - Config, avoiding an import cycle
     """One line telling the user what the schedule is doing, or '' if unscheduled.
 
