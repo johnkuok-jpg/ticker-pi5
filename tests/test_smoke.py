@@ -185,12 +185,14 @@ def test_nametag_mode_persists_and_renders(config) -> None:  # type: ignore[no-u
 
     pixels = list(canvas.image_buffer.getdata())
     non_black = sum(1 for p in pixels if p != (0, 0, 0))
-    # The name draws roughly 60-120 lit pixels at LARGE bold; anything above
-    # 40 confirms the renderer actually painted something.
+    # The name plus the mark draw well over 40 lit pixels; this just
+    # confirms the renderer actually painted something.
     assert non_black > 40
-    # Every lit pixel should be the chosen pink; a bug in _parse_hex_color
-    # would show as white here.
+    # The name should be pink; a bug in _parse_hex_color would show as white.
     assert any(p == (255, 60, 180) for p in pixels)
+    # The mark is Perplexity teal, independent of the name color.
+    from ticker.modes.nametag import MARK_COLOR
+    assert any(p == MARK_COLOR for p in pixels)
 
 
 def test_nametag_mode_falls_back_to_hello_when_unset(config) -> None:  # type: ignore[no-untyped-def]

@@ -45,6 +45,11 @@ MAX_TEXT_WIDTH = 128 - 1 - 18 - MARK_LEFT_MARGIN - MARK_TEXT_GAP
 # still looks like a name tag instead of a mystery blank.
 DEFAULT_NAME = "HELLO"
 
+# Perplexity brand teal. The mark always ships in brand color regardless of
+# what the wearer picks for the name, so the plate still reads as Perplexity
+# even when the name is amber or pink.
+MARK_COLOR = (32, 128, 141)  # #20808D
+
 
 def _load_mark_bitmap() -> Image.Image | None:
     """Load the mark bitmap once and cache; returns None if the asset is missing."""
@@ -65,9 +70,9 @@ class NametagMode:
         name = self._config.current_nametag_name() or DEFAULT_NAME
         color = self._config.current_nametag_color()
 
-        # Paint the mark in the wearer's chosen color, then center the name
-        # in the remaining right zone.
-        mark_width = self._paint_mark(canvas, color)
+        # Paint the mark in Perplexity teal (fixed), then center the name in
+        # the wearer's chosen color in the remaining right zone.
+        mark_width = self._paint_mark(canvas, MARK_COLOR)
         text_zone_left = MARK_LEFT_MARGIN + mark_width + MARK_TEXT_GAP
         text_zone_width = canvas.width - text_zone_left - 1
 
