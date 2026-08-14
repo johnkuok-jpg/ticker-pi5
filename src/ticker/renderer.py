@@ -17,17 +17,23 @@ from ticker.modes import build_mode
 def _open_matrix(config: Config) -> tuple[Any, np.ndarray]:
     """Create the Pi 5 PIO display object using the official PioMatter pattern.
 
-    Adafruit ships this as ``adafruit_blinka_raspberry_pi5_piomatter`` and their
-    own examples alias it to ``piomatter``; there is no top-level ``piomatter``
-    module, so importing that name fails at runtime no matter what pip installed.
-    See https://github.com/adafruit/Adafruit_Blinka_Raspberry_Pi5_Piomatter
-    examples/simpletest.py. The fallback covers a source build that exposes the
-    short name.
+    The distribution is ``Adafruit-Blinka-Raspberry-Pi5-Piomatter`` but the
+    importable module has been renamed across releases, and neither name is the
+    bare ``piomatter`` that the examples alias it to:
+
+    * 1.0.0 (stable)  -> ``adafruit_blinka_raspberry_pi5_piomatter``
+    * 1.0.0a3 (alpha) -> ``adafruit_raspberry_pi5_piomatter``
+
+    Both export the same five names, so the alpha fallback stays usable rather
+    than forcing an upgrade on an already-working Pi. Verified by inspecting the
+    published cp313 aarch64 wheels; see
+    https://github.com/adafruit/Adafruit_Blinka_Raspberry_Pi5_Piomatter
+    examples/simpletest.py for the documented call pattern.
     """
     try:
         import adafruit_blinka_raspberry_pi5_piomatter as piomatter
     except ModuleNotFoundError:
-        import piomatter  # type: ignore[no-redef]
+        import adafruit_raspberry_pi5_piomatter as piomatter  # type: ignore[no-redef]
 
     geometry = piomatter.Geometry(
         width=config.width,

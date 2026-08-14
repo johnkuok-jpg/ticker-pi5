@@ -1,6 +1,8 @@
 # MIT License — Copyright (c) 2026 John Kuok
-# Runtime dependency lock mirror for Raspberry Pi OS Bookworm (Python 3.11).
-adafruit-blinka-raspberry-pi5-piomatter==1.0.0a3
+# Runtime dependency lock mirror for Raspberry Pi OS (64-bit), Python 3.11-3.13.
+# 1.0.0 is the first release whose module is adafruit_blinka_raspberry_pi5_piomatter;
+# the 1.0.0a3 alpha installed a module named adafruit_raspberry_pi5_piomatter instead.
+adafruit-blinka-raspberry-pi5-piomatter==1.0.0
 Adafruit-Blinka==8.65.0
 Pillow==11.3.0
 numpy==2.2.6
