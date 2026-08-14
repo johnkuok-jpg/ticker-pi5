@@ -66,6 +66,26 @@ def _spotify_result_page(message: str, ok: bool) -> str:
     )
 
 
+def _extract_spotify_code(raw: str) -> str:
+    """Pull the ``code`` parameter out of a pasted OAuth callback URL.
+
+    Tolerant on purpose: users paste a full URL, a URL missing its scheme, or
+    occasionally just the code. Returns "" when nothing usable is found.
+    """
+    text = raw.strip().strip("<>\"'")
+    if "code=" in text:
+        # Take everything after the first code= and stop at the next separator.
+        fragment = text.split("code=", 1)[1]
+        for sep in ("&", "#", " "):
+            fragment = fragment.split(sep, 1)[0]
+        return fragment.strip()
+    # A bare code: Spotify codes are long, URL-safe, and contain no scheme or
+    # slashes. Reject anything that looks like a URL so a mis-paste is caught.
+    if "://" in text or "/" in text or len(text) < 20:
+        return ""
+    return text
+
+
 def _describe_schedule(config) -> str:  # noqa: ANN001 - Config, avoiding an import cycle
     """One line telling the user what the schedule is doing, or '' if unscheduled.
 
@@ -472,6 +492,45 @@ def create_app() -> Flask:
         except spotify_client.SpotifyAuthError as exc:
             return _spotify_result_page(f"Could not exchange code: {exc}", ok=False)
         return _spotify_result_page("Spotify connected. You can close this tab.", ok=True)
+
+    @app.post("/spotify/paste")
+    def spotify_paste():  # type: ignore[no-untyped-def]
+        """Finish the OAuth flow from a pasted callback URL.
+
+        Spotify now rejects plain-http redirect URIs unless the host is the
+        literal loopback IP 127.0.0.1. That means a phone completing the flow
+        gets redirected to *its own* 127.0.0.1 and the callback never reaches
+        the Pi. Rather than require an HTTPS reverse proxy on a gift device,
+        the user copies the failed URL out of their address bar and pastes it
+        here; the code inside is still valid for the exchange.
+
+        Accepts either a full URL or a bare code, so a user who only manages
+        to copy the code fragment still succeeds.
+        """
+        config = load_config()
+        auth = _spotify_auth(config)
+        if not auth.configured:
+            return jsonify(ok=False, error="Spotify credentials are not configured on this ticker."), 400
+        payload = request.get_json(silent=True) or {}
+        raw = str(payload.get("url", request.form.get("url", ""))).strip()
+        if not raw:
+            return jsonify(ok=False, error="Paste the URL from your browser's address bar."), 400
+        code = _extract_spotify_code(raw)
+        if not code:
+            return jsonify(
+                ok=False,
+                error="No authorisation code found in that text. Copy the whole address-bar URL.",
+            ), 400
+        try:
+            auth.exchange_code(code)
+        except spotify_client.SpotifyAuthError as exc:
+            # The most common cause is a stale code: they are single-use and
+            # expire in about a minute, so say so rather than showing a raw error.
+            return jsonify(
+                ok=False,
+                error=f"Spotify rejected that code ({exc}). Codes expire quickly — tap Connect and try again.",
+            ), 400
+        return jsonify(ok=True, connected=True)
 
     @app.post("/spotify/disconnect")
     def spotify_disconnect():  # type: ignore[no-untyped-def]

@@ -187,7 +187,13 @@ class Config:
     spotify_client_secret: str = ""
     # Where Spotify should send the user back after they authorise. Must match
     # a redirect URI registered on the Spotify app dashboard exactly.
-    spotify_redirect_uri: str = ""
+    #
+    # Spotify rejects plain-http redirect URIs unless the host is the literal
+    # loopback IP, so ticker.local is not allowed here. The consequence is that
+    # a phone completing the flow gets redirected to its own 127.0.0.1 and sees
+    # a connection error; the webapp's /spotify/paste route exists to finish
+    # the exchange from the code in that dead URL.
+    spotify_redirect_uri: str = "http://127.0.0.1:8080/spotify/callback"
     weather_lat: str = ""
     weather_lon: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
@@ -621,7 +627,10 @@ def load_config(env_file: Path | None = None) -> Config:
         nametag_font=(os.getenv("NAMETAG_FONT", "").strip().lower() or "spleen"),
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", "").strip(),
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", "").strip(),
-        spotify_redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "").strip(),
+        spotify_redirect_uri=(
+            os.getenv("SPOTIFY_REDIRECT_URI", "").strip()
+            or "http://127.0.0.1:8080/spotify/callback"
+        ),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_user_agent=os.getenv(

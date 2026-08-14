@@ -147,12 +147,30 @@
       </p>
       <div class="spotify-row">
         {% if spotify_configured and not spotify_connected %}
-        <a id="spotify-connect" class="spotify-connect" href="/spotify/connect">Connect Spotify</a>
+        <a id="spotify-connect" class="spotify-connect" href="/spotify/connect" target="_blank" rel="noopener">Connect Spotify</a>
         {% endif %}
         {% if spotify_connected %}
         <button id="spotify-disconnect" type="button" class="spotify-disconnect">Disconnect</button>
         {% endif %}
       </div>
+      {# Paste-back step. Spotify only accepts plain-http redirect URIs on the
+         literal loopback IP, so a phone finishing the flow lands on its own
+         127.0.0.1 and shows a connection error. The authorisation code in
+         that dead URL is still valid, so the user pastes it here. #}
+      {% if spotify_configured and not spotify_connected %}
+      <details class="spotify-paste">
+        <summary>Landed on an error page? Finish here</summary>
+        <p class="schedule">
+          After you tap Allow, your browser will try to open a page that cannot
+          load. That is expected. Copy the whole address from that tab and
+          paste it below.
+        </p>
+        <input id="spotify-paste-url" type="text" inputmode="url" autocomplete="off"
+               placeholder="paste the address here" />
+        <button id="spotify-paste-go" type="button" class="spotify-connect">Finish connecting</button>
+        <p id="spotify-paste-note" class="schedule"></p>
+      </details>
+      {% endif %}
     </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
@@ -406,6 +424,33 @@
       spotifyDisconnect.addEventListener('click', async () => {
         await fetch('/spotify/disconnect', {method: 'POST'});
         window.location.reload();
+      });
+    }
+    /* Paste-back completion. Posts the pasted address to the Pi, which digs the
+       authorisation code out of it. On success the section must re-render to
+       show Disconnect, so reload; on failure keep the box open with the reason. */
+    const spotifyPasteGo = document.getElementById('spotify-paste-go');
+    if (spotifyPasteGo) {
+      const pasteUrl = document.getElementById('spotify-paste-url');
+      const pasteNote = document.getElementById('spotify-paste-note');
+      spotifyPasteGo.addEventListener('click', async () => {
+        pasteNote.textContent = 'Connecting…';
+        try {
+          const res = await fetch('/spotify/paste', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: pasteUrl.value}),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            pasteNote.textContent = 'Connected. Reloading…';
+            window.location.reload();
+          } else {
+            pasteNote.textContent = data.error || 'Could not connect.';
+          }
+        } catch (err) {
+          pasteNote.textContent = 'Could not reach the ticker. Try again.';
+        }
       });
     }
     slider.addEventListener('input', () => {

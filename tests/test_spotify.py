@@ -159,3 +159,74 @@ def test_spotify_mode_progress_bar_never_overpaints_art(config, monkeypatch: pyt
     # If the progress bar started at col 0 by accident it would have overwritten (0,31).
     assert canvas.image_buffer.getpixel((0, BAR_ROW)) == (12, 34, 56)
     assert canvas.image_buffer.getpixel((ART_SIZE - 1, BAR_ROW)) == (12, 34, 56)
+
+
+def test_extract_spotify_code_from_pasted_urls() -> None:
+    """The paste-back parser must handle the shapes users actually paste.
+
+    Spotify only allows plain-http redirect URIs on the literal loopback IP,
+    so a phone finishing the flow lands on an unreachable 127.0.0.1 page. The
+    user copies that dead address and pastes it; these are the variants seen
+    in practice (full URL, no scheme, extra params, bare code, and mis-pastes).
+    """
+    from ticker.web.app import _extract_spotify_code
+
+    full = "http://127.0.0.1:8080/spotify/callback?code=AQD9x_ABC-123&state=xyz"
+    assert _extract_spotify_code(full) == "AQD9x_ABC-123"
+
+    # state before code — order must not matter
+    reordered = "http://127.0.0.1:8080/spotify/callback?state=xyz&code=AQD9x_ABC-123"
+    assert _extract_spotify_code(reordered) == "AQD9x_ABC-123"
+
+    # scheme stripped by the browser's copy behaviour
+    no_scheme = "127.0.0.1:8080/spotify/callback?code=AQD9x_ABC-123"
+    assert _extract_spotify_code(no_scheme) == "AQD9x_ABC-123"
+
+    # trailing fragment / whitespace
+    messy = "  http://127.0.0.1:8080/spotify/callback?code=AQD9x_ABC-123#_=_  "
+    assert _extract_spotify_code(messy) == "AQD9x_ABC-123"
+
+    # a bare code pasted on its own
+    bare = "AQD9x_ABC-123456789012345678"
+    assert _extract_spotify_code(bare) == bare
+
+    # mis-pastes must be rejected rather than sent to Spotify
+    assert _extract_spotify_code("") == ""
+    assert _extract_spotify_code("https://open.spotify.com/") == ""
+    assert _extract_spotify_code("short") == ""
+
+
+def test_spotify_paste_route_rejects_junk(config, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """POST /spotify/paste should 400 on unusable input and never call Spotify."""
+    from ticker.web.app import create_app
+
+    monkeypatch.setattr("ticker.web.app.load_config", lambda *a, **k: config)
+    app = create_app()
+    client = app.test_client()
+
+    # Empty body
+    assert client.post("/spotify/paste", json={}).status_code == 400
+    # Something that is clearly not a callback URL
+    assert client.post("/spotify/paste", json={"url": "hello"}).status_code == 400
+
+
+def test_spotify_paste_route_exchanges_valid_code(config, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """A pasted callback URL should complete the token exchange and connect."""
+    from ticker.web.app import create_app
+
+    monkeypatch.setattr("ticker.web.app.load_config", lambda *a, **k: config)
+    monkeypatch.setattr(
+        spotify_client.SpotifyAuth,
+        "_post_token",
+        lambda self, payload: {"access_token": "at", "refresh_token": "rt", "expires_in": 3600},
+    )
+    app = create_app()
+    client = app.test_client()
+
+    res = client.post(
+        "/spotify/paste",
+        json={"url": "http://127.0.0.1:8080/spotify/callback?code=AQD9x_ABC-123&state=s"},
+    )
+    assert res.status_code == 200
+    assert res.get_json()["ok"] is True
+    assert config.spotify_token_file.exists()

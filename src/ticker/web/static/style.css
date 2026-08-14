@@ -60,6 +60,12 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 .spotify-connect:active { transform: scale(.97); }
 .spotify-disconnect { padding: 10px 18px; border: 2px solid #2a3449; border-radius: 12px; background: transparent; color: #eaf1ff; font-size: .95rem; font-weight: 700; cursor: pointer; }
 .spotify-disconnect:active { transform: scale(.97); }
+/* Paste-back fallback, collapsed by default so the happy path stays clean. */
+.spotify-paste { margin-top: 12px; }
+.spotify-paste summary { color: #78b6ff; font-weight: 700; font-size: .9rem; cursor: pointer; padding: 6px 0; }
+#spotify-paste-url { width: 100%; margin: 8px 0; padding: 10px 12px; border: 2px solid #2a3449; border-radius: 10px; background: #131a28; color: #eaf1ff; font-size: .95rem; }
+#spotify-paste-url:focus { outline: none; border-color: #78b6ff; }
+#spotify-paste-go { border: 0; cursor: pointer; }
 .flight-go { padding: 12px 20px; border: 0; border-radius: 12px; background: #1f6f8b; color: #fff; font-size: 1rem; font-weight: 800; cursor: pointer; }
 .flight-go:active { transform: scale(.97); }
 
