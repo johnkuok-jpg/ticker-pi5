@@ -63,7 +63,10 @@ PLACEHOLDER_COLOR = (140, 140, 140)
 # --- Scroll behaviour ------------------------------------------------------
 
 SCROLL_GAP_PX = 20
-SCROLL_PX_PER_TICK = 1
+# Ticks the panel must advance before the text moves one pixel. At 1 the text
+# slides a pixel every frame, which reads as too fast on a 128px panel; 2 halves
+# it to a comfortable reading pace without dropping to a stuttery integer crawl.
+SCROLL_TICKS_PER_PX = 2
 
 
 class SpotifyMode(Mode):
@@ -153,7 +156,7 @@ class SpotifyMode(Mode):
         # Scroll: render the whole string plus one repeat into a scratch strip,
         # then crop a text-zone-wide slice at the current offset.
         period = text_w + SCROLL_GAP_PX
-        offset = (tick * SCROLL_PX_PER_TICK) % period
+        offset = (tick // SCROLL_TICKS_PER_PX) % period
         strip_w = period + TEXT_WIDTH + 20  # generous margin for the crop
         scratch = Canvas(strip_w, text_h + 4)
         scratch.text_bold(0, 0, text, color, MEDIUM, weight=1)
