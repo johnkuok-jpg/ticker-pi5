@@ -27,19 +27,20 @@ from PIL import Image
 from ..canvas import Canvas, LARGE, MEDIUM
 from ..config import Config
 
-# Perplexity mark, pre-rasterized to an 18x24 1-bit bitmap. Shipped as a
-# static asset so the Pi does not need cairosvg at runtime; the bitmap is
-# recolored per-render to match the wearer's chosen text color.
+# Perplexity mark, pre-rasterized to a 19x24 1-bit bitmap that is mirror-
+# symmetric around its own center column. Shipped as a static asset so the Pi
+# does not need cairosvg at runtime; the bitmap is recolored per-render to
+# match the wearer's chosen text color.
 _MARK_PATH = Path(__file__).resolve().parents[1] / "web" / "static" / "logos" / "perplexity_24.png"
 
 # The mark sits in a fixed left zone; the name centers in whatever's left.
-# 18 (mark width) + 1 (left margin) + 3 (gap) = 22 px of left zone.
+# 19 (mark width) + 1 (left margin) + 3 (gap) = 23 px of left zone.
 MARK_LEFT_MARGIN = 1
 MARK_TEXT_GAP = 3
 
 # 128-pixel panel, minus one pixel of edge margin on the right, minus the
 # left zone reserved for the mark.
-MAX_TEXT_WIDTH = 128 - 1 - 18 - MARK_LEFT_MARGIN - MARK_TEXT_GAP
+MAX_TEXT_WIDTH = 128 - 1 - 19 - MARK_LEFT_MARGIN - MARK_TEXT_GAP
 
 # Fallback name shown before the wearer sets their own, so a brand-new panel
 # still looks like a name tag instead of a mystery blank.

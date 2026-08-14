@@ -92,5 +92,5 @@ input[type=range] { width: 100%; margin-top: 12px; accent-color: #78b6ff; }
 @media (max-width: 460px) {
   .flight-row { flex-direction: column; align-items: stretch; }
   .flight-row button { width: 100%; }
-  #station-select, #flight-input { width: 100%; flex: 0 0 auto; }
+  #station-select, #flight-input, #nametag-input { width: 100%; flex: 0 0 auto; }
 }
