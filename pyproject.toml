@@ -22,6 +22,11 @@ dependencies = [
   "feedparser>=6.0.0",
   "requests>=2.31.0",
   "python-dotenv>=1.0.0",
+  # yt-dlp resolves a YouTube playlist to direct media URLs; imageio-ffmpeg
+  # ships the ffmpeg binary that youtube mode calls out to. Both are runtime
+  # dependencies of modes/youtube.py, not optional extras.
+  "yt-dlp>=2026.1.1",
+  "imageio-ffmpeg>=0.5.1",
 ]
 
 [project.urls]

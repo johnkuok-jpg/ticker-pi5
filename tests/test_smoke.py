@@ -29,7 +29,12 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_config_loads_minimal_env(config):  # type: ignore[no-untyped-def]
     assert config.width == 128
     assert config.symbols == ("AAPL", "NVDA")
-    assert config.current_mode() == "stocks"
+    # DEFAULT_MODE is the cold-boot fallback when no mode file exists; keep this
+    # test in lockstep with config.DEFAULT_MODE so a deliberate default change
+    # does not require a separate test edit.
+    from ticker.config import DEFAULT_MODE
+
+    assert config.current_mode() == DEFAULT_MODE
 
 
 def test_all_modes_instantiate_and_render(config, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
