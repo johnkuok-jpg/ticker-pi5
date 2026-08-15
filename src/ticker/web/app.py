@@ -14,12 +14,36 @@ from ticker.config import MAX_SYMBOLS, VALID_MODES, load_config
 
 
 def _renderer_status(pid_file: Path) -> tuple[int | None, bool]:
+    """Report the renderer's PID and whether the process is still alive.
+
+    ``os.kill(pid, 0)`` is the standard "does this process exist?" probe, but
+    the webapp runs as ``pi`` while the renderer runs as ``root``. An
+    unprivileged user cannot signal a root process, so ``os.kill`` raises
+    ``PermissionError`` (``errno.EPERM``) even when the PID is very much
+    alive. That would show up as ``Renderer offline`` in the webapp banner
+    while the LEDs are happily rendering.
+
+    Distinguish the cases:
+      * ``ESRCH`` — no such process; PID file is stale, renderer really is down.
+      * ``EPERM`` — process exists, we just cannot signal it; treat as alive.
+      * anything else — unreadable/missing PID file; treat as offline.
+    """
     try:
         pid = int(pid_file.read_text(encoding="utf-8").strip())
-        os.kill(pid, 0)
-        return pid, True
     except (OSError, ValueError):
         return None, False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        # ESRCH: PID file points at a process that no longer exists.
+        return None, False
+    except PermissionError:
+        # EPERM: process exists but we lack permission to signal it (webapp
+        # is `pi`, renderer is `root`). Existence is what we care about.
+        return pid, True
+    except OSError:
+        return None, False
+    return pid, True
 
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:

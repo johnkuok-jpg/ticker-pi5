@@ -238,6 +238,37 @@ def test_focus_mode_renders_with_long_label(config) -> None:  # type: ignore[no-
         mode.render(canvas, tick=t)
 
 
+def test_renderer_status_treats_eperm_as_alive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Root-owned renderer + pi-owned webapp: os.kill raises EPERM, not ESRCH.
+
+    Regression for the ``Renderer offline`` banner that appeared on the
+    webapp while the renderer was actually running as root. The check
+    used a bare ``except OSError`` that swallowed EPERM as if it meant
+    the PID was gone.
+    """
+    from ticker.web.app import _renderer_status
+
+    pid_file = tmp_path / "renderer.pid"
+    pid_file.write_text("65400", encoding="utf-8")
+
+    def fake_kill(pid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr("ticker.web.app.os.kill", fake_kill)
+    pid, alive = _renderer_status(pid_file)
+    assert pid == 65400
+    assert alive is True
+
+    # And ESRCH still reads as dead.
+    def fake_kill_esrch(pid: int, sig: int) -> None:
+        raise ProcessLookupError(3, "No such process")
+
+    monkeypatch.setattr("ticker.web.app.os.kill", fake_kill_esrch)
+    pid, alive = _renderer_status(pid_file)
+    assert pid is None
+    assert alive is False
+
+
 def test_renderer_uses_the_adafruit_module_name() -> None:
     """Guard the exact import name Adafruit ships, since only hardware catches it."""
     source = (Path(__file__).resolve().parents[1] / "src/ticker/renderer.py").read_text()
