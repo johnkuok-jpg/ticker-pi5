@@ -195,9 +195,12 @@ class Config:
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     # Finnhub API key -- gates real-time US-equity quotes. Get one free at
-    # https://finnhub.io/register. If empty the stocks mode falls back to
-    # yfinance (15-20 min delayed for US equities).
-    finnhub_api_key: str = ""
+    # https://finnhub.io/register. Free tier is 60 req/min and rate-limits
+    # (not billing) if you exceed it, so a committed default is fine for a
+    # hobby ticker; anyone who wants their own quota can override with the
+    # FINNHUB_API_KEY env var. If both are empty the stocks mode falls back
+    # to yfinance (15-20 min delayed for US equities).
+    finnhub_api_key: str = "d6jjqthr01qkvh5q7fd0d6jjqthr01qkvh5q7fdg"
     # Where Spotify should send the user back after they authorise. Must match
     # a redirect URI registered on the Spotify app dashboard exactly.
     #
@@ -966,7 +969,10 @@ def load_config(env_file: Path | None = None) -> Config:
         nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
         nametag_color=(os.getenv("NAMETAG_COLOR", "").strip() or _DEFAULT_NAMETAG_HEX),
         nametag_font=(os.getenv("NAMETAG_FONT", "").strip().lower() or "spleen"),
-        finnhub_api_key=os.getenv("FINNHUB_API_KEY", "").strip(),
+        finnhub_api_key=(
+            os.getenv("FINNHUB_API_KEY", "").strip()
+            or "d6jjqthr01qkvh5q7fd0d6jjqthr01qkvh5q7fdg"
+        ),
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", "").strip(),
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", "").strip(),
         spotify_redirect_uri=(
