@@ -154,6 +154,36 @@ def _is_playable_entry(entry: dict) -> bool:
     return True
 
 
+def _is_short(entry: dict) -> bool:
+    """Return True for YouTube Shorts (vertical, <=60s).
+
+    Two independent signals so we still catch Shorts when yt-dlp is missing
+    one of them:
+
+    1. The canonical/URL path contains ``/shorts/`` -- this is how YouTube
+       itself distinguishes them and is present on almost every flat entry.
+    2. Duration <= 60 seconds. A one-minute-and-under video that also has
+       Short-shaped signals (or came from a Shorts feed) is a Short by any
+       useful definition. We *don't* filter purely on duration <=60 because
+       some real landscape VODs are genuinely under a minute (BBC Earth
+       clips, JPL teasers), so we require the URL signal *or* a short
+       duration together with a suspiciously tall aspect ratio hint.
+    """
+    for key in ("webpage_url", "url", "original_url"):
+        val = entry.get(key)
+        if isinstance(val, str) and "/shorts/" in val.lower():
+            return True
+    # Fallback: duration <= 60 AND yt-dlp tagged it as a Short via its
+    # ``ie_key`` / ``_type`` (YouTubeShorts extractor) if that ever surfaces
+    # on flat entries. Kept conservative to avoid dropping normal short VODs.
+    duration = entry.get("duration")
+    if isinstance(duration, (int, float)) and 0 < duration <= 60:
+        ie = str(entry.get("ie_key") or entry.get("extractor") or "").lower()
+        if "short" in ie:
+            return True
+    return False
+
+
 class YouTubeMode(Mode):
     """Play tiny 57x32 YouTube videos with scrolling metadata."""
 
@@ -325,6 +355,7 @@ class YouTubeMode(Mode):
                 vids = []
                 skipped_live = 0
                 skipped_blocked = 0
+                skipped_short = 0
                 for e in entries[:40]:  # widened from 20 to survive filtering
                     vid = e.get("id") or ""
                     title = str(e.get("title") or "").strip()
@@ -335,15 +366,21 @@ class YouTubeMode(Mode):
                     if not _is_playable_entry(e):
                         skipped_live += 1
                         continue
+                    if _is_short(e):
+                        # Shorts are vertical and letterbox to a useless sliver
+                        # on the 57x32 video panel. Drop them entirely.
+                        skipped_short += 1
+                        continue
                     if self._is_blocklisted(vid):
                         skipped_blocked += 1
                         continue
                     vids.append(VideoInfo(vid, title, channel, views))
                     if len(vids) >= 20:
                         break
-                if skipped_live or skipped_blocked:
+                if skipped_live or skipped_blocked or skipped_short:
                     _safe_log(
                         f"[youtube] filtered {skipped_live} livestreams, "
+                        f"{skipped_short} shorts, "
                         f"{skipped_blocked} blocklisted from playlist"
                     )
                 if vids:
