@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any
@@ -12,6 +13,14 @@ import numpy as np
 from ticker.canvas import Canvas
 from ticker.config import Config, load_config
 from ticker.modes import build_mode
+
+LOGGER = logging.getLogger(__name__)
+
+# One log line per mode per this many seconds, at most. Mode exceptions in the
+# field are usually a persistent "the API changed" or "the API key is empty"
+# situation, so a per-frame log would flood journalctl without adding signal.
+_MODE_ERROR_THROTTLE_SEC = 60.0
+_last_mode_error_at: dict[str, float] = {}
 
 # Minimum brightness while the Wi-Fi setup screen is forced on. Chosen to match
 # the lowest scheduled daytime step rather than something brighter: it has to be
@@ -129,6 +138,14 @@ def run() -> None:
             try:
                 current_mode.render(canvas, tick)
             except Exception as error:
+                # Rate-limited so a persistent mode failure doesn't drown
+                # journalctl. The panel still shows the tiny error frame every
+                # tick; the log line just gives us a traceback for diagnosis.
+                now_mono = time.monotonic()
+                last = _last_mode_error_at.get(current_name, 0.0)
+                if now_mono - last >= _MODE_ERROR_THROTTLE_SEC:
+                    _last_mode_error_at[current_name] = now_mono
+                    LOGGER.exception("%s mode render failed", current_name)
                 canvas.clear()
                 # canvas.text() sanitizes for the Latin-1 bitmap font, but if
                 # the exception message itself contains non-ASCII we still want

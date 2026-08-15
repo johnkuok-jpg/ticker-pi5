@@ -368,7 +368,21 @@
        slider out from under their thumb. */
     let dragging = false;
     async function refreshStatus() {
-      const data = await fetch('/api/status').then(response => response.json());
+      /* A brief web/API outage happens whenever the ticker Pi is rebooting or
+         switching networks. Without a handler, every 10s poll would surface as
+         an unhandled promise rejection in devtools while the last-good UI
+         quietly stays on screen. Catch the failure, keep the UI as-is, and
+         mark the renderer line as offline until the next tick succeeds. */
+      let data;
+      try {
+        const response = await fetch('/api/status');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        data = await response.json();
+      } catch (err) {
+        renderer.textContent = 'Control panel offline — retrying…';
+        renderer.className = 'renderer offline';
+        return;
+      }
       /* The readout is the primary "what's on the panel" indicator. The
          status paragraph now doubles as a fallback for screen readers and
          for the older "Current mode" hint, so we write both. */
@@ -414,12 +428,20 @@
       document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));
     }
     document.querySelectorAll('.mode-button').forEach(button => button.addEventListener('click', async () => {
-      /* Flip the body-level data-mode immediately so the settings section
-         swap feels instant. refreshStatus() will confirm it or roll it back
-         if the server rejects the change. */
+      /* Flip the body-level data-mode and the active class immediately so the
+         settings section swap feels instant, then roll back on a rejected /
+         failed request. This mirrors the World Clock pattern below. */
+      const priorMode = document.body.dataset.mode;
+      const priorActive = document.querySelector('.mode-button.active');
       document.body.dataset.mode = button.dataset.mode;
       document.querySelectorAll('.mode-button').forEach(b => b.classList.toggle('active', b === button));
-      await fetch(`/mode/${button.dataset.mode}`, {method: 'POST'});
+      try {
+        const resp = await fetch(`/mode/${button.dataset.mode}`, {method: 'POST'});
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      } catch (err) {
+        if (priorMode) document.body.dataset.mode = priorMode;
+        document.querySelectorAll('.mode-button').forEach(b => b.classList.toggle('active', b === priorActive));
+      }
       refreshStatus();
     }));
     flightInput.addEventListener('input', () => {

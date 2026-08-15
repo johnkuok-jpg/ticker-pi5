@@ -210,9 +210,15 @@
       rescan.disabled = true;
       rescan.textContent = 'Scanning…';
       list.innerHTML = '<p class="schedule">Scanning…</p>';
-      await refresh(true);
-      rescan.disabled = false;
-      rescan.textContent = 'Scan again';
+      /* refresh() has its own try/catch, but if it ever rejects for some new
+         reason we still want the button re-enabled instead of stuck on
+         "Scanning…" indefinitely. */
+      try {
+        await refresh(true);
+      } finally {
+        rescan.disabled = false;
+        rescan.textContent = 'Scan again';
+      }
     });
 
     joinForm.addEventListener('submit', async event => {
