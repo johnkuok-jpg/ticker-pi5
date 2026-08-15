@@ -164,6 +164,7 @@ def create_app() -> Flask:
             youtube_categories=YT_CATEGORIES,
             youtube_default_category=YT_DEFAULT_CATEGORY,
             youtube_selection=config.current_youtube_playlist(),
+            worldclock_cities=config.current_worldclock_cities(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -531,6 +532,27 @@ def create_app() -> Flask:
     def focus_state_api():  # type: ignore[no-untyped-def]
         config = load_config()
         return _focus_response(config.focus_state())
+
+    @app.post("/worldclock")
+    def set_worldclock():  # type: ignore[no-untyped-def]
+        """Update the world-clock city list and switch to that mode.
+
+        Accepts a JSON list of ``{"label", "tz"}`` entries. Same reasoning as
+        the flight/nametag forms: saving cities is an explicit request to see
+        them, so we flip the mode too.
+        """
+        payload = request.get_json(silent=True) or {}
+        cities = payload.get("cities", [])
+        config = load_config()
+        try:
+            saved = config.set_worldclock_cities(list(cities))
+        except ValueError as err:
+            return jsonify(
+                error=str(err),
+                cities=config.current_worldclock_cities(),
+            ), 400
+        config.set_mode("worldclock")
+        return jsonify(cities=saved, current_mode=config.current_mode())
 
     # -- Wi-Fi ---------------------------------------------------------------
     #

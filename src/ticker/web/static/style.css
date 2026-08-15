@@ -375,7 +375,8 @@ body[data-mode="flights"] .flight[data-for~="flights"],
 body[data-mode="bart"]    .flight[data-for~="bart"],
 body[data-mode="bikes"]   .flight[data-for~="bikes"],
 body[data-mode="nametag"] .flight[data-for~="nametag"],
-body[data-mode="focus"]   .flight[data-for~="focus"] { display: block; }
+body[data-mode="focus"]   .flight[data-for~="focus"],
+body[data-mode="worldclock"] .flight[data-for~="worldclock"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
@@ -1039,6 +1040,52 @@ body[data-mode="youtube"] { --accent: #ff0033; --accent-soft: rgba(255, 0, 51, 0
   color: var(--accent);
 }
 body[data-mode="net"]     { --accent: #78b6ff; --accent-soft: rgba(120, 182, 255, 0.16); }
+body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 0, 0.16); }
+
+/* ----- World clock card ------------------------------------------------- */
+.worldclock-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.worldclock-row {
+  display: grid;
+  grid-template-columns: 44px 68px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.worldclock-badge {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  text-transform: uppercase;
+  text-align: center;
+  padding: 4px 6px;
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  opacity: 0.9;
+}
+.worldclock-row:not([data-index="0"]) .worldclock-badge {
+  color: var(--dimmer);
+  border-color: var(--dimmer);
+  opacity: 0.7;
+}
+.worldclock-label,
+.worldclock-tz {
+  width: 100%;
+  border: none;
+  border-bottom: 1px dashed var(--dimmer);
+  background: transparent;
+  color: var(--fg);
+  padding: 6px 4px;
+  font: inherit;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+.worldclock-label:focus,
+.worldclock-tz:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+  border-bottom-style: solid;
+}
+.worldclock-actions { margin-top: 12px; }
 
 /* ----- Mobile tweaks ---------------------------------------------------- */
 

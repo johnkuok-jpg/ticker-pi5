@@ -54,7 +54,7 @@
     <section class="mode-grid" aria-label="Display mode">
       {# Acronyms must not be title-cased: CSS capitalize would render BART as
          "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "pokemon": "Pokémon", "focus": "Focus", "net": "Wi-Fi", "youtube": "YouTube"} %}
+      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "pokemon": "Pokémon", "focus": "Focus", "net": "Wi-Fi", "worldclock": "World Clock", "youtube": "YouTube"} %}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         <span class="mode-dot" aria-hidden="true"></span>
@@ -284,6 +284,27 @@
         <button id="youtube-custom-go" type="button" class="youtube-next">Use this playlist</button>
         <p id="youtube-custom-note" class="schedule"></p>
       </details>
+    </section>
+    <section class="flight worldclock-card" data-for="worldclock">
+      <label>World clock</label>
+      <p class="schedule">Three cities. First city renders in amber as the "home" accent. Labels are capped at 6 characters. Timezones use IANA names, e.g. <code>Europe/London</code>, <code>Asia/Tokyo</code>.</p>
+      <div id="worldclock-rows" class="worldclock-rows" role="list" aria-label="World clock cities">
+        {% for city in worldclock_cities %}
+        <div class="worldclock-row" data-index="{{ loop.index0 }}" role="listitem">
+          <span class="worldclock-badge">{% if loop.index0 == 0 %}Home{% else %}{{ loop.index0 + 1 }}{% endif %}</span>
+          <input class="worldclock-label" type="text" value="{{ city.label }}"
+                 placeholder="LON" maxlength="6" autocomplete="off" spellcheck="false"
+                 aria-label="City label">
+          <input class="worldclock-tz" type="text" value="{{ city.tz }}"
+                 placeholder="Europe/London" autocomplete="off" spellcheck="false"
+                 aria-label="Timezone">
+        </div>
+        {% endfor %}
+      </div>
+      <div class="worldclock-actions">
+        <button id="worldclock-save" type="button" class="flight-go">Save &amp; show</button>
+      </div>
+      <p id="worldclock-note" class="schedule"></p>
     </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
@@ -939,6 +960,45 @@
       focusRender();
       setInterval(focusRender, 1000);
       setInterval(focusRefresh, 5000);
+    }
+
+    // World clock. Save button collects each row's label + tz, POSTs the
+    // whole list, and reports the API's error string verbatim on failure
+    // (rather than a generic "try again"). The panel flips to worldclock on
+    // success so the user sees their change immediately.
+    const worldclockSaveBtn = document.getElementById('worldclock-save');
+    const worldclockNote = document.getElementById('worldclock-note');
+    if (worldclockSaveBtn) {
+      worldclockSaveBtn.addEventListener('click', async () => {
+        const rows = document.querySelectorAll('#worldclock-rows .worldclock-row');
+        const cities = [];
+        rows.forEach((row) => {
+          const label = row.querySelector('.worldclock-label').value.trim();
+          const tz = row.querySelector('.worldclock-tz').value.trim();
+          if (label || tz) cities.push({ label, tz });
+        });
+        worldclockSaveBtn.disabled = true;
+        worldclockNote.textContent = 'Saving…';
+        try {
+          const resp = await fetch('/worldclock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cities }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            worldclockNote.textContent = data.error || 'Save failed.';
+          } else {
+            worldclockNote.textContent = 'Saved.';
+            const status = document.getElementById('status');
+            if (status && data.current_mode) status.textContent = data.current_mode;
+          }
+        } catch (err) {
+          worldclockNote.textContent = 'Save failed.';
+        } finally {
+          worldclockSaveBtn.disabled = false;
+        }
+      });
     }
 
     tickClock();

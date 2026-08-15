@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "youtube")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -933,6 +933,89 @@ class Config:
 
     def focus_last_preset_min(self) -> int:
         return self.focus_state()["last_preset_min"]
+
+    # ------------------------------------------------------------------
+    # World clock
+    # ------------------------------------------------------------------
+    #
+    # Persisted as ``worldclock.json`` -- a list of ``{"label": str, "tz": str}``
+    # entries. The renderer only ever consumes the first three; the JSON list
+    # is kept flexible so the webapp can round-trip whatever the user typed
+    # without silent truncation on save.
+
+    @property
+    def worldclock_file(self) -> Path:
+        return self.state_dir / "worldclock.json"
+
+    def _worldclock_defaults(self) -> list[dict]:
+        # Kept in sync with modes.worldclock.DEFAULT_CITIES; duplicated here so
+        # the config file has no import dependency on the modes package (which
+        # would create a circular import at startup).
+        return [
+            {"label": "SF", "tz": "America/Los_Angeles"},
+            {"label": "NYC", "tz": "America/New_York"},
+            {"label": "LON", "tz": "Europe/London"},
+        ]
+
+    def current_worldclock_cities(self) -> list[dict]:
+        """Return the persisted world-clock city list, or the defaults.
+
+        Falls back to defaults on any read/parse error so a corrupted state
+        file cannot blank out the mode -- consistent with focus_state's
+        behaviour.
+        """
+        try:
+            raw = self.worldclock_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, list):
+                raise ValueError("worldclock state is not a list")
+        except (OSError, ValueError, json.JSONDecodeError):
+            return self._worldclock_defaults()
+        cleaned: list[dict] = []
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label", "")).strip()[:6]
+            tz = str(entry.get("tz", "")).strip()[:64]
+            if not label or not tz:
+                continue
+            cleaned.append({"label": label, "tz": tz})
+        return cleaned or self._worldclock_defaults()
+
+    def set_worldclock_cities(self, cities: list[dict]) -> list[dict]:
+        """Persist the world-clock city list. Caps at 3 saved entries.
+
+        Validates each entry has a non-empty label and timezone. The label is
+        clamped to 6 characters -- the panel can render up to 6 SMALL chars in
+        a 42-px slot, and anything longer would clip regardless of aesthetic
+        intent. Bogus timezone strings are accepted here and dealt with at
+        render time (the mode falls back to the local system clock so the
+        panel keeps rendering).
+        """
+        if not isinstance(cities, list):
+            raise ValueError("cities payload must be a list")
+        normalised: list[dict] = []
+        for entry in cities[:3]:
+            if not isinstance(entry, dict):
+                raise ValueError("each city must be an object")
+            label = str(entry.get("label", "")).strip()
+            tz = str(entry.get("tz", "")).strip()
+            if not label:
+                raise ValueError("city label is required")
+            if not tz:
+                raise ValueError("city timezone is required")
+            if len(label) > 6:
+                raise ValueError("city label is too long (max 6 chars)")
+            if len(tz) > 64:
+                raise ValueError("city timezone is unreasonably long")
+            normalised.append({"label": label, "tz": tz})
+        if not normalised:
+            raise ValueError("at least one city is required")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.worldclock_file.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(normalised), encoding="utf-8")
+        os.replace(tmp, self.worldclock_file)
+        return normalised
 
 
 def load_config(env_file: Path | None = None) -> Config:
