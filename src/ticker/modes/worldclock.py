@@ -1,17 +1,23 @@
 # MIT License — Copyright (c) 2026 John Kuok
-"""World-clock mode: three analog clocks with city labels underneath.
+r"""World-clock mode: one big home dial + two secondary dials.
 
-Layout on a 128x32 panel:
+Layout on a 128x32 panel::
 
     +--------------------------------------------------------------+
-    |       (o)                (o)                (o)              |   rows 1..19
-    |      SF                 NYC                LON                |   row 23
+    |     ___         SF        :        ___         ___           |
+    |    /   \      9:15        :       /   \       /   \          |
+    |    | + |                  :       | + |       | + |          |
+    |    \___/                  :       \___/       \___/          |
+    |                           :         NYC         LON          |
     +--------------------------------------------------------------+
 
-The panel is divided into three equal 42-pixel slots. Each slot centres a
-19-pixel-wide analog clock face and a SMALL label beneath. The user's "home"
-city (first in the list) renders in amber; the other two render in a cool
-grey so the eye latches on to home first, then reads across.
+The home city (first entry) sits in the left third as a large r=14 dial with
+an amber rim and a two-colour hand set -- red for the hour, white for the
+minute -- so the current hour reads at a glance while the minute stays
+legible. The city name and digital time (H:MM) sit to the right of the big
+dial. A dotted vertical rule at x=60 separates the home block from the two
+smaller r=7 dials on the right, which render in cool grey with white hands
+and a labelled name underneath.
 
 Cities are configured via the webapp as a JSON list of ``{"label", "tz"}``
 objects and persisted in ``state_dir/worldclock.json``. If the file is
@@ -30,23 +36,49 @@ from PIL import ImageDraw
 from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
-# Palette. Amber matches the existing "labels and non-semantic accents"
-# convention (stocks/market modes both use 255,176,0). Steel greys are picked
-# to sit visibly against black without competing with amber for attention.
+# ---------------------------------------------------------------------------
+# Palette
+# ---------------------------------------------------------------------------
+# Amber for the home dial rim keeps the mode consistent with the other
+# accent-amber modes (stocks, market). The home hour hand switches to a vivid
+# red so hour and minute never blur into one shape at a glance, and the
+# minute stays plain white for maximum contrast against the amber rim.
 AMBER = (255, 176, 0)
+BRIGHT_AMBER = (255, 200, 40)
+HOUR_RED = (255, 60, 60)
 WHITE = (215, 225, 240)
-RING_DIM = (48, 58, 78)
-LABEL_DIM = (140, 150, 170)
+SOFT_WHITE = (180, 190, 210)
+RING_DIM = (72, 84, 106)
+DIVIDER_DIM = (48, 58, 78)
 
-# Geometry -- centralised so a future 64x32 or 128x64 panel could re-derive
-# without hunting through the drawing code.
-CLOCK_RADIUS = 9      # gives a 19-px face (radius + centre + radius)
-CLOCK_CY = 10         # centre y; face spans y=1..19
-LABEL_Y = 23          # top pixel of the SMALL label row (SMALL is 8 tall)
+# ---------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------
+# Big home dial on the left third.
+HOME_CX = 15
+HOME_CY = 15
+HOME_R = 14
+HOME_HOUR_LEN = 6   # short, so the red is unmistakable as the hour
+HOME_MIN_LEN = 11   # nearly touches the rim so the minute reads first
 
-# Default city set. Chosen for the three markets the user actually cares
-# about (SF as home, NYC for US markets, LON for European tape). Kept
-# module-level so the webapp can echo it back as a default.
+# Digital readout to the right of the home dial.
+HOME_TEXT_X = 32
+HOME_LABEL_Y = 2
+HOME_TIME_Y = 11
+
+# Vertical dotted divider separates home block from secondary dials.
+DIVIDER_X = 60
+
+# Two secondary dials in the right two-thirds.
+SECONDARY_CX_START = 76
+SECONDARY_CX_STEP = 26
+SECONDARY_CY = 12
+SECONDARY_R = 7
+SECONDARY_HOUR_LEN = 3
+SECONDARY_MIN_LEN = 4
+SECONDARY_LABEL_Y = 22
+
+# Default city set. SF as home; NYC and LON round out US-East and Europe.
 DEFAULT_CITIES: tuple[dict, ...] = (
     {"label": "SF", "tz": "America/Los_Angeles"},
     {"label": "NYC", "tz": "America/New_York"},
@@ -56,16 +88,11 @@ DEFAULT_CITIES: tuple[dict, ...] = (
 
 @dataclass(slots=True)
 class ClockDial:
-    """One city's clock, ready to draw.
-
-    Split out so the render loop reads as "for each dial: draw face,
-    draw hands, draw label" without recomputing angles inline.
-    """
+    """One city's clock, ready to draw."""
 
     label: str
     hour: int      # 0..23
     minute: int    # 0..59
-    is_home: bool  # first entry gets the accent treatment
 
 
 def _city_now(tz_name: str, fallback: datetime) -> datetime:
@@ -73,8 +100,7 @@ def _city_now(tz_name: str, fallback: datetime) -> datetime:
 
     A bogus IANA name (typo, missing tzdata) must not blank out the whole
     panel, so we degrade to the fallback -- which is the system clock in the
-    user's own zone -- and let the label still render. That's less confusing
-    than a blank slot.
+    user's own zone -- and let the label still render.
     """
     try:
         from zoneinfo import ZoneInfo
@@ -88,9 +114,8 @@ def _draw_circle(canvas: Canvas, cx: int, cy: int, radius: int, color) -> None:
     """Draw a hollow one-pixel-thick circle onto the canvas buffer.
 
     Uses PIL's ``ellipse`` outline for a rounder rim than a hand-rolled
-    Bresenham at this small radius. ``fontmode='1'`` on the canvas ensures no
-    sub-pixel anti-alias bleeds into neighbouring cells, which would show up
-    on the LED panel as ghost pixels.
+    Bresenham at small radii. ``fontmode='1'`` on the canvas ensures no
+    sub-pixel anti-alias bleeds into neighbouring cells.
     """
     draw = ImageDraw.Draw(canvas.image_buffer)
     draw.ellipse(
@@ -100,12 +125,7 @@ def _draw_circle(canvas: Canvas, cx: int, cy: int, radius: int, color) -> None:
 
 
 def _draw_line(canvas: Canvas, x0: int, y0: int, x1: int, y1: int, color) -> None:
-    """Bresenham line -- integer only, so the hand endpoints never smear.
-
-    Used for both hour and minute hands. A thicker hand would look better in
-    the abstract but at r=9 there is no room for a second pixel of width
-    without eating the ticks.
-    """
+    """Bresenham line -- integer only, so the hand endpoints never smear."""
     dx = abs(x1 - x0)
     dy = -abs(y1 - y0)
     sx = 1 if x0 < x1 else -1
@@ -124,81 +144,130 @@ def _draw_line(canvas: Canvas, x0: int, y0: int, x1: int, y1: int, color) -> Non
             y0 += sy
 
 
-def _draw_dial(canvas: Canvas, cx: int, cy: int, dial: ClockDial) -> None:
-    """Draw one analog dial: rim, hands, centre dot, and its label below.
+def _hand_endpoint(cx: int, cy: int, length: int, angle_deg: float) -> tuple[int, int]:
+    """Compute (x, y) for a clock hand of *length* pixels at *angle_deg*.
 
-    The home dial gets amber for the rim, both hands, and the centre dot so
-    the accent is unmistakable at a glance. Non-home dials are a cool grey
-    against a slightly cooler-still rim, so they read as clearly "secondary"
-    without disappearing.
+    Angle 0 is straight up (12 o'clock); positive rotates clockwise, matching
+    a real analog clock. Rounded to the nearest pixel for stable rendering.
     """
-    ring_color = AMBER if dial.is_home else RING_DIM
-    hand_color = AMBER if dial.is_home else WHITE
-    label_color = AMBER if dial.is_home else LABEL_DIM
+    a = math.radians(angle_deg - 90.0)
+    x = cx + int(round(length * math.cos(a)))
+    y = cy + int(round(length * math.sin(a)))
+    return x, y
 
-    _draw_circle(canvas, cx, cy, CLOCK_RADIUS, ring_color)
 
-    # 12 = 0deg (up), sweep clockwise. Subtract 90 to align "0" with the top.
-    #
-    # Hour hand advances 30deg/hour + 0.5deg/minute so a clock at 4:30 shows
-    # the hand halfway between 4 and 5, not stuck at exactly 4.
-    hour_angle = math.radians((dial.hour % 12) * 30 + dial.minute * 0.5 - 90)
-    minute_angle = math.radians(dial.minute * 6 - 90)
+def _draw_cardinal_ticks(canvas: Canvas, cx: int, cy: int, radius: int, color) -> None:
+    """Bright pixels at 12/3/6/9 just inside the rim -- gives the dial identity."""
+    for m in (0, 3, 6, 9):
+        a = math.radians(m * 30 - 90)
+        tx = cx + int(round((radius - 1) * math.cos(a)))
+        ty = cy + int(round((radius - 1) * math.sin(a)))
+        canvas.pixel(tx, ty, color)
 
-    # Hand lengths tuned so both hands are visually distinct at r=9 but
-    # neither touches the rim (the rim would visually absorb the tip).
-    hour_len = CLOCK_RADIUS - 5    # 4px hour hand
-    minute_len = CLOCK_RADIUS - 3  # 6px minute hand
 
-    hx = cx + int(round(hour_len * math.cos(hour_angle)))
-    hy = cy + int(round(hour_len * math.sin(hour_angle)))
-    mx = cx + int(round(minute_len * math.cos(minute_angle)))
-    my = cy + int(round(minute_len * math.sin(minute_angle)))
+def _draw_home_dial(canvas: Canvas, dial: ClockDial) -> None:
+    """Big amber dial + digital readout to the right.
 
-    _draw_line(canvas, cx, cy, hx, hy, hand_color)
-    _draw_line(canvas, cx, cy, mx, my, hand_color)
+    Hand colour convention:
+      - hour: red, short (r=6). The red is the "which hour" glance.
+      - minute: white, long (r=11). The white is the "where in the hour" glance.
+      - centre dot: amber, so the pivot merges into the rim colour rather than
+        competing with either hand.
+    """
+    _draw_circle(canvas, HOME_CX, HOME_CY, HOME_R, AMBER)
+    _draw_cardinal_ticks(canvas, HOME_CX, HOME_CY, HOME_R, BRIGHT_AMBER)
 
-    # Centre dot brighter than the rim so the pivot point reads as "solid"
-    # rather than as a hole in the middle of the face.
-    canvas.pixel(cx, cy, hand_color)
+    # Minute first, hour on top -- when they overlap, the red hour wins,
+    # which is the semantically important number to keep visible.
+    minute_angle = dial.minute * 6.0
+    hour_angle = (dial.hour % 12) * 30.0 + dial.minute * 0.5
 
-    # Label centred under the dial, clamped to the panel edges so a 4-char
-    # city name near the right edge does not spill off pixel 127.
+    mx, my = _hand_endpoint(HOME_CX, HOME_CY, HOME_MIN_LEN, minute_angle)
+    hx, hy = _hand_endpoint(HOME_CX, HOME_CY, HOME_HOUR_LEN, hour_angle)
+
+    _draw_line(canvas, HOME_CX, HOME_CY, mx, my, WHITE)
+    _draw_line(canvas, HOME_CX, HOME_CY, hx, hy, HOUR_RED)
+
+    canvas.pixel(HOME_CX, HOME_CY, AMBER)
+
+    # Digital readout: city label on top row, H:MM below, both left-aligned
+    # against the divider so they read as a paired block.
+    canvas.text(HOME_TEXT_X, HOME_LABEL_Y, dial.label, AMBER, SMALL)
+    display_hour = dial.hour % 12 or 12
+    time_str = f"{display_hour}:{dial.minute:02d}"
+    canvas.text(HOME_TEXT_X, HOME_TIME_Y, time_str, WHITE, SMALL)
+
+
+def _draw_divider(canvas: Canvas) -> None:
+    """Dotted vertical rule between home block and secondary dials.
+
+    Every-other-pixel dashing keeps the divider visible without stealing
+    contrast from the dials or labels beside it.
+    """
+    for y in range(4, 28):
+        if y % 2 == 0:
+            canvas.pixel(DIVIDER_X, y, DIVIDER_DIM)
+
+
+def _draw_secondary_dial(canvas: Canvas, cx: int, dial: ClockDial) -> None:
+    """Small r=7 dial with white hands and a label underneath."""
+    _draw_circle(canvas, cx, SECONDARY_CY, SECONDARY_R, RING_DIM)
+
+    minute_angle = dial.minute * 6.0
+    hour_angle = (dial.hour % 12) * 30.0 + dial.minute * 0.5
+
+    mx, my = _hand_endpoint(cx, SECONDARY_CY, SECONDARY_MIN_LEN, minute_angle)
+    hx, hy = _hand_endpoint(cx, SECONDARY_CY, SECONDARY_HOUR_LEN, hour_angle)
+
+    _draw_line(canvas, cx, SECONDARY_CY, mx, my, WHITE)
+    _draw_line(canvas, cx, SECONDARY_CY, hx, hy, WHITE)
+    canvas.pixel(cx, SECONDARY_CY, WHITE)
+
     label_w = canvas.text_width(dial.label, SMALL)
     label_x = max(0, min(canvas.width - label_w, cx - label_w // 2))
-    canvas.text(label_x, LABEL_Y, dial.label, label_color, SMALL)
+    canvas.text(label_x, SECONDARY_LABEL_Y, dial.label, SOFT_WHITE, SMALL)
 
 
 class WorldClockMode(Mode):
-    """Three analog clocks side by side with city labels.
+    """One big home dial (tri-color hands) + two secondary dials.
 
     The mode is deliberately network-free -- it reads system time and does
     the timezone math with :mod:`zoneinfo`, so it keeps working when the WiFi
-    is down. That's the same trust model as the market-session clock.
+    is down. That is the same trust model as the market-session clock.
     """
 
     def render(self, canvas: Canvas, tick: int) -> None:
         canvas.clear()
         cities = self.config.current_worldclock_cities()
 
-        # Cap at 3 (layout is 3-slot). A 4-clock layout would need r=7 or
-        # smaller which loses too much detail at 32px tall.
+        # Cap at 3 (layout is one big + two small). A fourth clock would
+        # require shrinking either dial and losing tick clarity.
         cities = list(cities)[:3]
         if not cities:
             cities = list(DEFAULT_CITIES)
 
         fallback = self.config.now()
-        slot_w = canvas.width // 3
 
-        for i, city in enumerate(cities):
+        # Home dial
+        home = cities[0]
+        home_label = str(home.get("label", "")).strip() or "?"
+        home_tz = str(home.get("tz", "")).strip()
+        home_now = _city_now(home_tz, fallback) if home_tz else fallback
+        _draw_home_dial(
+            canvas,
+            ClockDial(label=home_label, hour=home_now.hour, minute=home_now.minute),
+        )
+
+        _draw_divider(canvas)
+
+        # Secondary dials
+        for i, city in enumerate(cities[1:]):
             label = str(city.get("label", "")).strip() or "?"
             tz = str(city.get("tz", "")).strip()
             local = _city_now(tz, fallback) if tz else fallback
-            cx = slot_w * i + slot_w // 2
-            dial = ClockDial(
-                label=label,
-                hour=local.hour,
-                minute=local.minute,
-                is_home=(i == 0),
+            cx = SECONDARY_CX_START + i * SECONDARY_CX_STEP
+            _draw_secondary_dial(
+                canvas,
+                cx,
+                ClockDial(label=label, hour=local.hour, minute=local.minute),
             )
-            _draw_dial(canvas, cx, CLOCK_CY, dial)
