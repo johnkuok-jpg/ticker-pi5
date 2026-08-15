@@ -25,6 +25,7 @@ a thundering herd of retries.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import threading
@@ -92,6 +93,12 @@ TRENDING_CACHE_SECONDS = 3600
 # Backoff after a trending fetch fails, so we don't hammer network on every tick.
 TRENDING_RETRY_AFTER_FAILURE = 60.0
 
+# How long a repeatedly-failing video stays on the blocklist before we try it
+# again. Long enough that we don't hammer the same 403 within a session, short
+# enough that a temporary geo-restriction / age-gate / DRM tick unblocks itself
+# after a few hours instead of poisoning the queue permanently.
+BLOCKLIST_TTL_SECONDS = 6 * 3600  # 6 hours
+
 
 def _safe_log(msg: str) -> None:
     """Print an ASCII-only version of the message.
@@ -123,6 +130,28 @@ class VideoInfo:
     title: str
     channel: str
     views: int
+
+
+def _is_playable_entry(entry: dict) -> bool:
+    """Return False for livestreams, upcoming premieres, and unplayable items.
+
+    yt-dlp's flat playlist extraction returns a ``live_status`` string on
+    each entry that tells us whether it's a real VOD. Anything that isn't
+    ``was_live`` (a livestream that ended and is now watchable) or ``not_live``
+    is either currently airing, scheduled for the future, a members-only
+    stream, or otherwise not something we can decode to frames right now.
+
+    Duration is a second signal: a video with a known duration is a real VOD;
+    a duration of None on a flat entry usually means it's live or upcoming.
+    We take the union of both signals so that if yt-dlp changes its field
+    reporting we still filter the obvious cases out.
+    """
+    status = str(entry.get("live_status") or "").lower()
+    if status in {"is_live", "is_upcoming", "post_live"}:
+        return False
+    if entry.get("availability") in {"needs_auth", "subscriber_only", "premium_only"}:
+        return False
+    return True
 
 
 class YouTubeMode(Mode):
@@ -169,6 +198,12 @@ class YouTubeMode(Mode):
         self._skip_counter_file = config.youtube_skip_file
         self._last_skip_seen: int = self._read_skip_counter()
 
+        # Bad-video blocklist: {video_id: expiry_monotonic}. Persisted to
+        # disk so the ticker survives restarts without re-attempting known-bad
+        # IDs, which is where the 403 loops from earlier came from.
+        self._blocklist_file: Path = config.state_dir / "youtube_blocklist.json"
+        self._blocklist: dict[str, float] = self._load_blocklist()
+
     def _maybe_reload_playlist_selection(self) -> None:
         """Pick up webapp changes to the selected category without a restart.
 
@@ -194,6 +229,66 @@ class YouTubeMode(Mode):
         self._current_video = None
         self._download_target = None
         _safe_log(f"[youtube] switched to playlist: {self._playlist_url}")
+
+    def _load_blocklist(self) -> dict[str, float]:
+        """Load the persisted blocklist and drop expired entries.
+
+        Stored on disk as ``{video_id: unix_expiry}`` so it survives across
+        service restarts (which is when the same 403 loop was most annoying).
+        We compare against wall-clock time on disk but track expiry using
+        ``time.monotonic()`` in memory to stay robust against clock jumps.
+        """
+        try:
+            data = json.loads(self._blocklist_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        now_wall = time.time()
+        now_mono = time.monotonic()
+        out: dict[str, float] = {}
+        for vid, expiry_wall in data.items():
+            try:
+                remaining = float(expiry_wall) - now_wall
+            except (TypeError, ValueError):
+                continue
+            if remaining > 0:
+                out[vid] = now_mono + remaining
+        return out
+
+    def _save_blocklist(self) -> None:
+        """Persist the blocklist as wall-clock expiries."""
+        now_wall = time.time()
+        now_mono = time.monotonic()
+        data = {
+            vid: now_wall + (expiry_mono - now_mono)
+            for vid, expiry_mono in self._blocklist.items()
+            if expiry_mono > now_mono
+        }
+        try:
+            self._blocklist_file.parent.mkdir(parents=True, exist_ok=True)
+            self._blocklist_file.write_text(json.dumps(data), encoding="utf-8")
+        except OSError:
+            pass  # best-effort; a lost blocklist just means we retry sooner
+
+    def _is_blocklisted(self, video_id: str) -> bool:
+        expiry = self._blocklist.get(video_id)
+        if expiry is None:
+            return False
+        if expiry <= time.monotonic():
+            self._blocklist.pop(video_id, None)
+            return False
+        return True
+
+    def _blocklist_video(self, video_id: str) -> None:
+        self._blocklist[video_id] = time.monotonic() + BLOCKLIST_TTL_SECONDS
+        self._save_blocklist()
+
+    def _prune_blocklist(self) -> None:
+        now = time.monotonic()
+        expired = [vid for vid, exp in self._blocklist.items() if exp <= now]
+        for vid in expired:
+            self._blocklist.pop(vid, None)
+        if expired:
+            self._save_blocklist()
 
     def _read_skip_counter(self) -> int:
         try:
@@ -224,14 +319,33 @@ class YouTubeMode(Mode):
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(self._playlist_url, download=False)
                 entries = [e for e in (info.get("entries") or []) if e]
+                # Prune expired blocklist entries once per fetch cycle so a
+                # long-running session doesn't accumulate stale IDs.
+                self._prune_blocklist()
                 vids = []
-                for e in entries[:20]:
+                skipped_live = 0
+                skipped_blocked = 0
+                for e in entries[:40]:  # widened from 20 to survive filtering
                     vid = e.get("id") or ""
                     title = str(e.get("title") or "").strip()
                     channel = str(e.get("uploader") or e.get("channel") or "").strip()
                     views = int(e.get("view_count") or 0)
-                    if vid and title:
-                        vids.append(VideoInfo(vid, title, channel, views))
+                    if not (vid and title):
+                        continue
+                    if not _is_playable_entry(e):
+                        skipped_live += 1
+                        continue
+                    if self._is_blocklisted(vid):
+                        skipped_blocked += 1
+                        continue
+                    vids.append(VideoInfo(vid, title, channel, views))
+                    if len(vids) >= 20:
+                        break
+                if skipped_live or skipped_blocked:
+                    _safe_log(
+                        f"[youtube] filtered {skipped_live} livestreams, "
+                        f"{skipped_blocked} blocklisted from playlist"
+                    )
                 if vids:
                     self.videos = vids
                     self._next_trending_fetch_at = time.monotonic() + TRENDING_CACHE_SECONDS
@@ -277,9 +391,16 @@ class YouTubeMode(Mode):
                 _safe_log(f"[youtube] ready: {video.id} - {len(frames)} frames")
             except Exception as e:
                 _safe_log(f"[youtube] download failed for {video.id}: {type(e).__name__}: {e}")
-                # Advance to the next video on failure so we don't get stuck.
+                # Blocklist the video for a few hours so we don't retry the
+                # exact same 403 / premiere / missing-format each cycle. It
+                # will fall out of the blocklist automatically at the next
+                # trending refresh after BLOCKLIST_TTL_SECONDS.
+                self._blocklist_video(video.id)
+                # Also drop it from the current in-memory list so we don't
+                # immediately re-attempt it before the next trending refresh.
+                self.videos = [v for v in self.videos if v.id != video.id]
                 if self.videos:
-                    self._current_index = (self._current_index + 1) % len(self.videos)
+                    self._current_index %= len(self.videos)
             finally:
                 self._download_in_flight = False
 
