@@ -134,7 +134,7 @@
         row.className = `netrow${network.active ? ' active' : ''}`;
         row.innerHTML = `<span class="netbars">${bars(network.bars)}</span>` +
           `<span class="netname">${network.ssid.replace(/</g, '&lt;')}</span>` +
-          `<span class="nettags">${network.saved ? 'saved' : ''} ${network.locked ? '🔒' : 'open'}</span>`;
+          `<span class="nettags">${network.saved ? 'saved' : ''} ${network.locked ? 'secured' : 'open'}</span>`;
         row.addEventListener('click', () => {
           ssidInput.value = network.ssid;
           hiddenNetwork.checked = false;

@@ -496,7 +496,7 @@ class FlightsMode(Mode):
                 canvas.text_centered(18, "AIRBORNE YET", DIM, SMALL)
             else:
                 canvas.text_centered(6, "NO FLIGHT SET", AMBER, SMALL)
-                canvas.text_centered(18, "ENTER ONE IN THE WEB APP", DIM, SMALL)
+                canvas.text_centered(18, "SET IN CONTROL PANEL", DIM, SMALL)
             return
 
         if self._status is not None:

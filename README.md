@@ -176,10 +176,10 @@ journalctl -u ticker-web -f
 
 ## Fleet auto-update
 
-Running more than one ticker (birthday gifts, spares, or a friend's Pi) is
-the main reason this exists. Every install ships a `ticker-updater` systemd
-timer that polls this GitHub repo every 5 minutes and, on any new commit to
-`main`, runs `scripts/update.sh` to pull and restart the services.
+Fleet auto-update keeps multiple deployed tickers on the same commit. Every
+install ships a `ticker-updater` systemd timer that polls this GitHub repo
+every 5 minutes and, on any new commit to `main`, runs `scripts/update.sh`
+to pull and restart the services.
 
 One repo, one branch, one push -- every online Pi in the fleet converges on
 the same code within a few minutes. Offline Pis catch up when they come back.

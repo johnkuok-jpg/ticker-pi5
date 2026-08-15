@@ -21,7 +21,7 @@ nametag mode's scroll aesthetic.
 
 The mode never blocks: :class:`ticker.spotify.SpotifyClient` polls Spotify on
 a background thread and this renderer only reads the cached snapshot. On any
-non-connected / non-playing state, a friendly placeholder is drawn instead.
+non-connected / non-playing state, a terse placeholder is drawn instead.
 """
 
 from __future__ import annotations
@@ -142,14 +142,14 @@ class SpotifyMode(Mode):
         snapshot = self._client.snapshot()
 
         if not self._auth.configured:
-            self._draw_placeholder(canvas, "Set SPOTIFY_CLIENT_ID", tick)
+            self._draw_placeholder(canvas, "SET SPOTIFY CLIENT ID", tick)
             return
         if not self._auth.connected:
-            self._draw_placeholder(canvas, "Connect Spotify in webapp", tick)
+            self._draw_placeholder(canvas, "CONNECT IN SETTINGS", tick)
             return
         if snapshot is None or not snapshot.title:
             # Connected but /currently-playing returned 204, or first poll not yet complete.
-            self._draw_placeholder(canvas, "Not playing", tick)
+            self._draw_placeholder(canvas, "NOT PLAYING", tick)
             return
 
         self._draw_art(canvas, snapshot.album_art)
