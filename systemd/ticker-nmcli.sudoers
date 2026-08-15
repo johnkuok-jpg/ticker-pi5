@@ -12,7 +12,7 @@
 # saved profile and raising an access point all need root. The alternatives were
 # worse: running the whole web app as root would put a network-facing Flask app
 # on the panel's own privileges, and adding pi to a NetworkManager polkit group
-# would grant every nmcli operation rather than these five.
+# would grant every nmcli operation rather than the six enumerated below.
 #
 # NOPASSWD is required, not a convenience: there is no terminal on a headless
 # ticker to answer a password prompt, and the app calls sudo with -n so a missing

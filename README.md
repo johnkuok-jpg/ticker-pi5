@@ -28,7 +28,7 @@ After the repository has been made public to your Pi (or after authenticating Gi
 curl -sL https://raw.githubusercontent.com/johnkuok-jpg/ticker-pi5/main/scripts/install.sh | bash
 ```
 
-Read the script before piping it to `bash`; it installs system packages, clones the repository into `/home/pi/ticker-pi5`, creates a virtual environment, enables services, and starts them.
+Read the script before piping it to `bash`; it installs system packages, clones the repository into `/home/pi/ticker-pi5`, creates a virtual environment, installs the renderer + web + Wi-Fi fallback services, and starts them.
 
 ### Manual install
 
@@ -48,11 +48,25 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ticker ticker-web
 ```
 
-Open `http://ticker.local:8080` from a phone on the same network. The page selects `stocks`, `news`, `weather`, or `flights` by writing `/var/lib/ticker/current_mode`. When that directory cannot be written, the program uses `~/.ticker/current_mode` instead.
+That gets the renderer and web control panel running. **The Wi-Fi fallback hotspot is optional**, and only sensible on an image where NetworkManager owns the radio (Bookworm defaults) and `nmcli` is present. Skip this block on dhcpcd-based images.
+
+```bash
+# Wi-Fi fallback (headless setup hotspot). Skip on non-NetworkManager images.
+sudo cp systemd/ticker-wifi.service /etc/systemd/system/
+# Validate before installing: a malformed file in /etc/sudoers.d can break sudo.
+sudo visudo -c -q -f systemd/ticker-nmcli.sudoers \
+  && sudo install -m 0440 -o root -g root systemd/ticker-nmcli.sudoers /etc/sudoers.d/ticker-nmcli
+sudo systemctl daemon-reload
+sudo systemctl enable --now ticker-wifi
+```
+
+Open `http://ticker.local:8080` from a phone on the same network. The page selects any enabled mode (see [Modes](#modes)) by writing `/var/lib/ticker/current_mode`. When that directory cannot be written, the program falls back to `~/.ticker/current_mode`.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and edit it. The renderer and web service read it at startup.
+Copy `.env.example` to `.env` and edit it. The renderer and web service read it at startup; after editing, run `sudo systemctl restart ticker ticker-web`. If you also changed a `WIFI_SETUP_*` variable, restart `ticker-wifi` too.
+
+### Display
 
 | Variable | Meaning |
 | --- | --- |
@@ -61,37 +75,90 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 | `TICKER_ADDR_LINES` | HUB75 address lines; use `4` for these panels. |
 | `TICKER_CHANNEL_ORDER` | Channel order the panels expect, any permutation of `rgb`. Use `rbg` if yellow and pink appear swapped. |
 | `TICKER_BRIGHTNESS` | Default brightness fraction, from `0.05` to `1.0`. The web slider overrides it persistently. |
+| `TICKER_BRIGHTNESS_SCHEDULE` | Optional per-time-of-day steps, e.g. `mon-fri 07:00=55, 22:00=off, weekend 09:00=40`. Malformed entries are skipped rather than crashing the display. |
 | `TICKER_FPS` | Render loop target rate; default `30`. |
-| `TICKER_SYMBOLS` | Comma-separated symbols, for example `AAPL,NVDA,SPY,BTC-USD`. Quotes use Yahoo Finance and are cached for 60 seconds. |
-| `CRYPTO_SYMBOLS` | Comma-separated coins for crypto mode, quoted in USD, for example `BTC,ETH,SOL`. Up to three are shown. |
-| `NEWS_FEED_URL` | RSS/Atom feed URL; defaults to AP top news. |
-| `NEWS_SOURCE_NAME` | Dim prefix shown above news headlines. |
-| `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast. Required by weather mode. |
-| `BART_STATION` | Four-letter BART station abbreviation for the departure board, for example `EMBR`. The web app's dropdown overrides it persistently. |
+
+### Location and time
+
+| Variable | Meaning |
+| --- | --- |
+| `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast and Open-Meteo air quality. Required by `weather` and `aqi`. |
 | `WEATHER_USER_AGENT` | NWS-compliant identifier sent with its requests. Leave the supplied value unless you host a fork. |
+| `TICKER_TIMEZONE` | IANA zone (e.g. `America/Los_Angeles`) used by `market`, `worldclock`, and the brightness schedule. Defaults to the system's local zone. |
+| `TICKER_CLOCK_24H` | `true` to render clocks in 24-hour form; default is 12-hour with `AM`/`PM`. |
+
+### Stocks, crypto, news
+
+| Variable | Meaning |
+| --- | --- |
+| `TICKER_SYMBOLS` | Comma-separated symbols, for example `AAPL,NVDA,SPY,BTC-USD`. |
+| `FINNHUB_API_KEY` | Preferred stock quote source (real-time US equities). If unset, quotes fall back to Yahoo Finance (~15–20 min delayed). Cached for 60 seconds either way. |
+| `STOCKS_LAYOUT` | `card` (default, one ticker at a time with logo) or `list` (compact multi-line). |
+| `CRYPTO_SYMBOLS` | Comma-separated coins for `crypto` mode, quoted in USD, for example `BTC,ETH,SOL`. Up to three are shown. |
+| `NEWS_FEED_URL` | RSS/Atom feed URL; defaults to CNBC Markets. |
+| `NEWS_SOURCE_NAME` | Dim prefix shown above news headlines; defaults to `CNBC MARKETS`. |
+
+### Flights, transit
+
+| Variable | Meaning |
+| --- | --- |
+| `FLIGHT_NUMBER` | Default flight number the panel tracks (e.g. `UA123`). The web control panel overrides it persistently. |
+| `FLIGHT_AIRPORT` | Alternative to a flight number: an airport code (e.g. `SFO`) picks whichever airborne aircraft is heading there. |
+| `BART_STATION` | Four-letter BART station abbreviation for the departure board, for example `EMBR`. The web app's dropdown overrides it persistently. |
+| `BIKE_STATION_ID` | Bay Wheels station ID for the `bikes` mode. The web app has a station picker. |
+
+### Personalisation
+
+| Variable | Meaning |
+| --- | --- |
+| `NAMETAG_NAME` | Text drawn by the `nametag` mode. |
+| `NAMETAG_COLOR` | Hex color for the name tag, e.g. `#FFAA00` or `FA0`. Defaults to white. |
+| `NAMETAG_FONT` | `spleen` (default, auto-shrink ladder), `terminus` (badge look), or `scientifica` (tall condensed). |
+
+### Spotify
+
+| Variable | Meaning |
+| --- | --- |
+| `SPOTIFY_CLIENT_ID` | Spotify developer app client ID. The `spotify` mode is a placeholder until this is set. |
+| `SPOTIFY_CLIENT_SECRET` | Spotify developer app client secret. |
+| `SPOTIFY_REDIRECT_URI` | OAuth redirect URI; defaults to `http://127.0.0.1:8080/spotify/callback`. |
+
+### Wi-Fi fallback hotspot
+
+| Variable | Meaning |
+| --- | --- |
 | `WIFI_SETUP_SSID` | Name of the fallback setup hotspot; defaults to `TICKER-SETUP`. |
 | `WIFI_SETUP_PASSWORD` | Fixed password for that hotspot. Leave unset and one is generated once, stored in `/var/lib/ticker/hotspot_password`, and shown on the panel. Values under 8 characters are ignored, since WPA2 rejects them. |
 
-After editing `.env`, run `sudo systemctl restart ticker ticker-web`.
-
 ## Modes
 
-- **stocks** — cached Yahoo Finance prices and percentage change; green is up and red is down.
-- **news** — RSS headlines refresh every five minutes and scroll continuously.
-- **weather** — NWS point + grid forecast API, cached for 10 minutes; shows temperature, condition, high/low, and wind.
-- **flights** — tracks one flight number: arrival time, delay, terminal, gate and baggage carousel, with a progress bar and airline tile. Schedule data comes from Flightradar24's web endpoints; live ADS-B positions are the fallback when no schedule is published. Instead of a flight number the web app can take a destination airport, in which case the panel picks an aircraft that is airborne towards it and re-picks on every switch into the mode.
-- **market** — US market session clock: `OPEN`, `PRE`, `AFTER`, `CLOSED` or `WEEKEND`, a countdown to the next change, and a bar showing progress through the trading day. The [NYSE holiday and hours calendar](https://www.nyse.com/markets/hours-calendars) is compiled in for 2026–2027, including the 1:00 pm early closes, so it knows Thanksgiving from a Thursday. Needs no network. Past 2027 it falls back to weekday arithmetic and says `NO HOLIDAY DATA` rather than guessing — extend `HOLIDAYS` and `EARLY_CLOSES` in `src/ticker/market.py` when the NYSE publishes the next year.
-- **crypto** — 24-hour price and change for up to three coins from Coinbase's keyless public endpoint, set with `CRYPTO_SYMBOLS`. Two coins render in 6×12 type; a third drops all rows to 5×8. Something stays live on the panel when the equity market is shut.
-- **bart** — the next three trains from one station, soonest first, from [BART's public real-time ETD API](https://api.bart.gov/docs/etd/etd.aspx) (no key of your own needed). Destinations are drawn in the line colour rather than beside a colour chip, because five pixels of chip is invisible across a room. Countdowns turn amber when BART reports the train delayed, and `NOW` means the doors are open. Pick the station from the web app's dropdown or set `BART_STATION`.
-- **aqi** — current US AQI and PM2.5 for the weather coordinates from [Open-Meteo's keyless air-quality API](https://open-meteo.com/en/docs/air-quality-api), with a 24-hour trend chart whose baseline sits at 50, the Good/Moderate boundary. Colours are the EPA's own category values from the [AQI technical assistance document](https://document.airnow.gov/technical-assistance-document-for-the-reporting-of-daily-air-quailty.pdf), lifted toward white only where a category would otherwise fall below the panel's legibility floor.
-- **net** — the ticker's own network: the SSID, the IPv4 address in 6×12 type, and a four-bar signal reading. The address is here because `ticker.local` depends on mDNS, and mDNS is exactly what a hotel or café network with client isolation drops. While the setup hotspot is up this screen turns itself on and shows the hotspot's name, password and address instead — see [Wi-Fi away from home](#wi-fi-away-from-home).
+The web control panel toggles modes on and off individually; the current selection is written to disk so it survives restarts.
+
+| Mode | What it shows |
+| --- | --- |
+| `stocks` | Symbol, price, and percentage change from Finnhub (with Yahoo Finance fallback), 60-second cache, green = up / red = down. |
+| `news` | RSS headlines refresh every five minutes and scroll continuously (default: CNBC Markets). |
+| `weather` | NWS point + grid forecast, cached 10 minutes; temperature, condition, high/low, wind. |
+| `flights` | Tracks one flight or one destination airport: arrival, delay, terminal, gate, baggage, with a progress bar and airline tile. Live ADS-B is the fallback when Flightradar24 has no schedule. |
+| `market` | US session clock — `OPEN`, `PRE`, `AFTER`, `CLOSED`, `WEEKEND` — plus countdown and progress bar. NYSE holidays and 1 pm early closes are compiled in for 2026–2027; past that the panel says `NO HOLIDAY DATA` rather than guessing. Extend `HOLIDAYS`/`EARLY_CLOSES` in `src/ticker/market.py` when NYSE publishes the next year. |
+| `crypto` | 24-hour price and change for up to three coins from Coinbase's keyless endpoint. Two coins render in 6×12 type; a third drops all rows to 5×8. |
+| `bart` | Next three trains from one station, soonest first, from BART's public real-time ETD API (no key needed). Destinations are drawn in the line colour; countdowns turn amber when BART reports the train delayed; `NOW` means doors are open. |
+| `aqi` | US AQI and PM2.5 for the weather coordinates from Open-Meteo's keyless air-quality API, with a 24-hour trend chart whose baseline is 50 (Good/Moderate boundary). Uses the EPA's own category colours, lifted toward white only where a category would otherwise fall below the panel's legibility floor. |
+| `bikes` | One Bay Wheels station: ebikes, classic bikes, and open docks, colour-coded so a glance answers "can I take one?" and "will I be able to return it?" |
+| `nametag` | A single name in bold. Three font families available (`spleen`, `terminus`, `scientifica`) and any hex colour. Long names scroll rather than truncate. |
+| `spotify` | Now-playing track: album art, title, artist, and progress bar. Requires a Spotify developer app; falls back to a terse placeholder until connected. |
+| `pokemon` | Who's That Pokémon — a random Gen 1 silhouette dissolves into its colored sprite, with the name scrolling on the right. Passive; no scoring. |
+| `focus` | Countdown timer with an animated hourglass. Presets from the web app; digits and bar turn red in the final seconds. |
+| `worldclock` | One large home dial plus two secondary dials, city labels underneath. |
+| `net` | The ticker's own network: SSID, IPv4 address in 6×12 type, and a four-bar signal reading. Also the screen the Wi-Fi fallback forces on when setup is needed. |
+| `youtube` | Actual video playback in the left 57 columns, with scrolling title/channel/views on the right. Sourced from YouTube's public global music chart via `yt-dlp` (no API key). |
 
 ### Add a mode
 
 1. Create `src/ticker/modes/example.py` and extend `Mode` from `base.py`.
 2. Implement `render(self, canvas, tick)`; the renderer clears the canvas and invokes it every frame.
 3. Register the class in `MODE_TYPES` in `src/ticker/modes/__init__.py`.
-4. Add its name to `VALID_MODES` in `src/ticker/config.py` and a button in the template if you want web control.
+4. Add its name to `VALID_MODES` in `src/ticker/config.py`, a label if you want the panel and web app to say something other than the raw key, and a config card in `settings.html` only when the mode needs user controls. The mode button grid and visible-modes toggles are rendered from the registry automatically.
 
 ### Add ticker logos
 
@@ -111,7 +178,7 @@ network the ticker cannot join. So it broadcasts its own.
    panel. The panel brightens to at least 45% for this, so the password is still
    readable if you arrive at night.
 3. Join that network from a phone and open the address it shows —
-   `http://10.42.0.1:8080/wifi`.
+   `http://10.42.0.1:8080/settings`.
 4. Tap the network you want, type its password, and submit. **Your phone will lose
    its connection at that moment** — that is the ticker leaving its own hotspot,
    not a failure. Rejoin the house network and give it fifteen seconds.
@@ -134,8 +201,10 @@ point with `nmcli device wifi hotspot`, then writes a small JSON notice into
 `/var/lib/ticker/network_notice`. The renderer reads that notice once a second and
 forces the `net` screen on; it never writes to the saved mode, so the panel
 returns to your selection by itself. The web app, which runs unprivileged, reaches
-`nmcli` through a narrow `/etc/sudoers.d/ticker-nmcli` rule covering five
-subcommands and nothing else.
+`nmcli` through a narrow `/etc/sudoers.d/ticker-nmcli` rule that permits exactly
+these six actions and nothing else: `nmcli device wifi connect`, `nmcli device
+wifi hotspot`, `nmcli connection up id`, `nmcli connection down id`, `nmcli
+connection delete id`, and `nmcli connection modify`.
 
 Every four minutes the daemon drops the access point briefly to listen for a known
 network, because a single radio cannot scan while it is being an access point, and
@@ -169,6 +238,9 @@ journalctl -u ticker -f
 
 # Follow web service logs
 journalctl -u ticker-web -f
+
+# Follow Wi-Fi fallback logs
+journalctl -u ticker-wifi -f
 
 # Update a deployed checkout
 /home/pi/ticker-pi5/scripts/update.sh
@@ -210,8 +282,10 @@ sudo systemctl disable --now ticker-updater.timer
 ```
 
 Tune the poll interval by editing `systemd/ticker-updater.timer` in the
-repo -- once merged, the next auto-update run installs the new timer on
-every Pi. See `systemd/README.md` for more.
+repo. The change reaches deployed Pis the next time the currently-installed
+timer fires: that scheduled run copies the revised unit into place and
+reloads systemd, and every subsequent poll uses the new interval. See
+`systemd/README.md` for more.
 
 ## Troubleshooting
 
@@ -222,7 +296,7 @@ every Pi. See `systemd/README.md` for more.
 | Flicker or dim output | Lower `TICKER_BRIGHTNESS`, verify the panel power supply is rated and connected directly to the Bonnet barrel jack, and keep the ribbon cable short. |
 | Mode does not switch | Check that `/var/lib/ticker/current_mode` exists and is writable by `pi`; run `sudo install -d -m 0775 -o pi -g pi /var/lib/ticker`, then restart both services. The renderer polls the file about once a second. |
 | Panel B is dark | Ensure Panel B's input is connected to Panel A's output, not a second Bonnet port, and that the display geometry remains 128×32. Re-seat the inter-panel ribbon cable. |
-| Hotspot appears but the page will not load | Confirm the phone joined `TICKER-SETUP` and not a remembered network, then open `http://10.42.0.1:8080/wifi` by address — `ticker.local` cannot resolve on the hotspot. |
+| Hotspot appears but the page will not load | Confirm the phone joined `TICKER-SETUP` and not a remembered network, then open `http://10.42.0.1:8080/settings` by address — `ticker.local` cannot resolve on the hotspot. |
 | Joined a network but nothing works | Almost always a captive portal. The panel will show an address; if that address is reachable and the internet is not, the network wants a browser the ticker does not have. |
 | Permission errors | The renderer intentionally runs as root for PIO/GPIO access. The web service runs as `pi`; make `/var/lib/ticker` group-writable as shown above. If `/dev/pio0` has restrictive permissions, follow the driver documentation's udev guidance. |
 
