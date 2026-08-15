@@ -35,7 +35,30 @@ class NewsMode(Mode):
         if time.monotonic() - self._last_refresh >= self.CACHE_SECONDS:
             self._refresh()
         canvas.clear()
-        headline = "   +   ".join(self.headlines) if self.headlines else "WAITING FOR HEADLINES"
         canvas.text(1, 1, canvas.fit(self.config.news_source_name), (95, 135, 195), SMALL)
         canvas.hline(11, (26, 36, 56))
-        canvas.scroll_text(15, headline, (225, 230, 240), tick * 2, SMALL)
+
+        # Two scrolling rows. Odd-indexed headlines run on the top row, even on
+        # the bottom row -- interleaving so neighboring stories don't sit on the
+        # same line at the same time. Separator is spaced so a headline never
+        # abuts the next without visible breathing room.
+        if self.headlines:
+            top = self.headlines[0::2]
+            bottom = self.headlines[1::2] or self.headlines[0::2]
+            top_str = "   +   ".join(top)
+            bottom_str = "   +   ".join(bottom)
+        else:
+            top_str = bottom_str = "WAITING FOR HEADLINES"
+
+        # Scroll speed: was `tick * 2` (2 px/tick = 60 px/s at 30 fps -- too
+        # fast to read). Drop to 1 px every other tick = ~15 px/s, roughly the
+        # comfortable reading speed for a stock ticker. Using integer division
+        # keeps the offset an int (scroll_text does `offset % period`).
+        scroll_offset = tick // 2
+
+        # Two 8px rows in the 20px band below the hairline: row1 at y=13,
+        # row2 at y=22, leaving 4px between and 1px bottom margin.
+        canvas.scroll_text(13, top_str, (225, 230, 240), scroll_offset, SMALL)
+        # Slight offset (+ different content phasing) so the two lines don't
+        # visually stripe together as one wide marquee.
+        canvas.scroll_text(22, bottom_str, (170, 190, 220), scroll_offset + 40, SMALL)
