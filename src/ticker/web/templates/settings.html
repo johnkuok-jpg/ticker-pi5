@@ -10,6 +10,12 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icon-180.png') }}">
+  <!-- Same two web fonts as index.html so a cold-loaded Settings page does
+       not fall back to the system font for the first paint and then swap
+       once the browser cache warms up. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body data-page="settings">
@@ -18,11 +24,11 @@
     <h1>Settings</h1>
 
     <section class="flight modules-card" aria-labelledby="modules-heading">
-      <label id="modules-heading">Show modules</label>
-      <p class="schedule">Hide any modules you never use. Hidden modules disappear from
-        the mode grid and their config cards on the main page. At least one module must stay
+      <label id="modules-heading">Visible modes</label>
+      <p class="schedule">Hide any modes you never use. Hidden modes disappear from
+        the mode grid and their config cards on the main page. At least one mode must stay
         visible.</p>
-      <div id="modules-grid" class="modules-grid" role="group" aria-label="Visible modules">
+      <div id="modules-grid" class="modules-grid" role="group" aria-label="Visible modes">
         {% for mode in all_modes %}
         <label class="module-toggle">
           <input type="checkbox" class="module-check" data-mode="{{ mode }}"

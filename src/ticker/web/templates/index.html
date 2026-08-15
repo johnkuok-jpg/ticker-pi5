@@ -45,9 +45,9 @@
        does. #}
     <section class="readout" aria-label="Now showing">
       <div class="readout-label">Now Showing</div>
-      <div class="readout-value" id="readout-value">{{ current_mode }}</div>
+      <div class="readout-value" id="readout-value">{{ current_mode_label }}</div>
       <div class="readout-meta">
-        <span id="status">{{ current_mode }}</span>
+        <span id="status">{{ current_mode_label }}</span>
         <span>brightness <span id="readout-brightness">{{ brightness }}</span>%</span>
       </div>
     </section>
@@ -134,14 +134,14 @@
       <p id="bike-note" class="schedule">Type to search all ~450 stations, or tap Nearest.</p>
     </section>
     <section class="flight" data-for="nametag">
-      <label for="nametag-input">Name tag</label>
+      <label for="nametag-input">Name Tag</label>
       <form id="nametag-form" class="flight-row">
         <input id="nametag-input" name="name" type="text" value="{{ nametag_name }}"
                placeholder="John" autocomplete="off" spellcheck="false"
                maxlength="40" aria-label="Name on the tag">
         <button type="submit" class="flight-go nametag-go">Show</button>
       </form>
-      <div class="nametag-colors" role="radiogroup" aria-label="Name tag color">
+      <div class="nametag-colors" role="radiogroup" aria-label="Name Tag color">
         {# Preset swatches. Selected one is highlighted; tapping a swatch saves
            immediately, so the coworker's panel updates on the same tap. #}
         {% set swatches = [
@@ -169,7 +169,7 @@
         </label>
       </div>
       <label class="nametag-font-label" for="nametag-font">Font</label>
-      <select id="nametag-font" class="nametag-font" aria-label="Name tag font">
+      <select id="nametag-font" class="nametag-font" aria-label="Name Tag font">
         {% set fonts = [
           ("spleen",      "Spleen (auto-fit)"),
           ("terminus",    "Terminus 14 bold"),
@@ -373,9 +373,12 @@
       /* The readout is the primary "what's on the panel" indicator. The
          status paragraph now doubles as a fallback for screen readers and
          for the older "Current mode" hint, so we write both. */
-      status.textContent = data.current_mode;
+      /* Prefer the server-computed label (BART, World Clock, ...) but fall
+         back to the raw key if an older server is still on the wire. */
+      const label = data.current_mode_label || data.current_mode;
+      status.textContent = label;
       const readoutValue = document.getElementById('readout-value');
-      if (readoutValue) readoutValue.textContent = data.current_mode;
+      if (readoutValue) readoutValue.textContent = label;
       const readoutBrightness = document.getElementById('readout-brightness');
       if (readoutBrightness && typeof data.brightness === 'number') readoutBrightness.textContent = data.brightness;
       schedule.textContent = data.schedule_note || '';

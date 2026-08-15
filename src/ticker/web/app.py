@@ -158,11 +158,15 @@ def create_app() -> Flask:
     @app.get("/")
     def index():  # type: ignore[no-untyped-def]
         config = load_config()
+        current = config.current_mode()
         return render_template(
             "index.html",
             modes=config.visible_modes(),
             mode_labels=MODE_LABELS,
-            current_mode=config.current_mode(),
+            current_mode=current,
+            # Precomputed display label so the readout matches the grid on
+            # first paint, before /api/status has a chance to fill it in.
+            current_mode_label=MODE_LABELS.get(current, current),
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
             flight=config.current_flight(),
@@ -712,8 +716,14 @@ def create_app() -> Flask:
     def status():  # type: ignore[no-untyped-def]
         config = load_config()
         pid, alive = _renderer_status(config.pid_file)
+        current = config.current_mode()
         return jsonify(
-            current_mode=config.current_mode(),
+            current_mode=current,
+            # Send the display label too so the front-end readout stays in
+            # step with MODE_LABELS (e.g. 'BART' rather than 'bart',
+            # 'World Clock' rather than 'worldclock'). Kept as a separate
+            # field so old clients that read current_mode still work.
+            current_mode_label=MODE_LABELS.get(current, current),
             renderer_pid=pid,
             renderer_alive=alive,
             brightness=round(config.current_brightness() * 100),
