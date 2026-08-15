@@ -1,5 +1,5 @@
 # MIT License — Copyright (c) 2026 John Kuok
-"""Yahoo Finance-backed stock and crypto ticker mode.
+"""Finnhub-backed stock and crypto ticker mode.
 
 Two layouts are available, selected with ``STOCKS_LAYOUT``:
 
@@ -14,11 +14,23 @@ Two layouts are available, selected with ``STOCKS_LAYOUT``:
 Colour follows trading-floor convention: amber for labels and other
 non-semantic text, white for the price itself, green and red reserved strictly
 for direction so that a glance at colour alone answers "up or down".
+
+Data sources, in preference order:
+
+1. Finnhub (real-time US equities, ~seconds latency) when FINNHUB_API_KEY is set.
+2. yfinance / Yahoo Finance as a fallback for any symbol Finnhub can't quote --
+   obscure ADRs, some non-US listings -- and for the whole watchlist when no
+   key is configured. Yahoo is delayed 15-20 min on US equities but at least
+   nothing breaks if the key is missing.
 """
 
 from __future__ import annotations
 
+import json
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 
 from PIL import Image
@@ -26,6 +38,93 @@ from PIL import Image
 from ticker import icons, market
 from ticker.canvas import LARGE, SMALL, Canvas
 from ticker.modes.base import Mode
+
+_FINNHUB_BASE = "https://finnhub.io/api/v1"
+_FINNHUB_TIMEOUT = 5.0
+
+
+def _finnhub_get(path: str, params: dict[str, str | int], api_key: str) -> dict:
+    """One HTTP GET against the Finnhub REST API, returning the parsed JSON.
+
+    Any network error, non-200 status, or JSON parse failure bubbles up as an
+    exception so the caller can decide whether to fall back or drop the symbol.
+    Timeout is short (5 s) because a stock ticker that hangs on a slow request
+    for a whole minute is worse than one that reuses the previous quote.
+    """
+    query = urllib.parse.urlencode({**params, "token": api_key})
+    url = f"{_FINNHUB_BASE}{path}?{query}"
+    req = urllib.request.Request(url, headers={"User-Agent": "ticker-pi5/1.0"})
+    with urllib.request.urlopen(req, timeout=_FINNHUB_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _finnhub_symbol(symbol: str) -> str:
+    """Map a watchlist symbol to Finnhub's expected symbol format.
+
+    yfinance-style suffixes:
+      ``BTC-USD``  -> ``BINANCE:BTCUSDT``   (crypto via Finnhub's Binance feed)
+      ``ETH-USD``  -> ``BINANCE:ETHUSDT``
+      ``^GSPC``    -> unsupported on the free tier; caller will fall back
+    Plain US equities like ``AAPL`` / ``NVDA`` pass through unchanged.
+    """
+    upper = symbol.upper()
+    if upper.endswith("-USD") and "-" in upper:
+        base = upper.split("-", 1)[0]
+        # USDT is the deepest Binance pairing; USD-quoted spot pairs are much
+        # thinner and often return no ticks for hours.
+        return f"BINANCE:{base}USDT"
+    return upper
+
+
+def _finnhub_quote(symbol: str, api_key: str) -> Quote | None:
+    """Fetch one quote via Finnhub; return None if the endpoint has no data.
+
+    Finnhub's ``/quote`` returns 200 with all-zero fields for unknown symbols
+    rather than a 404, so we treat previous_close == 0 (or price == 0) as
+    "unknown" and let the caller fall back.
+
+    Intraday candles come from ``/stock/candle`` (equities) or
+    ``/crypto/candle`` (Binance:*). The free tier caps candle history at ~1
+    year but the last day at 5-minute resolution -- which is what we want --
+    is included.
+    """
+    fh_symbol = _finnhub_symbol(symbol)
+    quote_json = _finnhub_get("/quote", {"symbol": fh_symbol}, api_key)
+    # Finnhub /quote shape: c=current, pc=previous close, h/l/o=day HLO,
+    # t=unix timestamp of the last trade. 0 on all fields means "symbol not
+    # covered" per their support docs.
+    current = float(quote_json.get("c") or 0.0)
+    previous_close = float(quote_json.get("pc") or 0.0)
+    if current <= 0 or previous_close <= 0:
+        return None
+
+    intraday: list[float] = []
+    # 24h of 5-minute candles: 288 samples, well under Finnhub's response
+    # size limits. `to` = now, `from` = 26 hours back so a stock opening at
+    # 9:30 ET still has premarket + intraday context.
+    now = int(time.time())
+    candle_path = "/crypto/candle" if fh_symbol.startswith("BINANCE:") else "/stock/candle"
+    try:
+        candles = _finnhub_get(
+            candle_path,
+            {"symbol": fh_symbol, "resolution": 5, "from": now - 26 * 3600, "to": now},
+            api_key,
+        )
+        if candles.get("s") == "ok":
+            intraday = [float(v) for v in candles.get("c", []) if v]
+    except Exception:
+        # Intraday chart is decoration -- a quote with no sparkline still
+        # renders the price and percent correctly.
+        intraday = []
+
+    # If we did get intraday data, prefer its most recent close over /quote's
+    # `c` field. In practice they agree, but the candle close is guaranteed to
+    # match the sparkline endpoint so the sparkline and the printed price can
+    # never drift by one refresh interval.
+    if intraday:
+        current = intraday[-1]
+
+    return Quote(symbol, current, previous_close, intraday)
 
 AMBER = (255, 176, 0)
 WHITE = (235, 240, 250)
@@ -119,7 +218,12 @@ def compact_percent(percent: float, max_chars: int) -> str:
 class StocksMode(Mode):
     """Render configured symbols, refreshing market data at most once a minute."""
 
-    CACHE_SECONDS = 60
+    # Refresh cadence. Finnhub's free tier is 60 req/min, so a 15-second
+    # cadence over a small watchlist (5-10 tickers) is well under budget.
+    # Yahoo Finance rate limits are looser at this frequency too, but if we
+    # ever fall back to yfinance the refresh call is still bounded by
+    # its own network timeouts and won't compound.
+    CACHE_SECONDS = 15
     CARD_SECONDS = 6
 
     def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
@@ -131,44 +235,86 @@ class StocksMode(Mode):
     # -- data ----------------------------------------------------------------
 
     def _refresh(self) -> None:
-        try:
-            import yfinance as yf
+        """Poll one quote per symbol.
 
-            quotes: list[Quote] = []
-            for symbol in self.config.current_symbols():
-                ticker = yf.Ticker(symbol)
-                daily = ticker.history(period="5d", interval="1d", auto_adjust=False)
-                closes = daily["Close"].dropna()
-                if len(closes) < 2:
-                    continue
-                previous_close = float(closes.iloc[-2])
-                price = float(closes.iloc[-1])
+        Try Finnhub first when a key is configured. For any symbol Finnhub
+        can't cover (returns all-zero fields, HTTP error, or an unsupported
+        format like the ``^GSPC`` index), fall back to yfinance so the ticker
+        keeps working end-to-end. If Finnhub fails wholesale (network down,
+        key revoked), the whole watchlist goes to yfinance for this pass and
+        the next refresh will retry Finnhub -- no sticky failure state.
+        """
+        api_key = getattr(self.config, "finnhub_api_key", "") or ""
+        symbols = list(self.config.current_symbols())
+        quotes: list[Quote] = []
+        finnhub_healthy = bool(api_key)
+        yahoo_fallback_symbols: list[str] = []
 
-                intraday: list[float] = []
+        for symbol in symbols:
+            got: Quote | None = None
+            if finnhub_healthy:
                 try:
-                    minutes = ticker.history(period="1d", interval="5m", auto_adjust=False)
-                    intraday = [float(value) for value in minutes["Close"].dropna()]
+                    got = _finnhub_quote(symbol, api_key)
+                except urllib.error.HTTPError as exc:
+                    # 401 = bad key; 403 = tier not entitled; 429 = rate limit.
+                    # Any of those means "stop trying Finnhub for the rest of
+                    # this refresh" -- otherwise we'd burn the quota on every
+                    # symbol before falling back.
+                    if exc.code in (401, 403, 429):
+                        finnhub_healthy = False
+                    got = None
                 except Exception:
-                    # The chart is decoration; a quote without one still renders.
-                    intraday = []
-                if intraday:
-                    price = intraday[-1]
+                    # Timeout, DNS, JSON error, etc. Drop this symbol to
+                    # Yahoo but keep trying Finnhub for the next ones -- one
+                    # weird symbol shouldn't disable the fast path for the
+                    # rest of the watchlist.
+                    got = None
+            if got is not None:
+                quotes.append(got)
+            else:
+                yahoo_fallback_symbols.append(symbol)
 
-                quotes.append(Quote(symbol, price, previous_close, intraday))
-            if quotes:
-                self.quotes = quotes
-                # Drop any quote whose symbol has since left the watchlist, so a
-                # removed ticker stops appearing even if its own fetch failed on
-                # this pass and the loop above skipped over it.
-                watched = set(self._watched)
-                kept = [quote for quote in self.quotes if quote.symbol in watched]
-                if kept:
-                    self.quotes = kept
-        except Exception:
-            # Keep the last good values when Yahoo Finance is down or rate limited.
-            pass
-        finally:
-            self._last_refresh = time.monotonic()
+        # yfinance fallback -- unchanged from the old implementation, just
+        # scoped to symbols Finnhub couldn't cover (or all of them if the key
+        # is missing/dead).
+        if yahoo_fallback_symbols:
+            try:
+                import yfinance as yf
+
+                for symbol in yahoo_fallback_symbols:
+                    ticker = yf.Ticker(symbol)
+                    daily = ticker.history(period="5d", interval="1d", auto_adjust=False)
+                    closes = daily["Close"].dropna()
+                    if len(closes) < 2:
+                        continue
+                    previous_close = float(closes.iloc[-2])
+                    price = float(closes.iloc[-1])
+
+                    intraday: list[float] = []
+                    try:
+                        minutes = ticker.history(period="1d", interval="5m", auto_adjust=False)
+                        intraday = [float(value) for value in minutes["Close"].dropna()]
+                    except Exception:
+                        # The chart is decoration; a quote without one still renders.
+                        intraday = []
+                    if intraday:
+                        price = intraday[-1]
+
+                    quotes.append(Quote(symbol, price, previous_close, intraday))
+            except Exception:
+                # If Yahoo is also down, keep whatever Finnhub gave us. Better
+                # a partial refresh than a whole-watchlist blackout.
+                pass
+
+        if quotes:
+            # Drop any quote whose symbol has since left the watchlist, so a
+            # removed ticker stops appearing even if its own fetch failed on
+            # this pass and the loop above skipped over it.
+            watched = set(self._watched) if self._watched else set(symbols)
+            kept = [quote for quote in quotes if quote.symbol in watched]
+            self.quotes = kept if kept else quotes
+        # Keep the last good values when everything is down.
+        self._last_refresh = time.monotonic()
 
     def _logo_for(self, symbol: str) -> Image.Image | None:
         candidates = [path for path in self.config.logos_dir.glob("*.png") if path.stem.upper() == symbol.upper()]
