@@ -154,33 +154,42 @@ def _is_playable_entry(entry: dict) -> bool:
     return True
 
 
+SHORT_MAX_DURATION_SECONDS = 90
+
+
 def _is_short(entry: dict) -> bool:
-    """Return True for YouTube Shorts (vertical, <=60s).
+    """Return True for YouTube Shorts (vertical clips).
 
-    Two independent signals so we still catch Shorts when yt-dlp is missing
-    one of them:
+    Detection is duration-based because the flat-extract entry doesn't
+    contain the signals we'd prefer:
 
-    1. The canonical/URL path contains ``/shorts/`` -- this is how YouTube
-       itself distinguishes them and is present on almost every flat entry.
-    2. Duration <= 60 seconds. A one-minute-and-under video that also has
-       Short-shaped signals (or came from a Shorts feed) is a Short by any
-       useful definition. We *don't* filter purely on duration <=60 because
-       some real landscape VODs are genuinely under a minute (BBC Earth
-       clips, JPL teasers), so we require the URL signal *or* a short
-       duration together with a suspiciously tall aspect ratio hint.
+    - The URL for Shorts is often ``/watch?v=...`` in flat mode, not
+      ``/shorts/...`` -- observed live on GoPro's channel feed.
+    - ``ie_key`` is always ``Youtube`` regardless of format.
+    - ``width`` / ``height`` / ``aspect_ratio`` are ``None`` in flat mode.
+
+    That leaves ``duration`` as the only reliable flat-mode signal. Real
+    Shorts cap at 60s but we allow a small margin -- some channels' Shorts
+    report 61-88s after re-encoding. Above 90s virtually every YouTube video
+    is landscape.
+
+    The tradeoff: we'll occasionally drop a legitimate ultra-short landscape
+    clip (a JPL teaser, a BBC Earth cutdown). That's acceptable for a video
+    ticker where the alternative is showing a vertical letterbox sliver on
+    the 57x32 panel. Channels that publish real landscape VODs (Nature
+    Relaxation Films, BBC Earth, NASA JPL) upload minute-plus content
+    routinely, so filling the 20-slot queue is not a problem in practice.
+
+    The ``/shorts/`` URL check stays as a belt-and-braces short-circuit for
+    any yt-dlp version that does surface it.
     """
     for key in ("webpage_url", "url", "original_url"):
         val = entry.get(key)
         if isinstance(val, str) and "/shorts/" in val.lower():
             return True
-    # Fallback: duration <= 60 AND yt-dlp tagged it as a Short via its
-    # ``ie_key`` / ``_type`` (YouTubeShorts extractor) if that ever surfaces
-    # on flat entries. Kept conservative to avoid dropping normal short VODs.
     duration = entry.get("duration")
-    if isinstance(duration, (int, float)) and 0 < duration <= 60:
-        ie = str(entry.get("ie_key") or entry.get("extractor") or "").lower()
-        if "short" in ie:
-            return True
+    if isinstance(duration, (int, float)) and 0 < duration <= SHORT_MAX_DURATION_SECONDS:
+        return True
     return False
 
 
