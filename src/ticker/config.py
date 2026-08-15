@@ -216,7 +216,15 @@ class Config:
     state_dir: Path = Path.home() / ".ticker"
 
     def now(self):  # noqa: ANN201 - datetime, kept loose to avoid a module-level import cycle
-        """Current local time, honouring TICKER_TIMEZONE when it is set and valid."""
+        """Current local time, honouring TICKER_TIMEZONE when it is set and valid.
+
+        Always returns a timezone-aware datetime. When TICKER_TIMEZONE is unset
+        or unparseable we fall back to the system's local timezone rather than
+        a naive value, because downstream callers (notably ``market.session_state``)
+        relabel naive datetimes as America/New_York without converting — which
+        would silently misreport market hours by whatever offset the Pi actually
+        sits at (e.g. 3 hours off in the Bay Area).
+        """
         from datetime import datetime
 
         if self.timezone:
@@ -226,7 +234,7 @@ class Config:
                 return datetime.now(ZoneInfo(self.timezone))
             except Exception:
                 pass  # fall through to the system clock
-        return datetime.now()
+        return datetime.now().astimezone()
 
     def clock_text(self) -> str:
         """Formatted wall clock, e.g. '1:07 PM' or '13:07'. No leading zero on 12h."""
@@ -355,13 +363,20 @@ class Config:
         return PROJECT_ROOT / "src" / "ticker" / "web" / "static" / "logos"
 
     def current_mode(self) -> str:
-        """Read the requested mode; create a safe default when absent/corrupt."""
+        """Read the requested mode; return the default when absent/corrupt.
+
+        Kept read-only on purpose. The renderer runs as root and calls this on
+        every frame; the web app runs as pi. If this function wrote a default
+        on read, an invalid file would flip to a root-owned file the web app
+        could no longer overwrite, silently breaking mode switching from the
+        UI until someone chowned the file. Falling back to the default in
+        memory keeps behaviour identical without leaving a permission mine.
+        """
         try:
             value = self.mode_file.read_text(encoding="utf-8").strip().lower()
         except OSError:
             value = ""
         if value not in VALID_MODES:
-            self.set_mode(DEFAULT_MODE)
             return DEFAULT_MODE
         return value
 
