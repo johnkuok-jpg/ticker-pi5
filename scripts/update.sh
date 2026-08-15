@@ -4,7 +4,11 @@
 set -euo pipefail
 
 cd /home/pi/ticker-pi5
-git pull --ff-only
+# The repo is owned by pi, but this script runs as root. Modern git refuses
+# to touch a repo owned by a different user ("detected dubious ownership")
+# unless it is whitelisted. Whitelist inline so we do not have to mutate
+# root's global git config on every Pi in the fleet.
+git -c safe.directory=/home/pi/ticker-pi5 pull --ff-only
 venv/bin/python -m pip install --upgrade -r requirements.txt
 venv/bin/python -m pip install --editable .
 sudo cp systemd/ticker.service systemd/ticker-web.service /etc/systemd/system/

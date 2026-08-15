@@ -39,15 +39,24 @@ fi
 
 cd "${REPO_DIR}"
 
+# The repo checkout is owned by the `pi` user, but this script runs as root
+# under systemd. Modern git (≥2.35) refuses to operate on a repo owned by a
+# different user unless it is explicitly whitelisted, with the message
+# "fatal: detected dubious ownership in repository ...". We opt in with a
+# per-invocation `-c` flag so we do not have to mutate root's global config
+# on every Pi. `safe.directory=*` is deliberate: this box has exactly one
+# ticker checkout and we control REPO_DIR.
+GIT=(git -c "safe.directory=${REPO_DIR}")
+
 # `--quiet` keeps the happy-path journal clean; failures still print to
 # stderr and become a systemd unit failure the operator can see.
-if ! git fetch --quiet origin "${BRANCH}"; then
+if ! "${GIT[@]}" fetch --quiet origin "${BRANCH}"; then
     echo "auto_update: git fetch failed (network?); will retry next tick."
     exit 0
 fi
 
-LOCAL="$(git rev-parse HEAD)"
-REMOTE="$(git rev-parse "origin/${BRANCH}")"
+LOCAL="$("${GIT[@]}" rev-parse HEAD)"
+REMOTE="$("${GIT[@]}" rev-parse "origin/${BRANCH}")"
 
 if [ "${LOCAL}" = "${REMOTE}" ]; then
     # Up to date. Exit 0 so systemd shows the timer as healthy.
