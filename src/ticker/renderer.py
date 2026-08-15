@@ -130,6 +130,9 @@ def run() -> None:
                 current_mode.render(canvas, tick)
             except Exception as error:
                 canvas.clear()
+                # canvas.text() sanitizes for the Latin-1 bitmap font, but if
+                # the exception message itself contains non-ASCII we still want
+                # readable output rather than a further-mangled string.
                 canvas.text(1, 10, f"{current_name} error", (255, 60, 60), 8)
                 canvas.text(1, 21, str(error)[:24], (140, 140, 140), 7)
             # Scale pixels here rather than relying on an undocumented driver

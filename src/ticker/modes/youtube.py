@@ -515,6 +515,14 @@ def _scroll_within(
 ) -> None:
     """Scroll `text` inside a bounded x..x+width strip on row y."""
     from PIL import Image, ImageDraw
+    from ticker.canvas import load_font, sanitize
+    # YouTube titles routinely include curly quotes, en-dashes, and emoji
+    # ("Oregon's", "POV \u2013 Kayaking", etc.). The bundled Spleen bitmap font
+    # is Latin-1 only, so drawing raw Unicode with PIL's ImageDraw raises
+    # UnicodeEncodeError -- which surfaces on the LED matrix as "youtube error:
+    # 'latin-1' codec can't en". canvas.text() calls sanitize() for us, but
+    # this scroll branch draws straight to a PIL Draw and would bypass it.
+    text = sanitize(text)
     text_w = canvas.text_width(text, SMALL)
     if text_w <= width:
         canvas.text(x, y, text, color, SMALL)
@@ -524,7 +532,6 @@ def _scroll_within(
     offset = tick % total
     strip = Image.new("RGB", (total + width, 10), (0, 0, 0))
     draw = ImageDraw.Draw(strip)
-    from ticker.canvas import load_font
     font = load_font(SMALL)
     draw.fontmode = "1"
     draw.text((0, 0), text, fill=color, font=font)
