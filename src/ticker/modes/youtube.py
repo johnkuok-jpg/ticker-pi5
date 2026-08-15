@@ -447,7 +447,18 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
         ffmpeg_bin,
         "-loglevel", "error",
         "-i", str(cache_file),
-        "-vf", f"fps={TARGET_FPS},scale={VIDEO_W}:{VIDEO_H}",
+        # Keep source aspect ratio: scale to fit inside VIDEO_W x VIDEO_H, then
+        # pad the remaining edges with black. Plain `scale=W:H` would stretch
+        # a 4:3 or vertical clip out to the panel and look squashed. The
+        # `decrease` flag means the scaled frame never exceeds the box on
+        # either axis; pad centres it. Output stays exactly VIDEO_W x VIDEO_H
+        # so the (N, H, W, 3) reshape below still works.
+        "-vf",
+        (
+            f"fps={TARGET_FPS},"
+            f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
+            f"pad={VIDEO_W}:{VIDEO_H}:(ow-iw)/2:(oh-ih)/2:color=black"
+        ),
         "-f", "rawvideo",
         "-pix_fmt", "rgb24",
         "-",
