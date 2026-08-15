@@ -17,6 +17,23 @@ from ticker.modes.youtube import (
 )
 
 
+# Acronyms and multi-word display names for the mode grid + settings page.
+# Anything not listed falls through to a plain capitalize() in the templates,
+# which is fine for single-word modes like "stocks" or "news".
+MODE_LABELS = {
+    "bart": "BART",
+    "aqi": "AQI",
+    "bikes": "Bikes",
+    "nametag": "Name Tag",
+    "spotify": "Spotify",
+    "pokemon": "Pok\u00e9mon",
+    "focus": "Focus",
+    "net": "Wi-Fi",
+    "worldclock": "World Clock",
+    "youtube": "YouTube",
+}
+
+
 def _renderer_status(pid_file: Path) -> tuple[int | None, bool]:
     """Report the renderer's PID and whether the process is still alive.
 
@@ -143,7 +160,8 @@ def create_app() -> Flask:
         config = load_config()
         return render_template(
             "index.html",
-            modes=VALID_MODES,
+            modes=config.visible_modes(),
+            mode_labels=MODE_LABELS,
             current_mode=config.current_mode(),
             brightness=round(config.current_brightness() * 100),
             schedule_note=_describe_schedule(config),
@@ -585,15 +603,53 @@ def create_app() -> Flask:
     # destructive control (change the network, lose this connection) next to
     # everyday taps.
 
-    @app.get("/wifi")
-    def wifi_page():  # type: ignore[no-untyped-def]
+    @app.get("/settings")
+    def settings_page():  # type: ignore[no-untyped-def]
+        """Combined settings page: module visibility + Wi-Fi.
+
+        Wi-Fi lives here now, alongside the module show/hide toggles. The
+        legacy ``/wifi`` URL is preserved as a redirect below so QR codes on
+        the panel (and any bookmarks) keep working.
+        """
+        config = load_config()
         status = net.status()
         return render_template(
-            "wifi.html",
+            "settings.html",
             status=status,
             available=net.available(),
             setup_ssid=net.HOTSPOT_SSID,
+            all_modes=VALID_MODES,
+            hidden_modes=config.current_hidden_modes(),
+            mode_labels=MODE_LABELS,
         )
+
+    @app.get("/wifi")
+    def wifi_page_legacy():  # type: ignore[no-untyped-def]
+        """Preserve the old /wifi URL so the panel's hotspot QR keeps working."""
+        return redirect("/settings", code=301)
+
+    @app.post("/settings/modules")
+    def set_hidden_modes_endpoint():  # type: ignore[no-untyped-def]
+        """Persist which modes are hidden from the webapp.
+
+        Body: ``{"hidden": ["pokemon", "nametag", ...]}`` -- the full list of
+        modes to hide. ``set_hidden_modes`` validates and refuses to hide
+        everything, returning the error verbatim to the client so the UI can
+        surface it.
+        """
+        payload = request.get_json(silent=True) or {}
+        hidden = payload.get("hidden", [])
+        if not isinstance(hidden, list):
+            return jsonify(error="hidden must be a list"), 400
+        config = load_config()
+        try:
+            saved = config.set_hidden_modes(list(hidden))
+        except ValueError as err:
+            return jsonify(
+                error=str(err),
+                hidden=config.current_hidden_modes(),
+            ), 400
+        return jsonify(hidden=saved)
 
     @app.get("/api/wifi")
     def wifi_state():  # type: ignore[no-untyped-def]

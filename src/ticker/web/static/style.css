@@ -120,6 +120,27 @@ body {
    push them out of the layout entirely. The readout block below replaces
    both visually. */
 .eyebrow, .panel > h1 { display: none; }
+/* Settings page needs its own visible eyebrow + heading, so opt back in for
+   pages that explicitly mark themselves. The main control panel keeps the
+   hidden behavior because its status/mode bar already tells you what page
+   you're on. */
+body[data-page="settings"] .eyebrow,
+body[data-page="settings"] .panel > h1 { display: block; }
+body[data-page="settings"] .panel > h1 {
+  font-size: 28px;
+  margin: 4px 0 20px;
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+body[data-page="settings"] .eyebrow {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--accent, #78b6ff);
+  text-transform: uppercase;
+  margin: 0 0 4px;
+}
 .status { position: absolute; left: -9999px; }
 
 /* ----- Big readout block ------------------------------------------------- */
@@ -1130,6 +1151,81 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
 .worldclock-view-btn.is-active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* ----- Settings page ---------------------------------------------------- */
+
+/* Section heading style for the Wi-Fi block on the settings page. Sits below
+   the modules card, quieter than the top-level h1. */
+.section-heading {
+  margin: 24px 0 8px;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+  font-weight: 600;
+}
+
+/* Show-modules grid. Auto-fits to whatever the phone can hold; each row is
+   a checkbox + label pill. Wraps naturally on narrow screens. Uses the same
+   dashed-border language as the rest of the card controls so it doesn't
+   feel bolted-on. */
+.modules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.module-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--dimmer);
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--fg);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  user-select: none;
+}
+.module-toggle:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.module-toggle:has(input:not(:checked)) {
+  opacity: 0.55;
+}
+.module-check {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--dimmer);
+  border-radius: 3px;
+  margin: 0;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+.module-check:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.module-check:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 4px;
+  height: 8px;
+  border: solid #0b1220;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.module-name {
+  text-transform: capitalize;
 }
 
 /* ----- Mobile tweaks ---------------------------------------------------- */

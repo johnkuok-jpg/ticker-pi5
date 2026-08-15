@@ -52,9 +52,9 @@
       </div>
     </section>
     <section class="mode-grid" aria-label="Display mode">
-      {# Acronyms must not be title-cased: CSS capitalize would render BART as
-         "Bart" and AQI as "Aqi". Anything unlisted falls through to capitalize. #}
-      {% set mode_labels = {"bart": "BART", "aqi": "AQI", "bikes": "Bikes", "nametag": "Name Tag", "spotify": "Spotify", "pokemon": "Pokémon", "focus": "Focus", "net": "Wi-Fi", "worldclock": "World Clock", "youtube": "YouTube"} %}
+      {# ``modes`` and ``mode_labels`` come from the view. ``modes`` is already
+         filtered by hidden_modes on the server, so this loop just renders whatever
+         the user has set to visible in Settings. #}
       {% for mode in modes %}
       <button class="mode-button mode-{{ mode }} {% if mode == current_mode %}active{% endif %}" data-mode="{{ mode }}">
         <span class="mode-dot" aria-hidden="true"></span>
@@ -321,7 +321,7 @@
       No Wi-Fi — the ticker is broadcasting a setup hotspot. Tap to choose a network →
     </a>
     <p id="renderer" class="renderer">Checking renderer…</p>
-    <a class="wifilink" href="/wifi">Wi-Fi settings →</a>
+    <a class="wifilink" href="/settings">Settings →</a>
   </main>
   <script>
     /* MIT License — Copyright (c) 2026 John Kuok */

@@ -981,6 +981,65 @@ class Config:
         os.replace(tmp, self.worldclock_view_file)
         return view
 
+    # ------------------------------------------------------------------
+    # Hidden modes
+    #
+    # Users can hide modules they never use so the webapp mode grid and its
+    # per-mode config cards don't clutter the phone view. Hidden here means
+    # "don't show in the webapp" -- the panel itself just displays whichever
+    # mode is currently selected, so a hidden mode that is somehow already the
+    # active mode still renders. Stored as a plain newline-delimited text file
+    # instead of JSON so a hand-edit on the Pi is trivial.
+    # ------------------------------------------------------------------
+
+    @property
+    def hidden_modes_file(self) -> Path:
+        return self.state_dir / "hidden_modes.txt"
+
+    def current_hidden_modes(self) -> list[str]:
+        """Return the persisted list of hidden modes, filtered to known modes.
+
+        Unknown entries (from a stale config after a mode is renamed) are
+        silently dropped instead of raising, so a rename doesn't brick the
+        settings page.
+        """
+        try:
+            raw = self.hidden_modes_file.read_text(encoding="utf-8")
+        except OSError:
+            return []
+        seen: list[str] = []
+        for line in raw.splitlines():
+            name = line.strip()
+            if name in VALID_MODES and name not in seen:
+                seen.append(name)
+        return seen
+
+    def visible_modes(self) -> list[str]:
+        """Return VALID_MODES minus the hidden ones, preserving order."""
+        hidden = set(self.current_hidden_modes())
+        return [m for m in VALID_MODES if m not in hidden]
+
+    def set_hidden_modes(self, modes: list[str]) -> list[str]:
+        """Persist the hidden-mode list. Rejects unknown names and prevents
+        hiding every single mode (which would leave an empty mode grid).
+        """
+        cleaned: list[str] = []
+        for m in modes:
+            if not isinstance(m, str):
+                raise ValueError("hidden modes must be strings")
+            name = m.strip()
+            if name not in VALID_MODES:
+                raise ValueError(f"unknown mode: {m!r}")
+            if name not in cleaned:
+                cleaned.append(name)
+        if len(cleaned) >= len(VALID_MODES):
+            raise ValueError("at least one mode must stay visible")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.hidden_modes_file.with_suffix(".txt.tmp")
+        tmp.write_text("\n".join(cleaned), encoding="utf-8")
+        os.replace(tmp, self.hidden_modes_file)
+        return cleaned
+
     def _worldclock_defaults(self) -> list[dict]:
         # Kept in sync with modes.worldclock.DEFAULT_CITIES; duplicated here so
         # the config file has no import dependency on the modes package (which

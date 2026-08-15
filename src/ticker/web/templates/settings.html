@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Ticker Wi-Fi</title>
+  <title>Ticker Settings</title>
   <meta name="theme-color" content="#1a263c">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -12,10 +12,29 @@
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icon-180.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body data-page="settings">
   <main class="panel">
     <p class="eyebrow">TICKER PI 5</p>
-    <h1>Wi-Fi</h1>
+    <h1>Settings</h1>
+
+    <section class="flight modules-card" aria-labelledby="modules-heading">
+      <label id="modules-heading">Show modules</label>
+      <p class="schedule">Hide any modules you never use. Hidden modules disappear from
+        the mode grid and their config cards on the main page. At least one module must stay
+        visible.</p>
+      <div id="modules-grid" class="modules-grid" role="group" aria-label="Visible modules">
+        {% for mode in all_modes %}
+        <label class="module-toggle">
+          <input type="checkbox" class="module-check" data-mode="{{ mode }}"
+                 {% if mode not in hidden_modes %}checked{% endif %}>
+          <span class="module-name">{{ mode_labels.get(mode, mode) }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p id="modules-note" class="schedule">Changes save as you tap.</p>
+    </section>
+
+    <h2 class="section-heading">Wi-Fi</h2>
 
     {% if not available %}
     <p class="warn">NetworkManager’s <code>nmcli</code> is not installed, so networks cannot be
@@ -222,6 +241,48 @@
     /* Slow poll, and never a rescan: this page is mostly read, and the radio is
        needed for the thing being configured. */
     setInterval(() => refresh(false), 8000);
+
+    /* Module show/hide toggles.
+     *
+     * Each tap posts the full list of currently-hidden modes rather than a
+     * diff -- the server enforces "at least one visible" and it's easier to
+     * reason about the whole set than a stream of add/remove events. If the
+     * server rejects (typically the last-mode guard), we roll back the tap
+     * and surface the error verbatim so the user understands why the box
+     * snapped back. */
+    const moduleChecks = document.querySelectorAll('.module-check');
+    const modulesNote = document.getElementById('modules-note');
+    function collectHidden() {
+      const out = [];
+      moduleChecks.forEach((c) => { if (!c.checked) out.push(c.dataset.mode); });
+      return out;
+    }
+    moduleChecks.forEach((cb) => {
+      cb.addEventListener('change', async () => {
+        const priorHidden = collectHidden();
+        // Rebuild AFTER this change (change event already flipped the box):
+        const nextHidden = collectHidden();
+        modulesNote.textContent = 'Saving…';
+        try {
+          const resp = await fetch('/settings/modules', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hidden: nextHidden }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            cb.checked = !cb.checked; // roll back
+            modulesNote.textContent = data.error || 'Save failed.';
+          } else {
+            const shown = moduleChecks.length - nextHidden.length;
+            modulesNote.textContent = shown + ' visible, ' + nextHidden.length + ' hidden.';
+          }
+        } catch (err) {
+          cb.checked = !cb.checked;
+          modulesNote.textContent = 'Save failed.';
+        }
+      });
+    });
   </script>
 </body>
 </html>
