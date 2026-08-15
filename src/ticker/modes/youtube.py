@@ -646,9 +646,23 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
         cache_file = found[0]
 
     ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+    # Hard-cap the decoded portion of any video, regardless of source length.
+    # This bounds:
+    #   - ffmpeg CPU time (a 60-min Cargospotter comp would otherwise take
+    #     several minutes to decode on a Pi 5 and blow past subprocess.run's
+    #     old 120s timeout, causing the mode to blocklist and skip the video)
+    #   - the raw pipe/RAM footprint (57*32*3 * TARGET_FPS * seconds)
+    # A 5-minute cap is plenty: at 5 min * 60 s * TARGET_FPS = 3600 frames the
+    # ticker plays for 5 minutes before advancing, and Cargospotter's opening
+    # 5 minutes already contain multiple full landings/departures.
+    max_decode_seconds = 5 * 60
     cmd = [
         ffmpeg_bin,
         "-loglevel", "error",
+        # -t must precede -i to be honoured as an *input* time limit, so ffmpeg
+        # stops reading the source instead of decoding the whole file. This is
+        # what actually caps CPU time, not an output-side cap.
+        "-t", str(max_decode_seconds),
         "-i", str(cache_file),
         # Keep source aspect ratio: scale to fit inside VIDEO_W x VIDEO_H, then
         # pad the remaining edges with black. Plain `scale=W:H` would stretch
@@ -666,7 +680,12 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
         "-pix_fmt", "rgb24",
         "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True, check=True, timeout=120)
+    # Timeout is a safety net well above the expected decode time. On a Pi 5
+    # decoding 144p to 57x32 at 12 fps runs faster than realtime, so 5 minutes
+    # of source takes well under 5 minutes to decode -- but a slow SD card or
+    # a weirdly-encoded file could push past that, and we'd rather wait than
+    # blocklist a legit video for missing a tight bound.
+    proc = subprocess.run(cmd, capture_output=True, check=True, timeout=600)
     raw = proc.stdout
     frame_size = VIDEO_W * VIDEO_H * 3
     n_frames = len(raw) // frame_size
