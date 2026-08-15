@@ -33,7 +33,7 @@ from datetime import datetime
 
 from PIL import ImageDraw
 
-from ticker.canvas import SMALL, Canvas
+from ticker.canvas import MEDIUM, SMALL, Canvas
 from ticker.modes.base import Mode
 
 # ---------------------------------------------------------------------------
@@ -77,6 +77,16 @@ SECONDARY_R = 7
 SECONDARY_HOUR_LEN = 3
 SECONDARY_MIN_LEN = 4
 SECONDARY_LABEL_Y = 22
+
+# Digital (H4) view geometry. Three equal 42-px slots, each stacking a small
+# city label, a MEDIUM H:MM readout, and a small A/P suffix. Dotted vertical
+# rules between slots echo the analog view's divider so both views feel like
+# siblings rather than unrelated screens.
+DIGITAL_SLOT_WIDTH = 42
+DIGITAL_LABEL_Y = 2
+DIGITAL_TIME_Y = 12
+DIGITAL_SUFFIX_Y = 20
+DIGITAL_DIVIDER_XS = (42, 85)
 
 # Default city set. SF as home; NYC and LON round out US-East and Europe.
 DEFAULT_CITIES: tuple[dict, ...] = (
@@ -228,8 +238,61 @@ def _draw_secondary_dial(canvas: Canvas, cx: int, dial: ClockDial) -> None:
     canvas.text(label_x, SECONDARY_LABEL_Y, dial.label, SOFT_WHITE, SMALL)
 
 
+def _draw_digital_slot(
+    canvas: Canvas,
+    slot_index: int,
+    dial: ClockDial,
+) -> None:
+    """Draw one 42-px column: city label, big H:MM, tiny A/P suffix.
+
+    Home slot (index 0) gets the amber accent for label + time so the eye
+    lands there first; the other two slots stay white/soft-white. The A/P
+    letter is dim in both cases -- meridian is context, not headline data.
+    """
+    is_home = (slot_index == 0)
+    label_color = AMBER if is_home else SOFT_WHITE
+    time_color = AMBER if is_home else WHITE
+
+    slot_cx = DIGITAL_SLOT_WIDTH * slot_index + DIGITAL_SLOT_WIDTH // 2
+
+    # City label centred in the slot at the top.
+    label_w = canvas.text_width(dial.label, SMALL)
+    label_x = max(0, min(canvas.width - label_w, slot_cx - label_w // 2))
+    canvas.text(label_x, DIGITAL_LABEL_Y, dial.label, label_color, SMALL)
+
+    # MEDIUM H:MM followed by a SMALL A/P suffix, together centred as one unit
+    # so the group visually reads as "one number" rather than two elements.
+    display_hour = dial.hour % 12 or 12
+    time_str = f"{display_hour}:{dial.minute:02d}"
+    suffix = "A" if dial.hour < 12 else "P"
+
+    time_w = canvas.text_width(time_str, MEDIUM)
+    suffix_w = canvas.text_width(suffix, SMALL)
+    group_w = time_w + 2 + suffix_w
+    x = max(0, min(canvas.width - group_w, slot_cx - group_w // 2))
+
+    canvas.text(x, DIGITAL_TIME_Y, time_str, time_color, MEDIUM)
+    canvas.text(x + time_w + 2, DIGITAL_SUFFIX_Y, suffix, RING_DIM, SMALL)
+
+
+def _draw_digital_dividers(canvas: Canvas) -> None:
+    """Dotted vertical rules between the three digital slots.
+
+    Kept sparse (every 3rd pixel) and short (y=10..22) so the dividers read
+    as a subtle guide rather than another element competing with the times.
+    They also don't collide with the top-row city labels or the bottom-row
+    A/P suffix.
+    """
+    for x in DIGITAL_DIVIDER_XS:
+        for y in range(10, 22, 3):
+            canvas.pixel(x, y, DIVIDER_DIM)
+
+
 class WorldClockMode(Mode):
-    """One big home dial (tri-color hands) + two secondary dials.
+    """World clock with two selectable views: analog (G3) or digital (H4).
+
+    The view is chosen at render time from :meth:`Config.current_worldclock_view`
+    so a webapp toggle can flip between layouts without a service restart.
 
     The mode is deliberately network-free -- it reads system time and does
     the timezone math with :mod:`zoneinfo`, so it keeps working when the WiFi
@@ -240,34 +303,33 @@ class WorldClockMode(Mode):
         canvas.clear()
         cities = self.config.current_worldclock_cities()
 
-        # Cap at 3 (layout is one big + two small). A fourth clock would
-        # require shrinking either dial and losing tick clarity.
+        # Cap at 3. Both views are three-slot layouts; a fourth city would
+        # require shrinking the home dial (analog) or the MEDIUM font
+        # (digital) below the point of legibility.
         cities = list(cities)[:3]
         if not cities:
             cities = list(DEFAULT_CITIES)
 
         fallback = self.config.now()
-
-        # Home dial
-        home = cities[0]
-        home_label = str(home.get("label", "")).strip() or "?"
-        home_tz = str(home.get("tz", "")).strip()
-        home_now = _city_now(home_tz, fallback) if home_tz else fallback
-        _draw_home_dial(
-            canvas,
-            ClockDial(label=home_label, hour=home_now.hour, minute=home_now.minute),
-        )
-
-        _draw_divider(canvas)
-
-        # Secondary dials
-        for i, city in enumerate(cities[1:]):
+        # Materialise per-city local times up front so the two view branches
+        # below stay layout-only.
+        dials: list[ClockDial] = []
+        for city in cities:
             label = str(city.get("label", "")).strip() or "?"
             tz = str(city.get("tz", "")).strip()
             local = _city_now(tz, fallback) if tz else fallback
+            dials.append(ClockDial(label=label, hour=local.hour, minute=local.minute))
+
+        view = self.config.current_worldclock_view()
+        if view == "digital":
+            _draw_digital_dividers(canvas)
+            for i, dial in enumerate(dials):
+                _draw_digital_slot(canvas, i, dial)
+            return
+
+        # Analog view (default): G3 layout.
+        _draw_home_dial(canvas, dials[0])
+        _draw_divider(canvas)
+        for i, dial in enumerate(dials[1:]):
             cx = SECONDARY_CX_START + i * SECONDARY_CX_STEP
-            _draw_secondary_dial(
-                canvas,
-                cx,
-                ClockDial(label=label, hour=local.hour, minute=local.minute),
-            )
+            _draw_secondary_dial(canvas, cx, dial)

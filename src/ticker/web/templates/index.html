@@ -288,6 +288,15 @@
     <section class="flight worldclock-card" data-for="worldclock">
       <label>World clock</label>
       <p class="schedule">Three cities. First city renders in amber as the "home" accent. Labels are capped at 6 characters. Timezones use IANA names, e.g. <code>Europe/London</code>, <code>Asia/Tokyo</code>.</p>
+      <div class="worldclock-view" role="group" aria-label="World clock view">
+        <span class="worldclock-view-label">View</span>
+        <div class="worldclock-view-toggle">
+          <button type="button" class="worldclock-view-btn{% if worldclock_view == 'analog' %} is-active{% endif %}"
+                  data-view="analog" aria-pressed="{{ 'true' if worldclock_view == 'analog' else 'false' }}">Analog</button>
+          <button type="button" class="worldclock-view-btn{% if worldclock_view == 'digital' %} is-active{% endif %}"
+                  data-view="digital" aria-pressed="{{ 'true' if worldclock_view == 'digital' else 'false' }}">Digital</button>
+        </div>
+      </div>
       <div id="worldclock-rows" class="worldclock-rows" role="list" aria-label="World clock cities">
         {% for city in worldclock_cities %}
         <div class="worldclock-row" data-index="{{ loop.index0 }}" role="listitem">
@@ -1000,6 +1009,42 @@
         }
       });
     }
+
+    // World clock view toggle: analog vs digital.
+    //
+    // Optimistically flips the active button before the round-trip so the tap
+    // feels instant, then rolls back on error. Only two buttons so we don't
+    // bother with delegated listeners.
+    const worldclockViewBtns = document.querySelectorAll('.worldclock-view-btn');
+    worldclockViewBtns.forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const target = btn.dataset.view;
+        const previous = document.querySelector('.worldclock-view-btn.is-active');
+        if (previous === btn) return;
+        worldclockViewBtns.forEach((b) => {
+          b.classList.toggle('is-active', b === btn);
+          b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+        });
+        try {
+          const resp = await fetch('/worldclock/view', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ view: target }),
+          });
+          if (!resp.ok) throw new Error('bad response');
+          if (worldclockNote) worldclockNote.textContent = 'View: ' + target + '.';
+        } catch (err) {
+          // Roll back to whatever was active before the tap.
+          if (previous) {
+            worldclockViewBtns.forEach((b) => {
+              b.classList.toggle('is-active', b === previous);
+              b.setAttribute('aria-pressed', b === previous ? 'true' : 'false');
+            });
+          }
+          if (worldclockNote) worldclockNote.textContent = 'View change failed.';
+        }
+      });
+    });
 
     tickClock();
     setInterval(tickClock, 20000);

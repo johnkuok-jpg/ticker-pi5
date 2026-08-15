@@ -943,9 +943,43 @@ class Config:
     # is kept flexible so the webapp can round-trip whatever the user typed
     # without silent truncation on save.
 
+    # View mode: 'analog' shows the G3 layout (big amber dial + 2 small dials);
+    # 'digital' shows the H4 layout (three big HH:MM readouts with A/P suffix).
+    # Persisted alongside the city list so it survives a service restart.
+    VALID_WORLDCLOCK_VIEWS = ("analog", "digital")
+
     @property
     def worldclock_file(self) -> Path:
         return self.state_dir / "worldclock.json"
+
+    @property
+    def worldclock_view_file(self) -> Path:
+        return self.state_dir / "worldclock_view.txt"
+
+    def current_worldclock_view(self) -> str:
+        """Return the persisted view mode, defaulting to 'analog'.
+
+        Kept in a separate tiny text file rather than embedded in
+        worldclock.json so a bad edit to the city list cannot flip the view
+        (and vice versa). The read is defensive: unknown value -> default.
+        """
+        try:
+            value = self.worldclock_view_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return "analog"
+        return value if value in self.VALID_WORLDCLOCK_VIEWS else "analog"
+
+    def set_worldclock_view(self, view: str) -> str:
+        """Persist the view mode. Raises ValueError on anything unknown."""
+        if view not in self.VALID_WORLDCLOCK_VIEWS:
+            raise ValueError(
+                f"worldclock view must be one of {self.VALID_WORLDCLOCK_VIEWS}"
+            )
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.worldclock_view_file.with_suffix(".txt.tmp")
+        tmp.write_text(view, encoding="utf-8")
+        os.replace(tmp, self.worldclock_view_file)
+        return view
 
     def _worldclock_defaults(self) -> list[dict]:
         # Kept in sync with modes.worldclock.DEFAULT_CITIES; duplicated here so

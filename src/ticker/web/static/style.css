@@ -1087,6 +1087,51 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
 }
 .worldclock-actions { margin-top: 12px; }
 
+/* Analog/Digital view toggle. Segmented control styled to match the other
+   controls on the card - dashed accent border on active, dimmer on inactive.
+   Sits above the city rows because view style affects how the rows look
+   on the panel. */
+.worldclock-view {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+.worldclock-view-label {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+.worldclock-view-toggle {
+  display: inline-flex;
+  border: 1px dashed var(--dimmer);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.worldclock-view-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--dimmer);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.worldclock-view-btn + .worldclock-view-btn {
+  border-left: 1px dashed var(--dimmer);
+}
+.worldclock-view-btn:hover { color: var(--fg); }
+.worldclock-view-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ----- Mobile tweaks ---------------------------------------------------- */
 
 @media (max-width: 380px) {

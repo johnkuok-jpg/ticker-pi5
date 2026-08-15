@@ -165,6 +165,7 @@ def create_app() -> Flask:
             youtube_default_category=YT_DEFAULT_CATEGORY,
             youtube_selection=config.current_youtube_playlist(),
             worldclock_cities=config.current_worldclock_cities(),
+            worldclock_view=config.current_worldclock_view(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -553,6 +554,27 @@ def create_app() -> Flask:
             ), 400
         config.set_mode("worldclock")
         return jsonify(cities=saved, current_mode=config.current_mode())
+
+    @app.post("/worldclock/view")
+    def set_worldclock_view():  # type: ignore[no-untyped-def]
+        """Flip between the analog and digital world-clock views.
+
+        This is a preference change rather than a data change, so we do NOT
+        auto-switch to the worldclock mode. The renderer picks up the new
+        view on its next frame if the mode is already active; otherwise the
+        view will take effect the next time the user selects the mode.
+        """
+        payload = request.get_json(silent=True) or {}
+        view = str(payload.get("view", "")).strip()
+        config = load_config()
+        try:
+            saved = config.set_worldclock_view(view)
+        except ValueError as err:
+            return jsonify(
+                error=str(err),
+                view=config.current_worldclock_view(),
+            ), 400
+        return jsonify(view=saved)
 
     # -- Wi-Fi ---------------------------------------------------------------
     #
