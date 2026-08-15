@@ -37,11 +37,22 @@ import numpy as np
 from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
-# YouTube's official global Top 100 music chart playlist. Public, no auth.
-# The music chart is what people actually watch on YouTube every day, so
-# treating it as the trending feed is a reasonable substitute for the
-# now-defunct /feed/trending page.
-TRENDING_PLAYLIST = "https://www.youtube.com/playlist?list=PL4fGSI1pDJn6puJdseH2Rt9sMvt9E2M4i"
+# YouTube's official global Top 100 music chart used to work, but nearly all
+# entries there are Vevo/label music videos that return HTTP 403 (DRM). Switch
+# to a channel-uploads playlist (Veritasium is the default — no DRM, universally
+# interesting, uploads about weekly). Override via YOUTUBE_PLAYLIST env var
+# with a full playlist URL if you want a different channel or a custom list.
+#
+# YouTube channel-uploads playlist IDs are always the channel ID with the
+# leading "UC" replaced by "UU". Some popular choices:
+#   Veritasium:  UUHnyfMqiRRG1u-2MsSQLbXA
+#   Kurzgesagt:  UUsXVk37bltHxD1rDPwtNM8Q
+#   MrBeast:     UUX6OQ3DkcsbYNE6H8uQQuVA
+#   TED-Ed:      UUsooa4yRKGN_zEE8iknghZA
+#   MKBHD:       UUBJycsmduvYEL83R_U4JriQ
+DEFAULT_PLAYLIST_URL = (
+    "https://www.youtube.com/playlist?list=UUHnyfMqiRRG1u-2MsSQLbXA"
+)
 
 # Frame geometry for the tiny video window.
 VIDEO_W = 57       # 16:9 aspect fitted to 32 tall = 56.9, rounded up
@@ -58,6 +69,20 @@ TRENDING_CACHE_SECONDS = 3600
 
 # Backoff after a trending fetch fails, so we don't hammer network on every tick.
 TRENDING_RETRY_AFTER_FAILURE = 60.0
+
+
+def _safe_log(msg: str) -> None:
+    """Print an ASCII-only version of the message.
+
+    systemd's journal runs services under C locale by default, which means
+    print() with non-ASCII chars raises UnicodeEncodeError. That would blow
+    away the real error we were trying to log, so we replace any offending
+    character with '?'. Any log line is better than none.
+    """
+    try:
+        print(msg.encode("ascii", errors="replace").decode("ascii"), flush=True)
+    except Exception:
+        pass
 
 
 def _format_views(views: int) -> str:
@@ -84,6 +109,13 @@ class YouTubeMode(Mode):
     def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
         super().__init__(config)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        # Playlist URL: env var wins, then config attr, else default.
+        import os
+        self._playlist_url = (
+            os.getenv("YOUTUBE_PLAYLIST")
+            or getattr(config, "youtube_playlist", None)
+            or DEFAULT_PLAYLIST_URL
+        )
 
         # Trending list state.
         self.videos: list[VideoInfo] = []
@@ -123,7 +155,7 @@ class YouTubeMode(Mode):
                     "playlistend": 20,
                 }
                 with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(TRENDING_PLAYLIST, download=False)
+                    info = ydl.extract_info(self._playlist_url, download=False)
                 entries = [e for e in (info.get("entries") or []) if e]
                 vids = []
                 for e in entries[:20]:
@@ -136,13 +168,13 @@ class YouTubeMode(Mode):
                 if vids:
                     self.videos = vids
                     self._next_trending_fetch_at = time.monotonic() + TRENDING_CACHE_SECONDS
-                    print(f"[youtube] fetched {len(vids)} videos from chart playlist", flush=True)
+                    _safe_log(f"[youtube] fetched {len(vids)} videos from playlist")
                 else:
                     self._next_trending_fetch_at = time.monotonic() + TRENDING_RETRY_AFTER_FAILURE
-                    print("[youtube] chart playlist returned zero videos", flush=True)
+                    _safe_log("[youtube] playlist returned zero videos")
             except Exception as e:
                 self._next_trending_fetch_at = time.monotonic() + TRENDING_RETRY_AFTER_FAILURE
-                print(f"[youtube] trending fetch failed: {type(e).__name__}: {e}", flush=True)
+                _safe_log(f"[youtube] trending fetch failed: {type(e).__name__}: {e}")
             finally:
                 self._trending_in_flight = False
 
@@ -170,14 +202,14 @@ class YouTubeMode(Mode):
 
         def _work():
             try:
-                print(f"[youtube] downloading {video.id}: {video.title[:50]}", flush=True)
+                _safe_log(f"[youtube] downloading {video.id}: {video.title[:50]}")
                 frames = _fetch_and_decode(video.id)
                 self._frames = frames
                 self._current_video = video
                 self._playback_started = time.monotonic()
-                print(f"[youtube] ready: {video.id} — {len(frames)} frames", flush=True)
+                _safe_log(f"[youtube] ready: {video.id} - {len(frames)} frames")
             except Exception as e:
-                print(f"[youtube] download failed for {video.id}: {type(e).__name__}: {e}", flush=True)
+                _safe_log(f"[youtube] download failed for {video.id}: {type(e).__name__}: {e}")
                 # Advance to the next video on failure so we don't get stuck.
                 if self.videos:
                     self._current_index = (self._current_index + 1) % len(self.videos)
