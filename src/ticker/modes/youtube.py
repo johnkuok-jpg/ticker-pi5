@@ -126,10 +126,13 @@ class YouTubeMode(Mode):
                     if vids:
                         self.videos = vids
                         self._trending_refreshed = time.monotonic()
+                        print(f"[youtube] trending fetched from {base}: {len(vids)} videos", flush=True)
                         return
-                except Exception:
+                except Exception as e:
+                    print(f"[youtube] trending fetch failed for {base}: {type(e).__name__}: {e}", flush=True)
                     continue
             self._trending_refreshed = time.monotonic()
+            print("[youtube] all Piped instances failed", flush=True)
 
         t = threading.Thread(target=_work, daemon=True, name="yt-trending")
         t.start()
@@ -144,16 +147,17 @@ class YouTubeMode(Mode):
 
         def _work():
             try:
+                print(f"[youtube] downloading {video.id}: {video.title[:50]}", flush=True)
                 frames = _fetch_and_decode(video.id)
                 # Only apply if we're still supposed to be showing this video.
                 if self._download_target == video.id:
                     self._frames = frames
                     self._current_video = video
                     self._playback_started = time.monotonic()
-            except Exception:
-                # Swallow any download/decode error. The renderer will keep
-                # showing a placeholder and eventually advance.
-                pass
+                print(f"[youtube] ready: {video.id} — {len(frames)} frames", flush=True)
+            except Exception as e:
+                # Log but don't crash — renderer keeps showing placeholder.
+                print(f"[youtube] download failed for {video.id}: {type(e).__name__}: {e}", flush=True)
 
         self._download_thread = threading.Thread(target=_work, daemon=True, name="yt-decode")
         self._download_thread.start()
@@ -292,21 +296,29 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
     # Download to a temp file first, then decode from disk. Streaming directly
     # from the HTTPS URL segfaults ffmpeg on some builds, and buffering to
     # disk lets us cap length by yt-dlp's match_filter before ffmpeg runs.
-    cache_file = CACHE_DIR / f"{video_id}.mp4"
-
     # Cleanup: keep only the 5 newest cache files. A trending run cycles through
     # ~15 videos, so we'll re-download after a full lap. This keeps disk usage
-    # under ~60 MB for typical 144p mp4 sizes.
+    # under ~60 MB for typical 144p sizes.
     try:
-        cached = sorted(CACHE_DIR.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        cached = sorted(CACHE_DIR.glob(f"*"), key=lambda p: p.stat().st_mtime, reverse=True)
         for old in cached[5:]:
-            old.unlink(missing_ok=True)
+            if old.is_file():
+                old.unlink(missing_ok=True)
     except Exception:
         pass
 
-    if not cache_file.exists():
+    # Look for any existing cache file matching this video id (any extension).
+    existing = list(CACHE_DIR.glob(f"{video_id}.*"))
+    if existing:
+        cache_file = existing[0]
+    else:
+        # Let yt-dlp pick the extension via %(ext)s.
+        cache_file = CACHE_DIR / f"{video_id}.%(ext)s"
         ydl_opts = {
-            "format": "worst[ext=mp4]/worst",
+            # "worst" alone (no ext filter) — YouTube's SABR streaming can drop
+            # certain mp4 formats, so an [ext=mp4] filter sometimes returns no
+            # matches. yt-dlp+ffmpeg can decode whatever container it gets.
+            "format": "worst",
             "outtmpl": str(cache_file),
             "quiet": True,
             "no_warnings": True,
@@ -319,8 +331,11 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-        if not cache_file.exists():
+        # Find the file yt-dlp actually created.
+        found = list(CACHE_DIR.glob(f"{video_id}.*"))
+        if not found:
             raise RuntimeError("download did not produce a file")
+        cache_file = found[0]
 
     ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
     # Decode straight to raw RGB frames at 32 rows tall, VIDEO_W wide, TARGET_FPS.
