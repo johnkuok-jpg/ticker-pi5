@@ -252,6 +252,15 @@
       </details>
       {% endif %}
     </section>
+    <section class="card youtube-card" data-for="youtube">
+      <label>YouTube</label>
+      <p class="schedule" id="youtube-note">
+        Videos auto-advance when they end. Tap Next to skip to the following video in the playlist.
+      </p>
+      <div class="youtube-row">
+        <button id="youtube-next" type="button" class="youtube-next">Next video</button>
+      </div>
+    </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
     <a id="net-banner" class="netbanner hidden" href="/wifi">
@@ -598,6 +607,25 @@
       spotifyDisconnect.addEventListener('click', async () => {
         await fetch('/spotify/disconnect', {method: 'POST'});
         window.location.reload();
+      });
+    }
+    /* YouTube "Next video" button. Posts to /youtube/next which bumps a
+       counter the renderer polls; briefly disables the button so the user
+       gets tactile feedback that the tap registered even though the LED
+       update lags by ~one frame. */
+    const youtubeNext = document.getElementById('youtube-next');
+    if (youtubeNext) {
+      youtubeNext.addEventListener('click', async () => {
+        youtubeNext.disabled = true;
+        const original = youtubeNext.textContent;
+        youtubeNext.textContent = 'Skipping…';
+        try {
+          await fetch('/youtube/next', {method: 'POST'});
+        } catch (err) { /* no-op — user will just tap again */ }
+        setTimeout(() => {
+          youtubeNext.disabled = false;
+          youtubeNext.textContent = original;
+        }, 600);
       });
     }
     /* Paste-back completion. Posts the pasted address to the Pi, which digs the

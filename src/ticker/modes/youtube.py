@@ -134,6 +134,19 @@ class YouTubeMode(Mode):
         self._download_in_flight = False
         self._download_target: str | None = None
 
+        # Webapp-driven skip. The webapp bumps a counter on disk on each
+        # "next" tap; when we observe a higher value than we last saw we
+        # advance. Seed with the current value so we don't skip the first
+        # video every time the mode is entered.
+        self._skip_counter_file = config.youtube_skip_file
+        self._last_skip_seen: int = self._read_skip_counter()
+
+    def _read_skip_counter(self) -> int:
+        try:
+            return int(self._skip_counter_file.read_text(encoding="utf-8").strip() or "0")
+        except (OSError, ValueError):
+            return 0
+
     # ------------------------------------------------------------------ trending
 
     def _maybe_refresh_trending(self) -> None:
@@ -232,6 +245,15 @@ class YouTubeMode(Mode):
         # Non-blocking: kick off list refresh + video download if it's time and
         # nothing else is in flight. All actual work happens on threads.
         self._maybe_refresh_trending()
+
+        # Webapp "next" button: cheap file poll, once per frame. Any bump
+        # advances one video, no matter how many taps landed between frames
+        # (rapid double-tap == single skip; deliberate).
+        skip_now = self._read_skip_counter()
+        if skip_now > self._last_skip_seen:
+            self._last_skip_seen = skip_now
+            self._advance()
+
         self._maybe_start_download()
 
         canvas.clear()

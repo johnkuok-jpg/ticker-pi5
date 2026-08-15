@@ -260,6 +260,17 @@ class Config:
         return self.state_dir / "symbols"
 
     @property
+    def youtube_skip_file(self) -> Path:
+        """Monotonic counter the YouTube mode watches to advance to the next video.
+
+        The webapp increments this counter on the /youtube/next endpoint; the
+        renderer polls the file each tick and, when it sees a higher number
+        than the last one it observed, skips to the next video. A counter
+        (rather than a boolean flag) lets us handle rapid taps correctly.
+        """
+        return self.state_dir / "youtube_skip"
+
+    @property
     def nametag_name_file(self) -> Path:
         return self.state_dir / "nametag_name"
 
@@ -672,6 +683,26 @@ class Config:
         value = max(0.05, min(1.0, float(brightness)))
         stamp = self.now().timestamp()
         self.brightness_file.write_text(f"{value:.2f} {stamp:.0f}\n", encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # YouTube skip counter
+    #
+    # A monotonic counter the webapp bumps on "next video" taps. The renderer
+    # (in the youtube mode) polls this on each frame and, when it sees a
+    # higher value than it last observed, advances to the next video. Using
+    # a counter rather than a boolean flag lets us handle rapid taps.
+    def current_youtube_skip(self) -> int:
+        try:
+            return int(self.youtube_skip_file.read_text(encoding="utf-8").strip() or "0")
+        except (OSError, ValueError):
+            return 0
+
+    def bump_youtube_skip(self) -> int:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        current = self.current_youtube_skip()
+        nxt = current + 1
+        self.youtube_skip_file.write_text(f"{nxt}\n", encoding="utf-8")
+        return nxt
 
     # ------------------------------------------------------------------
     # Focus timer state

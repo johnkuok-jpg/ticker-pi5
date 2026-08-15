@@ -176,6 +176,19 @@ def create_app() -> Flask:
         config.set_brightness(requested / 100 if requested > 1 else requested)
         return jsonify(brightness=round(config.current_brightness() * 100))
 
+    @app.post("/youtube/next")
+    def youtube_next():  # type: ignore[no-untyped-def]
+        """Advance the YouTube mode to the next video.
+
+        Bumps a monotonic counter on disk; the renderer polls the counter and
+        skips whenever it changes. Switches into youtube mode too, so tapping
+        "next" from any screen jumps to youtube and skips in one action.
+        """
+        config = load_config()
+        counter = config.bump_youtube_skip()
+        config.set_mode("youtube")
+        return jsonify(skip=counter, current_mode=config.current_mode())
+
     @app.post("/flight")
     def set_flight():  # type: ignore[no-untyped-def]
         """Set the tracked flight number, and switch to the flights mode.

@@ -379,6 +379,7 @@ body[data-mode="focus"]   .flight[data-for~="focus"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
+body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
 
 /* Form rows: label above, input + button share a single dotted underline. */
 .flight-row {
@@ -630,6 +631,48 @@ body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
   text-transform: uppercase;
   cursor: pointer;
 }
+/* YouTube card mirrors the Spotify card structure. Red "YouTube" brand button
+   with a dotted disabled state so a rapid double-tap doesn't feel dead. */
+.youtube-card {
+  padding: 20px 0;
+  border-bottom: 1px dotted var(--line-strong);
+}
+.youtube-card > label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+.youtube-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.youtube-next {
+  display: inline-block;
+  padding: 10px 18px;
+  border: 0;
+  background: #FF0033;
+  color: #FFFFFF;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: opacity .12s;
+}
+.youtube-next:active { opacity: .8; }
+.youtube-next:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
 .spotify-paste { margin-top: 14px; }
 .spotify-paste summary {
   color: var(--accent);
