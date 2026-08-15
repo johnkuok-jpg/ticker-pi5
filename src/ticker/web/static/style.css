@@ -672,6 +672,77 @@ body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
   opacity: .5;
   cursor: default;
 }
+/* Category picker: two-column grid on phone, three on wider screens. Each
+   chip stacks a bold label over a quieter description so the eye can scan
+   the grid without reading every word. */
+.youtube-cats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+@media (min-width: 520px) {
+  .youtube-cats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.youtube-cat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px dotted var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: background .15s, border-color .15s, color .15s;
+  min-height: 52px;
+}
+.youtube-cat:hover { border-color: var(--ink); }
+.youtube-cat.active {
+  background: #FF0033;
+  border-color: #FF0033;
+  color: #FFFFFF;
+}
+.youtube-cat-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.youtube-cat-desc {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  opacity: .78;
+  line-height: 1.25;
+}
+.youtube-cat.active .youtube-cat-desc { opacity: .95; }
+
+/* Custom playlist URL, collapsed by default so it doesn't overwhelm the picker. */
+.youtube-custom { margin-top: 16px; }
+.youtube-custom summary {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 0;
+}
+#youtube-custom-url {
+  width: 100%;
+  margin: 10px 0;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+}
 
 .spotify-paste { margin-top: 14px; }
 .spotify-paste summary {

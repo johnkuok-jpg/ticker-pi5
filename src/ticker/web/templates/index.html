@@ -255,11 +255,34 @@
     <section class="card youtube-card" data-for="youtube">
       <label>YouTube</label>
       <p class="schedule" id="youtube-note">
-        Videos auto-advance when they end. Tap Next to skip to the following video in the playlist.
+        Pick a channel that looks good downscaled to 57×32. Videos auto-advance when they end — tap Next to skip.
       </p>
+      {# Category chips. "active" is decided by comparing the current stored
+         selection against each key; the default category is highlighted when
+         nothing has been stored yet, matching what the renderer will show. #}
+      {% set effective_selection = youtube_selection if youtube_selection else youtube_default_category %}
+      <div class="youtube-cats" role="listbox" aria-label="YouTube category">
+        {% for key, cat in youtube_categories.items() %}
+          <button class="youtube-cat {% if key == effective_selection %}active{% endif %}"
+                  type="button" data-cat="{{ key }}" role="option"
+                  aria-selected="{{ 'true' if key == effective_selection else 'false' }}">
+            <span class="youtube-cat-label">{{ cat.label }}</span>
+            <span class="youtube-cat-desc">{{ cat.desc }}</span>
+          </button>
+        {% endfor %}
+      </div>
       <div class="youtube-row">
         <button id="youtube-next" type="button" class="youtube-next">Next video</button>
       </div>
+      <details class="youtube-custom">
+        <summary>Use a custom playlist</summary>
+        <p class="schedule">Paste any public YouTube playlist URL.</p>
+        <input id="youtube-custom-url" type="text" inputmode="url" autocomplete="off"
+               placeholder="https://www.youtube.com/playlist?list=…"
+               value="{% if youtube_selection.startswith('http') %}{{ youtube_selection }}{% endif %}" />
+        <button id="youtube-custom-go" type="button" class="youtube-next">Use this playlist</button>
+        <p id="youtube-custom-note" class="schedule"></p>
+      </details>
     </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
@@ -626,6 +649,60 @@
           youtubeNext.disabled = false;
           youtubeNext.textContent = original;
         }, 600);
+      });
+    }
+    /* Category chips. Tapping a chip posts the key to /youtube/playlist and
+       optimistically flips the active class so the tap feels instant. The
+       server response drives no further UI — the LED lag is where the real
+       feedback happens. */
+    document.querySelectorAll('.youtube-cat').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        document.querySelectorAll('.youtube-cat').forEach((b) => {
+          b.classList.toggle('active', b === btn);
+          b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+        });
+        try {
+          await fetch('/youtube/playlist', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({value: btn.dataset.cat}),
+          });
+        } catch (err) { /* keep the visual selection either way */ }
+      });
+    });
+    /* Custom playlist URL. Same endpoint, different payload. On success we
+       clear the active chip (since a custom URL isn't any of them) and note
+       success under the input. */
+    const ytCustomGo = document.getElementById('youtube-custom-go');
+    if (ytCustomGo) {
+      const urlInput = document.getElementById('youtube-custom-url');
+      const note = document.getElementById('youtube-custom-note');
+      ytCustomGo.addEventListener('click', async () => {
+        const value = (urlInput.value || '').trim();
+        if (!value.startsWith('http')) {
+          note.textContent = 'Paste a full playlist URL starting with http.';
+          return;
+        }
+        note.textContent = 'Switching…';
+        try {
+          const res = await fetch('/youtube/playlist', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({value}),
+          });
+          if (res.ok) {
+            document.querySelectorAll('.youtube-cat').forEach((b) => {
+              b.classList.remove('active');
+              b.setAttribute('aria-selected', 'false');
+            });
+            note.textContent = 'Using your playlist. Give it a moment to load.';
+          } else {
+            const data = await res.json().catch(() => ({}));
+            note.textContent = data.error || 'Could not use that URL.';
+          }
+        } catch (err) {
+          note.textContent = 'Network error. Try again.';
+        }
       });
     }
     /* Paste-back completion. Posts the pasted address to the Pi, which digs the

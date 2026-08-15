@@ -260,6 +260,15 @@ class Config:
         return self.state_dir / "symbols"
 
     @property
+    def youtube_playlist_file(self) -> Path:
+        """Selected YouTube category or a custom playlist URL.
+
+        Stores either a category key (e.g. ``nature``) or a full playlist URL
+        (starts with ``http``). The mode resolves the key to a URL on load.
+        """
+        return self.state_dir / "youtube_playlist"
+
+    @property
     def youtube_skip_file(self) -> Path:
         """Monotonic counter the YouTube mode watches to advance to the next video.
 
@@ -703,6 +712,19 @@ class Config:
         nxt = current + 1
         self.youtube_skip_file.write_text(f"{nxt}\n", encoding="utf-8")
         return nxt
+
+    # ------------------------------------------------------------------
+    # YouTube playlist selection (category key OR full URL)
+    def current_youtube_playlist(self) -> str:
+        """Return whatever the user picked (category key or URL), or ''."""
+        try:
+            return self.youtube_playlist_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    def set_youtube_playlist(self, value: str) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.youtube_playlist_file.write_text(value.strip() + "\n", encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Focus timer state

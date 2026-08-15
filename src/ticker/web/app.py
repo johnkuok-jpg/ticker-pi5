@@ -11,6 +11,10 @@ from flask import Flask, jsonify, redirect, render_template, request
 
 from ticker import bart, baywheels, net, spotify as spotify_client
 from ticker.config import MAX_SYMBOLS, VALID_MODES, load_config
+from ticker.modes.youtube import (
+    CATEGORIES as YT_CATEGORIES,
+    DEFAULT_CATEGORY as YT_DEFAULT_CATEGORY,
+)
 
 
 def _renderer_status(pid_file: Path) -> tuple[int | None, bool]:
@@ -156,6 +160,9 @@ def create_app() -> Flask:
             spotify_configured=bool(config.spotify_client_id and config.spotify_client_secret and config.spotify_redirect_uri),
             spotify_connected=_spotify_auth(config).connected,
             focus=config.focus_state(),
+            youtube_categories=YT_CATEGORIES,
+            youtube_default_category=YT_DEFAULT_CATEGORY,
+            youtube_selection=config.current_youtube_playlist(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -175,6 +182,30 @@ def create_app() -> Flask:
         config = load_config()
         config.set_brightness(requested / 100 if requested > 1 else requested)
         return jsonify(brightness=round(config.current_brightness() * 100))
+
+    @app.post("/youtube/playlist")
+    def youtube_playlist():  # type: ignore[no-untyped-def]
+        """Change the YouTube video source.
+
+        Accepts either a known category key (from ``YT_CATEGORIES``) or a full
+        playlist URL (must start with ``http``). Anything else is rejected so
+        we never persist garbage that would fall back to the default silently.
+        """
+        payload = request.get_json(silent=True) or {}
+        raw = str(payload.get("value", request.form.get("value", ""))).strip()
+        if raw.startswith("http"):
+            value = raw
+        elif raw in YT_CATEGORIES:
+            value = raw
+        else:
+            return jsonify(error="unknown category or invalid URL"), 400
+        config = load_config()
+        config.set_youtube_playlist(value)
+        # Bump the skip counter so the mode drops any in-progress download
+        # for the old category and starts fresh.
+        config.bump_youtube_skip()
+        config.set_mode("youtube")
+        return jsonify(selection=value, current_mode=config.current_mode())
 
     @app.post("/youtube/next")
     def youtube_next():  # type: ignore[no-untyped-def]

@@ -37,22 +37,44 @@ import numpy as np
 from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
-# YouTube's official global Top 100 music chart used to work, but nearly all
-# entries there are Vevo/label music videos that return HTTP 403 (DRM). Switch
-# to a channel-uploads playlist (Veritasium is the default — no DRM, universally
-# interesting, uploads about weekly). Override via YOUTUBE_PLAYLIST env var
-# with a full playlist URL if you want a different channel or a custom list.
+# Curated playlists that survive downscaling to 57×32. These are all
+# channel-uploads playlists (a channel ID with the leading "UC" replaced by
+# "UU") because those don't require auth and are stable over time. Content
+# picked to look good at very low resolution — slow scenic footage, big
+# recognisable subjects, wide colour, minimal fine detail or text.
 #
-# YouTube channel-uploads playlist IDs are always the channel ID with the
-# leading "UC" replaced by "UU". Some popular choices:
-#   Veritasium:  UUHnyfMqiRRG1u-2MsSQLbXA
-#   Kurzgesagt:  UUsXVk37bltHxD1rDPwtNM8Q
-#   MrBeast:     UUX6OQ3DkcsbYNE6H8uQQuVA
-#   TED-Ed:      UUsooa4yRKGN_zEE8iknghZA
-#   MKBHD:       UUBJycsmduvYEL83R_U4JriQ
-DEFAULT_PLAYLIST_URL = (
-    "https://www.youtube.com/playlist?list=UUHnyfMqiRRG1u-2MsSQLbXA"
-)
+# The category key is what the webapp posts back and what lives on disk.
+CATEGORIES: dict[str, dict[str, str]] = {
+    "nature":     {"label": "Nature",     "desc": "Nature Relaxation Films", "list": "UU4lp9Emg1ci8eo2eDkB-Tag"},
+    "bbc_earth":  {"label": "BBC Earth",  "desc": "Wildlife, big landscapes",  "list": "UUwmZiChSryoWQCZMIQezgTg"},
+    "aquarium":   {"label": "Aquarium",   "desc": "Monterey Bay Aquarium",     "list": "UUnM5iMGiKsZg-iOlIO2ZkdQ"},
+    "animals":    {"label": "Animals",    "desc": "Animal Planet",             "list": "UUkEBDbzLyH-LbB2FgMoSMaQ"},
+    "space":      {"label": "Space",      "desc": "NASA",                      "list": "UULA_DiR1FfKNvjuUpBHmylQ"},
+    "jpl":        {"label": "JPL",        "desc": "NASA Jet Propulsion Lab",   "list": "UUryGec9PdUCLjpJW2mgCuLw"},
+    "earth":      {"label": "Earth",      "desc": "Aerials from above",        "list": "UUU1wj4omlek5tQ3GDJNZuWQ"},
+    "gopro":      {"label": "GoPro",      "desc": "Action + landscapes",       "list": "UUqhnX4jA0A5paNd1v-zEysw"},
+    "ambient":    {"label": "Ambient",    "desc": "4K screensavers",           "list": "UUg72Hd6UZAgPBAUZplnmPMQ"},
+    "lofi":       {"label": "Lofi",       "desc": "Lofi Girl music videos",    "list": "UUSJ4gkVC6NrvII8umztf0Ow"},
+    "veritasium": {"label": "Science",    "desc": "Veritasium",                "list": "UUHnyfMqiRRG1u-2MsSQLbXA"},
+}
+DEFAULT_CATEGORY = "nature"
+
+
+def resolve_playlist(value: str) -> str:
+    """Turn a stored value into a full playlist URL.
+
+    ``value`` may be a category key (e.g. ``"nature"``), a full URL (starts
+    with ``http``), or empty. Unknown keys and blanks fall back to the
+    default category so the mode is never stuck without a source.
+    """
+    v = (value or "").strip()
+    if v.startswith("http"):
+        return v
+    cat = CATEGORIES.get(v) or CATEGORIES[DEFAULT_CATEGORY]
+    return f"https://www.youtube.com/playlist?list={cat['list']}"
+
+
+DEFAULT_PLAYLIST_URL = resolve_playlist(DEFAULT_CATEGORY)
 
 # Frame geometry for the tiny video window.
 VIDEO_W = 57       # 16:9 aspect fitted to 32 tall = 56.9, rounded up
@@ -109,12 +131,18 @@ class YouTubeMode(Mode):
     def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
         super().__init__(config)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        # Playlist URL: env var wins, then config attr, else default.
+        # Playlist source resolution, in priority order:
+        #   1. YOUTUBE_PLAYLIST env var (for the power-user override)
+        #   2. The webapp-selected value on disk (category key OR URL)
+        #   3. The compiled-in default (nature)
         import os
-        self._playlist_url = (
-            os.getenv("YOUTUBE_PLAYLIST")
-            or getattr(config, "youtube_playlist", None)
-            or DEFAULT_PLAYLIST_URL
+        self._config = config
+        self._playlist_state_file = config.youtube_playlist_file
+        env = os.getenv("YOUTUBE_PLAYLIST", "").strip()
+        self._env_override = env if env else None
+        self._current_playlist_selection: str = config.current_youtube_playlist()
+        self._playlist_url = self._env_override or resolve_playlist(
+            self._current_playlist_selection
         )
 
         # Trending list state.
@@ -140,6 +168,32 @@ class YouTubeMode(Mode):
         # video every time the mode is entered.
         self._skip_counter_file = config.youtube_skip_file
         self._last_skip_seen: int = self._read_skip_counter()
+
+    def _maybe_reload_playlist_selection(self) -> None:
+        """Pick up webapp changes to the selected category without a restart.
+
+        The env-var override always wins; it's expected to be permanent for a
+        given deployment. If it isn't set, we live-poll the state file so
+        picking a new category on the phone takes effect on the next tick.
+        """
+        if self._env_override:
+            return
+        try:
+            selection = self._playlist_state_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            selection = ""
+        if selection == self._current_playlist_selection:
+            return
+        self._current_playlist_selection = selection
+        self._playlist_url = resolve_playlist(selection)
+        # Force a fresh trending fetch on the new source, and drop any queued
+        # download for the old playlist so the switch feels immediate.
+        self._next_trending_fetch_at = 0.0
+        self.videos = []
+        self._frames = None
+        self._current_video = None
+        self._download_target = None
+        _safe_log(f"[youtube] switched to playlist: {self._playlist_url}")
 
     def _read_skip_counter(self) -> int:
         try:
@@ -242,6 +296,11 @@ class YouTubeMode(Mode):
     # ------------------------------------------------------------------ render
 
     def render(self, canvas: Canvas, tick: int) -> None:
+        # Cheap file poll for webapp-selected category changes before anything
+        # else — must happen before the trending fetch so the fetch targets
+        # the newly selected playlist.
+        self._maybe_reload_playlist_selection()
+
         # Non-blocking: kick off list refresh + video download if it's time and
         # nothing else is in flight. All actual work happens on threads.
         self._maybe_refresh_trending()
