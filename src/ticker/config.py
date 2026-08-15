@@ -280,6 +280,14 @@ class Config:
         return self.state_dir / "youtube_skip"
 
     @property
+    def stocks_lock_symbol_file(self) -> Path:
+        """When present + non-empty, the stocks card pins on this symbol
+        instead of rotating through the whole watchlist. Written by the web
+        app so a user can dwell on one ticker; deleting the file (or writing
+        an empty string) goes back to the rotation."""
+        return self.state_dir / "stocks_lock_symbol"
+
+    @property
     def nametag_name_file(self) -> Path:
         return self.state_dir / "nametag_name"
 
@@ -648,7 +656,39 @@ class Config:
         if not remaining:
             raise ValueError("Keep at least one symbol on the watchlist")
         self.set_symbols(remaining)
+        # If the removed symbol was the locked one, drop the lock too so the
+        # card doesn't get stuck showing the last known quote for a symbol
+        # that no longer refreshes.
+        if target and self.current_stocks_lock_symbol() == target:
+            self.set_stocks_lock_symbol("")
         return self.current_symbols()
+
+    def current_stocks_lock_symbol(self) -> str:
+        """Symbol the stocks card is pinned to, or empty for the normal rotation."""
+        try:
+            raw = self.stocks_lock_symbol_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        return raw.upper()
+
+    def set_stocks_lock_symbol(self, symbol: str) -> str:
+        """Persist a stocks lock. Empty string clears the lock.
+
+        Validated against the current watchlist to avoid pinning on a symbol
+        that isn't being refreshed -- the card would just render "WAITING FOR
+        PRICES" indefinitely and it wouldn't be obvious why.
+        """
+        value = "".join(str(symbol).split()).upper()
+        if value:
+            watched = self.current_symbols()
+            if value not in watched:
+                raise ValueError(f"{value} is not on the watchlist")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        # Write empty string as an empty file rather than deleting; both mean
+        # the same thing to current_stocks_lock_symbol() and the write is
+        # atomic-ish either way.
+        self.stocks_lock_symbol_file.write_text(value + "\n", encoding="utf-8")
+        return value
 
     def set_bart_station(self, station: str) -> None:
         """Persist the chosen BART station.

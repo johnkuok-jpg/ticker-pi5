@@ -86,7 +86,8 @@
       {# Rendered server-side so the list is correct before any JS runs, then
          replaced wholesale by renderSymbols() after every add or remove. #}
       <div id="symbol-list" class="symbol-list" aria-label="Watchlist"></div>
-      <p id="symbol-note" class="schedule">Up to {{ max_symbols }} symbols, 6 seconds each. Crypto works too: BTC-USD.</p>
+      <p id="symbol-note" class="schedule">Tap a ticker to lock the panel on it. Tap again to resume the 6-second rotation. Crypto works too: BTC-USD.</p>
+      <p class="schedule" style="opacity:.65">Prices refresh every 60 s via Yahoo Finance. US equities are typically delayed 15-20 min; crypto is roughly live.</p>
     </section>
     <section class="flight" data-for="flights">
       <label for="flight-input">Flight to track</label>
@@ -305,6 +306,7 @@
     const symbolNote = document.getElementById('symbol-note');
     let symbols = {{ symbols | list | tojson }};
     const maxSymbols = {{ max_symbols | tojson }};
+    let stocksLock = {{ stocks_lock | tojson }};
     const flightForm = document.getElementById('flight-form');
     const flightInput = document.getElementById('flight-input');
     const flightNote = document.getElementById('flight-note');
@@ -532,20 +534,56 @@
       symbolList.innerHTML = '';
       symbols.forEach(symbol => {
         const chip = document.createElement('span');
-        chip.className = 'symbol-chip';
+        chip.className = 'symbol-chip' + (symbol === stocksLock ? ' is-locked' : '');
+        /* The label is now itself a button so a tap on the ticker toggles a
+           hard lock on that symbol (no more 6-second rotation). The X button
+           still removes. Keeping the ticker's b/typography inside a bare
+           button preserves the mono look while making the tap area obvious. */
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'symbol-toggle';
+        toggle.setAttribute('aria-pressed', symbol === stocksLock ? 'true' : 'false');
+        toggle.setAttribute('aria-label',
+          symbol === stocksLock
+            ? `Unlock ${symbol}, resume rotation`
+            : `Lock the panel on ${symbol}`);
+        toggle.addEventListener('click', () => toggleLock(symbol));
         const label = document.createElement('b');
         label.textContent = symbol;
+        toggle.appendChild(label);
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'symbol-remove';
         remove.textContent = '\u00d7';
         remove.setAttribute('aria-label', `Remove ${symbol}`);
         remove.addEventListener('click', () => removeSymbol(symbol));
-        chip.appendChild(label);
+        chip.appendChild(toggle);
         chip.appendChild(remove);
         symbolList.appendChild(chip);
       });
       symbolInput.disabled = symbols.length >= maxSymbols;
+    }
+    async function toggleLock(symbol) {
+      /* Empty string sent when the tapped chip is already the locked one --
+         same endpoint just interprets '' as "clear". Server-side lock also
+         switches the panel to stocks mode when a symbol is being locked. */
+      const target = (symbol === stocksLock) ? '' : symbol;
+      const response = await fetch('/stocks/lock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol: target})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        symbolNote.textContent = data.error || 'Could not update the lock.';
+        return;
+      }
+      stocksLock = data.stocks_lock || '';
+      renderSymbols();
+      symbolNote.textContent = stocksLock
+        ? `Locked on ${stocksLock}. Tap it again to resume the rotation.`
+        : 'Rotating through the watchlist.';
+      refreshStatus();
     }
     async function postSymbol(path, symbol) {
       const response = await fetch(path, {
@@ -556,6 +594,13 @@
       const data = await response.json();
       if (Array.isArray(data.symbols)) {
         symbols = data.symbols;
+      }
+      /* Remove-symbol path may clear the lock server-side (dropping the
+         currently-locked ticker), so sync the local view before repainting. */
+      if (typeof data.stocks_lock === 'string') {
+        stocksLock = data.stocks_lock;
+      }
+      if (Array.isArray(data.symbols) || typeof data.stocks_lock === 'string') {
         renderSymbols();
       }
       if (!response.ok) {

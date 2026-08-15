@@ -207,9 +207,24 @@ class StocksMode(Mode):
     # -- card ----------------------------------------------------------------
 
     def _render_card(self, canvas: Canvas, tick: int) -> None:
-        """One symbol, large, with a wide intraday chart."""
-        frames = max(1, self.CARD_SECONDS * self.config.fps)
-        quote = self.quotes[(tick // frames) % len(self.quotes)]
+        """One symbol, large, with a wide intraday chart.
+
+        If the user has locked the card on a specific symbol via the web app,
+        that quote is shown continuously; otherwise the card rotates through
+        the watchlist ``CARD_SECONDS`` at a time. If the locked symbol has
+        somehow left ``self.quotes`` (removed, not-yet-refreshed after add)
+        the rotation resumes rather than showing a blank panel.
+        """
+        locked_symbol = self.config.current_stocks_lock_symbol()
+        quote = None
+        if locked_symbol:
+            for candidate in self.quotes:
+                if candidate.symbol == locked_symbol:
+                    quote = candidate
+                    break
+        if quote is None:
+            frames = max(1, self.CARD_SECONDS * self.config.fps)
+            quote = self.quotes[(tick // frames) % len(self.quotes)]
         _, status_color = market_status(self.config.now())
 
         # Two-pixel status stripe down the left edge: session state without

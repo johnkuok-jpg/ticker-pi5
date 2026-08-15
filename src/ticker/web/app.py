@@ -154,6 +154,7 @@ def create_app() -> Flask:
             bike_station=config.current_bike_station(),
             symbols=config.current_symbols(),
             max_symbols=MAX_SYMBOLS,
+            stocks_lock=config.current_stocks_lock_symbol(),
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),
@@ -378,7 +379,26 @@ def create_app() -> Flask:
             symbols = config.remove_symbol(str(requested))
         except ValueError as error:
             return jsonify(error=str(error), symbols=list(config.current_symbols())), 400
-        return jsonify(symbols=list(symbols))
+        return jsonify(symbols=list(symbols), stocks_lock=config.current_stocks_lock_symbol())
+
+    @app.post("/stocks/lock")
+    def set_stocks_lock():  # type: ignore[no-untyped-def]
+        """Pin the stocks card on one symbol, or clear the pin.
+
+        Body: ``{"symbol": "AAPL"}`` to lock, ``{"symbol": ""}`` to unlock.
+        Also switches to the stocks mode when a symbol is being locked, since
+        the user's intent is to go look at it now.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("symbol", request.form.get("symbol", ""))
+        config = load_config()
+        try:
+            value = config.set_stocks_lock_symbol(str(requested))
+        except ValueError as error:
+            return jsonify(error=str(error), stocks_lock=config.current_stocks_lock_symbol()), 400
+        if value:
+            config.set_mode("stocks")
+        return jsonify(stocks_lock=value, current_mode=config.current_mode())
 
     @app.post("/nametag")
     def set_nametag():  # type: ignore[no-untyped-def]

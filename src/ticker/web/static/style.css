@@ -474,6 +474,31 @@ body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
 .symbol-remove:focus-visible { color: var(--danger); background: transparent; }
 #symbol-input:disabled { opacity: 0.5; }
 
+/* Tapping a chip's label toggles a hard lock on that ticker so the panel
+   stops rotating. The locked chip flips to a solid accent border + soft fill
+   and shows a small pin dot on the left, so at a glance you can tell which
+   symbol is being held. */
+.symbol-chip .symbol-toggle {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  letter-spacing: .1em;
+}
+.symbol-chip.is-locked {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.symbol-chip.is-locked b::before {
+  content: '\2022';  /* bullet as a compact lock indicator */
+  color: var(--accent);
+  margin-right: 6px;
+  text-shadow: 0 0 6px var(--accent);
+}
+
 /* ----- Bikes results ---------------------------------------------------- */
 
 .bike-results {
