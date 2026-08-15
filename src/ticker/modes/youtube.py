@@ -54,6 +54,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "jpl":        {"label": "JPL",        "desc": "NASA Jet Propulsion Lab",   "list": "UUryGec9PdUCLjpJW2mgCuLw"},
     "earth":      {"label": "Earth",      "desc": "Aerials from above",        "list": "UUU1wj4omlek5tQ3GDJNZuWQ"},
     "gopro":      {"label": "GoPro",      "desc": "Action + landscapes",       "list": "UUqhnX4jA0A5paNd1v-zEysw"},
+    "aviation":   {"label": "Aviation",   "desc": "Cargospotter: 747s, A380s",  "list": "UUA6aJAT9rH8vRwWGiGr2iqQ"},
     "ambient":    {"label": "Ambient",    "desc": "4K screensavers",           "list": "UUg72Hd6UZAgPBAUZplnmPMQ"},
     "lofi":       {"label": "Lofi",       "desc": "Lofi Girl music videos",    "list": "UUSJ4gkVC6NrvII8umztf0Ow"},
     "veritasium": {"label": "Science",    "desc": "Veritasium",                "list": "UUHnyfMqiRRG1u-2MsSQLbXA"},
@@ -627,9 +628,14 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
+            # Length cap: 60 minutes. At 12 fps decoded into a (N, 32, 57, 3)
+            # uint8 array, 60 min lands at ~240 MB in RAM which is fine on the
+            # Pi 5's 8 GB; above that the download time and cache pressure get
+            # unfun. Cargospotter's aviation content is largely 60-minute
+            # compilations so this cap is picked to fit it.
             "match_filter": lambda info, incomplete: (
-                None if (info.get("duration") or 0) <= 600
-                else "video is longer than 10 min, skipping"
+                None if (info.get("duration") or 0) <= 3600
+                else "video is longer than 60 min, skipping"
             ),
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
