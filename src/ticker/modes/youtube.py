@@ -551,11 +551,25 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
     if existing:
         cache_file = existing[0]
     else:
-        # Let yt-dlp pick the extension via %(ext)s. "worst" (no ext filter)
-        # because YouTube's SABR streaming can drop mp4 formats.
+        # Format selection: prefer a small progressive MP4 (single file, no
+        # DASH merging), then fall back progressively. YouTube's SABR streaming
+        # sometimes drops the classic `worst` format entirely, so we ladder:
+        #   1. worst mp4 progressive (single file, decodes cleanly)
+        #   2. worst progressive of any container
+        #   3. absolute worst, allowing merged DASH audio+video
+        # The final `/worst` catch-all keeps us alive when a video has no
+        # progressive stream at all.
         outtmpl = str(CACHE_DIR / f"{video_id}.%(ext)s")
         ydl_opts = {
-            "format": "worst",
+            "format": (
+                "worst[ext=mp4][protocol!=m3u8]/"
+                "worst[protocol!=m3u8]/"
+                "worstvideo+worstaudio/worst"
+            ),
+            # `merge_output_format` kicks in only when the DASH-merge branch
+            # of the ladder is taken; the two progressive branches produce a
+            # single file and skip the merge entirely.
+            "merge_output_format": "mp4",
             "outtmpl": outtmpl,
             "quiet": True,
             "no_warnings": True,
