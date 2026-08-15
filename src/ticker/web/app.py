@@ -173,7 +173,6 @@ def create_app() -> Flask:
             flight_airport=config.current_flight_airport(),
             stations=bart.STATIONS,
             station=config.current_bart_station(),
-            bike_station=config.current_bike_station(),
             symbols=config.current_symbols(),
             max_symbols=MAX_SYMBOLS,
             stocks_lock=config.current_stocks_lock_symbol(),
@@ -598,28 +597,26 @@ def create_app() -> Flask:
             ), 400
         return jsonify(view=saved)
 
-    # -- Wi-Fi ---------------------------------------------------------------
+    # -- Settings ------------------------------------------------------------
     #
-    # Kept on its own page rather than on the panel of mode buttons. It is the one
-    # screen a user reaches while the ticker is unreachable in the normal sense --
-    # joined to its own setup hotspot with no internet behind it -- and mixing a
-    # scan list and a password field into the control panel would put a
-    # destructive control (change the network, lose this connection) next to
-    # everyday taps.
+    # A separate page for the destructive/rare controls (Wi-Fi join, module
+    # show/hide) so a mis-tap on the always-live panel of mode buttons can
+    # never change the network or hide a mode by accident. Wi-Fi in
+    # particular is the one screen a user reaches while the ticker is
+    # unreachable in the normal sense -- joined to its own setup hotspot
+    # with no internet behind it -- so it must stay reachable in that state.
+    # Live Wi-Fi state is fetched client-side from /api/wifi.
 
     @app.get("/settings")
     def settings_page():  # type: ignore[no-untyped-def]
         """Combined settings page: module visibility + Wi-Fi.
 
-        Wi-Fi lives here now, alongside the module show/hide toggles. The
-        legacy ``/wifi`` URL is preserved as a redirect below so QR codes on
-        the panel (and any bookmarks) keep working.
+        The legacy ``/wifi`` URL is preserved as a redirect below so QR
+        codes on the panel (and any bookmarks) keep working.
         """
         config = load_config()
-        status = net.status()
         return render_template(
             "settings.html",
-            status=status,
             available=net.available(),
             setup_ssid=net.HOTSPOT_SSID,
             all_modes=VALID_MODES,
@@ -731,7 +728,6 @@ def create_app() -> Flask:
             flight=config.current_flight(),
             flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
-            bike_station=config.current_bike_station(),
             symbols=list(config.current_symbols()),
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),

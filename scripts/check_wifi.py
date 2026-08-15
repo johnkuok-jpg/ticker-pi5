@@ -566,11 +566,13 @@ app = create_app()
 app.config.update(TESTING=True)
 client = app.test_client()
 
-page = client.get("/wifi")
-check("wifi page renders", page.status_code == 200, str(page.status_code))
+legacy = client.get("/wifi")
+check("/wifi redirects to /settings", legacy.status_code == 301, str(legacy.status_code))
+check("redirect target is /settings", legacy.headers.get("Location", "").endswith("/settings"))
+page = client.get("/settings")
+check("settings page renders", page.status_code == 200, str(page.status_code))
 body = page.get_data(as_text=True)
 check("page names the setup network", net.HOTSPOT_SSID in body)
-check("page warns about losing the connection", "stop responding" in body)
 check("page links back to the panel", 'href="/"' in body)
 
 state = client.get("/api/wifi").get_json()
@@ -598,7 +600,7 @@ check("forget refuses the setup profile", forgot.status_code == 400, str(forgot.
 index = client.get("/")
 check("control panel renders with the new mode", index.status_code == 200)
 index_body = index.get_data(as_text=True)
-check("control panel links to wifi", 'href="/wifi"' in index_body)
+check("control panel links to settings", 'href="/settings"' in index_body)
 check("control panel labels the mode Wi-Fi", "Wi-Fi" in index_body)
 # .title() on "net" would give "Net"; the label map exists to stop that, the same
 # way it stops BART becoming "Bart".

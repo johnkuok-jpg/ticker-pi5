@@ -318,23 +318,6 @@ class SpotifyClient:
             threading.Thread(target=self._poll_once, daemon=True).start()
         return self._last
 
-    def force_refresh(self) -> None:
-        """Reset the throttle so the next :meth:`snapshot` call polls immediately.
-
-        The webapp uses this after a fresh connect so the panel updates
-        without waiting a full :data:`POLL_SECONDS` for the first refresh.
-        """
-        with self._lock:
-            self._last_polled_at = 0.0
-
-    def clear(self) -> None:
-        """Forget the last snapshot. Called when the user disconnects."""
-        with self._lock:
-            self._last = None
-            self._art_url = None
-            self._art_image = None
-            self._last_polled_at = 0.0
-
     # -- internals ------------------------------------------------------
 
     def _poll_once(self) -> None:

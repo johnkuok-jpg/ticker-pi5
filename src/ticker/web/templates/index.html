@@ -317,7 +317,7 @@
     </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
-    <a id="net-banner" class="netbanner hidden" href="/wifi">
+    <a id="net-banner" class="netbanner hidden" href="/settings">
       No Wi-Fi — the ticker is broadcasting a setup hotspot. Tap to choose a network →
     </a>
     <p id="renderer" class="renderer">Checking renderer…</p>
@@ -356,7 +356,6 @@
     const nametagNote = document.getElementById('nametag-note');
     const nametagSwatches = document.querySelectorAll('.nametag-swatch');
     const nametagFont = document.getElementById('nametag-font');
-    let bikeStationId = {{ bike_station | tojson }};
     const netBanner = document.getElementById('net-banner');
     /* As with the flight field: a poll must not reset a station the user has
        chosen from the list but not yet submitted. */
@@ -498,7 +497,6 @@
         bikeNote.textContent = data.error || 'Could not set that station.';
         return;
       }
-      bikeStationId = data.bike_station || '';
       bikeNote.textContent = name ? `Showing ${name}.` : 'Station cleared.';
       bikeResults.innerHTML = '';
       bikeSearch.value = '';
@@ -877,7 +875,6 @@
       /* Server state is the source of truth; this cache is only used to time
          local seconds between polls so the countdown does not stutter. */
       let focusCache = {{ focus | tojson }};
-      let focusCacheAt = Date.now() / 1000;
       let typingLabel = false;
       focusLabelInput.addEventListener('focus', () => { typingLabel = true; });
       focusLabelInput.addEventListener('blur', () => { typingLabel = false; });
@@ -923,7 +920,6 @@
       }
       function focusApply(state) {
         focusCache = state;
-        focusCacheAt = Date.now() / 1000;
         if (!typingLabel && typeof state.label === 'string' && state.label !== focusLabelInput.value) {
           focusLabelInput.value = state.label;
         }

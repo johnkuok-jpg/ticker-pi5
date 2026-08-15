@@ -265,8 +265,8 @@
     }
     moduleChecks.forEach((cb) => {
       cb.addEventListener('change', async () => {
-        const priorHidden = collectHidden();
-        // Rebuild AFTER this change (change event already flipped the box):
+        // The change event fires AFTER the box has already flipped, so this
+        // reflects the intended next state.
         const nextHidden = collectHidden();
         modulesNote.textContent = 'Saving…';
         try {

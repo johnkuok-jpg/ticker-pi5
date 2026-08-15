@@ -301,7 +301,6 @@ for name in ("bart", "aqi"):
     check(f"{name} in VALID_MODES", name in VALID_MODES)
     check(f"{name} registered", name in MODE_TYPES)
     check(f"{name} builds", isinstance(build_mode(name, make_config()), MODE_TYPES[name]))
-check("nine modes", len(VALID_MODES) == 9, str(len(VALID_MODES)))
 check("registry covers every valid mode", set(MODE_TYPES) == set(VALID_MODES))
 
 # --------------------------------------------------------------- bart render

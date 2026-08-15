@@ -115,9 +115,9 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Old .eyebrow / .status / h1 are still in the DOM only for screen readers;
-   push them out of the layout entirely. The readout block below replaces
-   both visually. */
+/* The .eyebrow and h1 are in the DOM only for screen readers on the main
+   panel; push them out of the layout entirely. The readout block below
+   replaces both visually. */
 .eyebrow, .panel > h1 { display: none; }
 /* Settings page needs its own visible eyebrow + heading, so opt back in for
    pages that explicitly mark themselves. The main control panel keeps the
@@ -140,8 +140,6 @@ body[data-page="settings"] .eyebrow {
   text-transform: uppercase;
   margin: 0 0 4px;
 }
-.status { position: absolute; left: -9999px; }
-
 /* ----- Big readout block ------------------------------------------------- */
 
 .readout {
@@ -238,12 +236,6 @@ body[data-page="settings"] .eyebrow {
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent);
 }
-/* The old per-mode background utility classes are neutralized: the mode
-   picker no longer uses tile color to identify itself. */
-.mode-stocks, .mode-news, .mode-weather, .mode-flights, .mode-market,
-.mode-crypto, .mode-bart, .mode-aqi, .mode-bikes, .mode-nametag,
-.mode-pokemon, .mode-net, .mode-youtube { background: transparent; }
-
 /* ----- Brightness -------------------------------------------------------- */
 
 .brightness {
@@ -449,7 +441,6 @@ body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
   white-space: nowrap;
 }
 .flight-go:active { opacity: .7; }
-.nametag-go { color: var(--accent); background: transparent; }
 
 /* ----- Stocks watchlist chips ------------------------------------------- */
 
