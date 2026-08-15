@@ -354,8 +354,11 @@ class YouTubeMode(Mode):
                     self._next_trending_fetch_at = time.monotonic() + TRENDING_RETRY_AFTER_FAILURE
                     _safe_log("[youtube] playlist returned zero videos")
             except Exception as e:
+                import traceback
                 self._next_trending_fetch_at = time.monotonic() + TRENDING_RETRY_AFTER_FAILURE
                 _safe_log(f"[youtube] trending fetch failed: {type(e).__name__}: {e}")
+                for line in traceback.format_exc().splitlines():
+                    _safe_log(f"[youtube]   {line}")
             finally:
                 self._trending_in_flight = False
 
@@ -390,7 +393,13 @@ class YouTubeMode(Mode):
                 self._playback_started = time.monotonic()
                 _safe_log(f"[youtube] ready: {video.id} - {len(frames)} frames")
             except Exception as e:
+                # Log the full traceback so latin-1 header crashes (which come
+                # from urllib deep inside yt-dlp) can actually be traced back
+                # to their origin instead of just showing the leaf message.
+                import traceback
                 _safe_log(f"[youtube] download failed for {video.id}: {type(e).__name__}: {e}")
+                for line in traceback.format_exc().splitlines():
+                    _safe_log(f"[youtube]   {line}")
                 # Blocklist the video for a few hours so we don't retry the
                 # exact same 403 / premiere / missing-format each cycle. It
                 # will fall out of the blocklist automatically at the next
