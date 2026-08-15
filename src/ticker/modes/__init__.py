@@ -17,6 +17,7 @@ from ticker.modes.pokemon import PokemonMode
 from ticker.modes.spotify import SpotifyMode
 from ticker.modes.stocks import StocksMode
 from ticker.modes.weather import WeatherMode
+from ticker.modes.youtube import YouTubeMode
 
 MODE_TYPES: dict[str, type[Mode]] = {
     "stocks": StocksMode,
@@ -33,6 +34,7 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "pokemon": PokemonMode,
     "focus": FocusMode,
     "net": NetworkMode,
+    "youtube": YouTubeMode,
 }
 
 
@@ -59,4 +61,5 @@ __all__ = [
     "PokemonMode",
     "FocusMode",
     "SpotifyMode",
+    "YouTubeMode",
 ]

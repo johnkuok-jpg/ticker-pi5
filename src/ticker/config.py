@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "youtube")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -179,6 +179,8 @@ class Config:
     stocks_layout: str = "card"  # card | scroll
     news_feed_url: str = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
     news_source_name: str = "CNBC MARKETS"
+    # YouTube trending region (2-letter ISO country code, e.g. US, GB, JP)
+    youtube_region: str = "US"
     flight_number: str = ""
     flight_airport: str = ""
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
@@ -858,6 +860,7 @@ def load_config(env_file: Path | None = None) -> Config:
         stocks_layout=os.getenv("STOCKS_LAYOUT", "card").strip().lower(),
         news_feed_url=os.getenv("NEWS_FEED_URL", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
         news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
+        youtube_region=os.getenv("YOUTUBE_REGION", "US").upper(),
         flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
         flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,

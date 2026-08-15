@@ -224,7 +224,7 @@ body {
    picker no longer uses tile color to identify itself. */
 .mode-stocks, .mode-news, .mode-weather, .mode-flights, .mode-market,
 .mode-crypto, .mode-bart, .mode-aqi, .mode-bikes, .mode-nametag,
-.mode-pokemon, .mode-net { background: transparent; }
+.mode-pokemon, .mode-net, .mode-youtube { background: transparent; }
 
 /* ----- Brightness -------------------------------------------------------- */
 
@@ -801,6 +801,7 @@ body[data-mode="nametag"] { --accent: #e6e6e6; --accent-soft: rgba(230, 230, 230
 body[data-mode="pokemon"] { --accent: #ff3b3b; --accent-soft: rgba(255, 59, 59, 0.16); }
 body[data-mode="spotify"] { --accent: #1ED760; --accent-soft: rgba(30, 215, 96, 0.16); }
 body[data-mode="focus"]   { --accent: #4eb0ff; --accent-soft: rgba(78, 176, 255, 0.16); }
+body[data-mode="youtube"] { --accent: #ff0033; --accent-soft: rgba(255, 0, 51, 0.16); }
 
 /* -- Focus timer card ------------------------------------------------------
  * Big countdown mirror + preset row + start/reset row + nudge row. The card
