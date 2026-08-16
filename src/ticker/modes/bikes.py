@@ -1,13 +1,13 @@
 # MIT License — Copyright (c) 2026 John Kuok
-"""Bay Wheels station availability — Lyft mark + mini bike, name, and counts.
+"""Bay Wheels station availability — pink bike-at-dock + counts.
 
 Layout at 128x32 (a locked design; see docs/bikes-layout.md if it ever needs
 revisiting):
 
     +--------- 26 -------+ +---------------- 102 -------------------+
-    |   LYFT WORDMARK    | | station name row (y=0)                  |
-    |   (pink, 23x16)    | | ⚡3   8    ▢12    (values row, y=12)   |
-    |   pink bike icon   | | EBIKE BIKE DOCK   (labels row, y=22)    |
+    |    pink bike +     | | station name row (y=0)                  |
+    |    dock silhouette | | ⚡3   8    ▢12    (values row, y=12)   |
+    |    (26x18)         | | EBIKE BIKE DOCK   (labels row, y=22)    |
     +--------------------+ +----------------------------------------+
 
 The three data columns are colour coded: BLUE for ebikes (the fast ones the
@@ -42,8 +42,7 @@ RED = (255, 60, 60)
 # Layout constants. Extracted rather than inlined so tests can import them.
 LOGO_ZONE_WIDTH = 26
 LOGO_HEIGHT = 16
-LOGO_Y = 0            # Lyft wordmark hugs the top edge of the panel.
-BIKE_Y = 20           # Mini bike sits below the wordmark with a 4-row gap.
+BIKE_Y = 7            # Bike-at-dock sprite is 18 rows tall, centred vertically (7..24).
 RIGHT_ZONE_X = LOGO_ZONE_WIDTH + 3  # 29
 COL2_X = RIGHT_ZONE_X + 30          # 59
 COL3_X = RIGHT_ZONE_X + 62          # 91
@@ -65,22 +64,29 @@ _BOLT_ROWS = [
     "#....",
 ]
 
-# Mini bike silhouette below the wordmark. This is a 14x10 nearest-neighbour
-# downsample of lyft.png -- same shape, roughly half the pixel area, so it
-# reads as "the same bike, smaller" rather than a different mark. Facing
-# RIGHT (seat/rider on the left, handlebars up on the right, front wheel on
-# the right, rear wheel on the left), matching the parent logo.
+# Pink bike-at-dock silhouette that fills the whole left zone. Big spoked
+# rear wheel on the left, seat post + top tube in the middle, front wheel
+# locked into a tall dock post on the right. 26 wide x 18 tall so it fits
+# the 26-pixel zone exactly and leaves 7 rows of padding above and below.
 _BIKE_ROWS = [
-    "##.......###..",
-    "##......#####.",
-    "##########.###",
-    "##########.###",
-    "#############.",
-    "#############.",
-    "##########..##",
-    ".#.######...##",
-    "...####.......",
-    "...###........",
+    "...................##.....",
+    "....................##..#.",
+    "....................##..#.",
+    ".....................#..#.",
+    "........####.........###..",
+    ".........##.........###...",
+    "........###.........#.#...",
+    ".......#####.......##.#...",
+    "...#####..##.......#..####",
+    "..##..###..#......#..###..",
+    ".##...#.##.##....##.##.##.",
+    ".#...#...#.##....#..#...#.",
+    "##..##...##.#...##..#..###",
+    "##...###########....#..###",
+    ".#.......#..##......#.....",
+    ".##.....##...#......##....",
+    "..##...##....##......##...",
+    "...####................###",
 ]
 
 # Logo path is package-relative so the module works whether Python imports
@@ -183,16 +189,8 @@ class BikesMode(Mode):
 
         self._refresh(station_id)
 
-        # Lyft wordmark at the top of the left zone.
-        logo = self._load_logo()
-        if logo is not None:
-            lx = (LOGO_ZONE_WIDTH - logo.width) // 2
-            canvas.image(lx, LOGO_Y, logo)
-
-        # Mini bike silhouette below the wordmark, horizontally centred.
-        bike_w = len(_BIKE_ROWS[0])
-        bx = (LOGO_ZONE_WIDTH - bike_w) // 2
-        canvas.sprite(bx, BIKE_Y, _BIKE_ROWS, {"#": LYFT_PINK})
+        # Big pink bike-at-dock silhouette filling the left zone.
+        canvas.sprite(0, BIKE_Y, _BIKE_ROWS, {"#": LYFT_PINK})
 
         if self._station is None:
             # Two-line notice sitting where the counts normally go, so the
