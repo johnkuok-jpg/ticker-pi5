@@ -5,9 +5,9 @@ Layout at 128x32 (a locked design; see docs/bikes-layout.md if it ever needs
 revisiting):
 
     +--------- 26 -------+ +---------------- 102 -------------------+
-    |                    | | station name row (y=0)                  |
-    |     LYFT (pink)    | | ⚡3   8    ▢12    (values row, y=12)    |
-    |    16px centered   | | EBIKE BIKE DOCK   (labels row, y=22)    |
+    |    LYFT (pink 16)  | | station name row (y=0)                  |
+    |    pink bike (20x10)| | ⚡3   8    ▢12    (values row, y=12)   |
+    |                    | | EBIKE BIKE DOCK   (labels row, y=22)    |
     +--------------------+ +----------------------------------------+
 
 The three data columns are colour coded: BLUE for ebikes (the fast ones the
@@ -42,6 +42,8 @@ RED = (255, 60, 60)
 # Layout constants. Extracted rather than inlined so tests can import them.
 LOGO_ZONE_WIDTH = 26
 LOGO_HEIGHT = 16
+LOGO_Y = 2  # Lyft wordmark hugs the top so a pink bike fits under it.
+BIKE_Y = LOGO_Y + LOGO_HEIGHT + 2  # 20 -- sprite baseline in the left zone.
 RIGHT_ZONE_X = LOGO_ZONE_WIDTH + 3  # 29
 COL2_X = RIGHT_ZONE_X + 30          # 59
 COL3_X = RIGHT_ZONE_X + 62          # 91
@@ -61,6 +63,23 @@ _BOLT_ROWS = [
     ".##..",
     "##...",
     "#....",
+]
+
+# Pink bike sprite that lives under the Lyft wordmark. 20 wide x 10 tall so
+# the top tube + two hollow wheels read as an obvious bicycle even from
+# across a room -- smaller versions turned the wheels into blobs. Wheels are
+# 5x5 hollow rings at x=1..5 and x=14..18; the top tube runs across y=3.
+_BIKE_ROWS = [
+    "....................",
+    "....###......###....",  # seat + handlebar tops
+    ".....#........#.....",  # seat post + front fork stem
+    "....############....",  # top tube
+    ".....##.............",  # down tube start
+    "..###..####....###..",  # wheel tops + down tube diagonal
+    ".#...#.....####...#.",  # wheel sides + down tube continuing
+    ".#...#........###.#.",  # wheel sides + down tube to front hub
+    ".#...#........#...#.",  # wheel sides
+    "..###..........###..",  # wheel bottoms
 ]
 
 # Logo path is package-relative so the module works whether Python imports
@@ -163,12 +182,17 @@ class BikesMode(Mode):
 
         self._refresh(station_id)
 
-        # Lyft wordmark, vertically centred in the 26-pixel left zone.
+        # Lyft wordmark near the top of the left zone; leaves room for the
+        # pink bike sprite underneath it.
         logo = self._load_logo()
         if logo is not None:
             lx = (LOGO_ZONE_WIDTH - logo.width) // 2
-            ly = (canvas.height - logo.height) // 2
-            canvas.image(lx, ly, logo)
+            canvas.image(lx, LOGO_Y, logo)
+
+        # Pink bike sprite, horizontally centred in the same 26-pixel zone.
+        bike_w = len(_BIKE_ROWS[0])
+        bx = (LOGO_ZONE_WIDTH - bike_w) // 2
+        canvas.sprite(bx, BIKE_Y, _BIKE_ROWS, {"#": LYFT_PINK})
 
         if self._station is None:
             # Two-line notice sitting where the counts normally go, so the
