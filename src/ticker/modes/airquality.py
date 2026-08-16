@@ -127,10 +127,11 @@ class AirQualityMode(Mode):
             return response.read()
 
     def _refresh(self) -> None:
+        lat, lon = self.config.current_weather_coords()
         query = urllib.parse.urlencode(
             {
-                "latitude": self.config.weather_lat,
-                "longitude": self.config.weather_lon,
+                "latitude": lat,
+                "longitude": lon,
                 "current": "us_aqi,pm2_5",
                 "hourly": "us_aqi",
                 "past_days": 1,
@@ -179,9 +180,10 @@ class AirQualityMode(Mode):
     def render(self, canvas: Canvas, tick: int) -> None:
         canvas.clear()
 
-        if not self.config.weather_lat or not self.config.weather_lon:
+        lat, lon = self.config.current_weather_coords()
+        if not lat or not lon:
             canvas.text_centered(6, "AIR QUALITY", ERROR, SMALL)
-            canvas.text_centered(18, "SET WEATHER LAT/LON", ERROR, SMALL)
+            canvas.text_centered(18, "SET WEATHER ZIP", ERROR, SMALL)
             return
 
         due = self.CACHE_SECONDS if not self._failed else self.ERROR_BACKOFF_SECONDS

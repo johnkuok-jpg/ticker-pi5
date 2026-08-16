@@ -82,7 +82,8 @@ Copy `.env.example` to `.env` and edit it. The renderer and web service read it 
 
 | Variable | Meaning |
 | --- | --- |
-| `WEATHER_LAT`, `WEATHER_LON` | Coordinates for the US National Weather Service forecast and Open-Meteo air quality. Required by `weather` and `aqi`. |
+| `WEATHER_ZIP` | Optional first-boot seed for the weather/air location. A 5-digit US ZIP, geocoded once and cached in the state dir. Prefer the web UI's "Weather location" field, which does the same thing at runtime and takes precedence. |
+| `WEATHER_LAT`, `WEATHER_LON` | Fallback coordinates for the US National Weather Service forecast and Open-Meteo air quality, used by `weather` and `aqi` when no ZIP has been set. |
 | `WEATHER_USER_AGENT` | NWS-compliant identifier sent with its requests. Leave the supplied value unless you host a fork. |
 | `TICKER_TIMEZONE` | IANA zone (e.g. `America/Los_Angeles`) used by `market`, `worldclock`, and the brightness schedule. Defaults to the system's local zone. |
 | `TICKER_CLOCK_24H` | `true` to render clocks in 24-hour form; default is 12-hour with `AM`/`PM`. |

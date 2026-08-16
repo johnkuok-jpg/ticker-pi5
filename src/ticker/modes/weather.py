@@ -85,13 +85,14 @@ class WeatherMode(Mode):
         self._last_refresh = 0.0
 
     def _refresh(self) -> None:
-        if not self.config.weather_lat or not self.config.weather_lon:
+        lat, lon = self.config.current_weather_coords()
+        if not lat or not lon:
             self._last_refresh = time.monotonic()
             return
         try:
             headers = {"User-Agent": self.config.weather_user_agent, "Accept": "application/geo+json"}
             points = requests.get(
-                f"https://api.weather.gov/points/{self.config.weather_lat},{self.config.weather_lon}",
+                f"https://api.weather.gov/points/{lat},{lon}",
                 headers=headers,
                 timeout=10,
             )
@@ -124,9 +125,10 @@ class WeatherMode(Mode):
 
         clock = self.clock_text(tick)
 
-        if not self.config.weather_lat or not self.config.weather_lon:
+        lat, lon = self.config.current_weather_coords()
+        if not lat or not lon:
             canvas.text_centered(6, clock, (255, 210, 50), SMALL)
-            canvas.text_centered(18, "SET WEATHER LAT/LON", (255, 150, 60), SMALL)
+            canvas.text_centered(18, "SET WEATHER ZIP", (255, 150, 60), SMALL)
             return
 
         if not self.forecast:

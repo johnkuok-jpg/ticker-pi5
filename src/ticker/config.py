@@ -324,6 +324,10 @@ class Config:
     spotify_redirect_uri: str = "http://127.0.0.1:8080/spotify/callback"
     weather_lat: str = ""
     weather_lon: str = ""
+    # Optional ZIP seed. When set and no state file exists, the weather and
+    # air-quality modes resolve it to coordinates on first use, so a fresh
+    # Pi can be aimed with WEATHER_ZIP=94103 instead of a coordinate pair.
+    weather_zip: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
     timezone: str = ""
     clock_24h: bool = False
@@ -385,6 +389,16 @@ class Config:
     @property
     def bike_station_file(self) -> Path:
         return self.state_dir / "bike_station"
+
+    @property
+    def weather_location_file(self) -> Path:
+        """Tab-separated ``zip<TAB>lat<TAB>lon<TAB>city<TAB>state``.
+
+        Stores the resolved coordinates next to the ZIP that produced them
+        so the weather mode never has to geocode at render time -- the
+        lookup happens once, in the web request that set the ZIP.
+        """
+        return self.state_dir / "weather_location"
 
     @property
     def symbols_file(self) -> Path:
@@ -729,6 +743,119 @@ class Config:
             raise ValueError("bike station id is unreasonably long")
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.bike_station_file.write_text(f"{value}\n", encoding="utf-8")
+
+    def current_weather_location(self) -> tuple[str, str, str, str]:
+        """Weather target as ``(zip, lat, lon, label)``; empty strings if unset.
+
+        Resolution order:
+
+        1. The state file written by the web app's ZIP picker. This is the
+           live, user-facing setting and always wins.
+        2. ``WEATHER_LAT``/``WEATHER_LON`` from ``.env``, for panels that
+           were set up before the picker existed and for anyone who wants
+           to aim at a point that has no ZIP (a ridge, a lake, a park).
+
+        The ZIP and label are best-effort: a panel configured purely from
+        lat/lon has coordinates but no ZIP, and that is a valid state --
+        callers render the coordinates and leave the label blank.
+        """
+        try:
+            raw = self.weather_location_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            raw = ""
+        if raw:
+            parts = raw.split("\t")
+            # Guard against a hand-edited or half-written file: coordinates
+            # are the only fields the API actually needs, so require those
+            # two to parse as floats before trusting the record.
+            if len(parts) >= 3:
+                zip_code, lat, lon = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                city = parts[3].strip() if len(parts) > 3 else ""
+                state = parts[4].strip() if len(parts) > 4 else ""
+                try:
+                    float(lat)
+                    float(lon)
+                except ValueError:
+                    pass
+                else:
+                    label = f"{city}, {state}" if city and state else (city or state)
+                    return zip_code, lat, lon, label
+
+        lat, lon = self.weather_lat.strip(), self.weather_lon.strip()
+        if lat and lon:
+            return "", lat, lon, ""
+
+        # No state file and no coordinates, but a WEATHER_ZIP seed exists:
+        # resolve it once and write the state file, so this costs one lookup
+        # on the first render after setup rather than one per render. A
+        # failed lookup falls through to "unset" and the mode shows its
+        # "set weather location" prompt, same as before.
+        seed = self.weather_zip.strip()
+        if seed:
+            try:
+                location = self.set_weather_zip(seed)
+            except (ValueError, OSError):
+                location = None
+            if location is not None:
+                return (
+                    location.zip_code,
+                    f"{location.lat:.4f}",
+                    f"{location.lon:.4f}",
+                    location.label,
+                )
+
+        return "", "", "", ""
+
+    def current_weather_coords(self) -> tuple[str, str]:
+        """Just the ``(lat, lon)`` the weather APIs need. Empty when unset."""
+        _, lat, lon, _ = self.current_weather_location()
+        return lat, lon
+
+    def current_weather_zip(self) -> str:
+        """The ZIP currently aiming the weather modes, or "" if aimed by lat/lon."""
+        zip_code, _, _, _ = self.current_weather_location()
+        return zip_code or self.weather_zip.strip()
+
+    def set_weather_zip(self, zip_code: str):  # noqa: ANN201 - ZipLocation, avoids an import cycle
+        """Resolve a US ZIP and persist it as the weather target.
+
+        Returns the resolved ``ZipLocation`` so the caller can echo the city
+        name back to the user. Raises ValueError when the ZIP is malformed or
+        the geocoder does not recognise it -- in that case nothing is written,
+        so a typo leaves the panel pointed where it already was rather than
+        blanking the forecast.
+
+        Passing an empty string clears the override and falls the modes back
+        to ``WEATHER_LAT``/``WEATHER_LON``.
+        """
+        from ticker import zipcode
+
+        raw = str(zip_code or "").strip()
+        if not raw:
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            self.weather_location_file.write_text("", encoding="utf-8")
+            return None
+
+        normalized = zipcode.normalize(raw)
+        if not normalized:
+            raise ValueError("enter a 5-digit US ZIP code")
+
+        location = zipcode.lookup(normalized)
+        if location is None:
+            raise ValueError(f"could not find ZIP {normalized}")
+
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        record = "\t".join(
+            [
+                location.zip_code,
+                f"{location.lat:.4f}",
+                f"{location.lon:.4f}",
+                location.city,
+                location.state,
+            ]
+        )
+        self.weather_location_file.write_text(f"{record}\n", encoding="utf-8")
+        return location
 
     def current_nametag_name(self) -> str:
         """Name to display on the nametag mode: state file wins, else .env."""
@@ -1789,6 +1916,7 @@ def load_config(env_file: Path | None = None) -> Config:
         ),
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
+        weather_zip=os.getenv("WEATHER_ZIP", "").strip(),
         weather_user_agent=os.getenv(
             "WEATHER_USER_AGENT", "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
         ),

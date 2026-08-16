@@ -391,6 +391,10 @@ body[data-mode="worldclock"] .flight[data-for~="worldclock"] { display: block; }
 body[data-mode="quakes"] .flight[data-for~="quakes"] { display: block; }
 body[data-mode="currency"] .flight[data-for~="currency"] { display: block; }
 body[data-mode="costco"] .flight[data-for~="costco"] { display: block; }
+/* Weather and air quality share one coordinate pair, so one ZIP card is
+   tagged for both modes and shows under either. */
+body[data-mode="weather"] .flight[data-for~="weather"] { display: block; }
+body[data-mode="aqi"] .flight[data-for~="aqi"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }

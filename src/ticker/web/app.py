@@ -169,6 +169,7 @@ def create_app() -> Flask:
     def index():  # type: ignore[no-untyped-def]
         config = load_config()
         current = config.current_mode()
+        weather_zip, weather_lat, weather_lon, weather_label = config.current_weather_location()
         return render_template(
             "index.html",
             modes=config.visible_modes(),
@@ -211,6 +212,10 @@ def create_app() -> Flask:
             currency_flag_grid=config.current_currency_flag_grid(),
             costco_warehouses=list(config.current_costco_warehouses()),
             max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
+            weather_zip=weather_zip,
+            weather_label=weather_label,
+            weather_lat=weather_lat,
+            weather_lon=weather_lon,
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -657,6 +662,49 @@ def create_app() -> Flask:
         config = load_config()
         value = config.set_currency_flag_grid(enabled)
         return jsonify(currency_flag_grid=value)
+
+    # -- Weather / air-quality location ---------------------------------------
+    #
+    # Both weather modes need coordinates, which nobody knows offhand for the
+    # place they're standing in. A ZIP is the one location token everyone can
+    # recall, so the picker takes a ZIP, geocodes it server-side, and stores
+    # the resolved coordinates -- the render path never geocodes.
+    @app.post("/weather/zip")
+    def set_weather_zip():  # type: ignore[no-untyped-def]
+        """Aim the weather and air-quality modes at a US ZIP code.
+
+        Body: ``{"zip": "94103"}``. An empty string clears the override and
+        falls back to ``WEATHER_LAT``/``WEATHER_LON`` from ``.env``.
+
+        Unlike the bike/BART pickers this does NOT switch modes: the same
+        coordinates feed two different modes (weather and air), so there is
+        no single "the mode you meant" to jump to. The caller decides.
+
+        Responds 400 with the unchanged current location on a bad ZIP, so a
+        typo never blanks a working forecast.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("zip", request.form.get("zip", ""))
+        config = load_config()
+        try:
+            config.set_weather_zip(str(requested))
+        except ValueError as error:
+            zip_code, lat, lon, label = config.current_weather_location()
+            return jsonify(
+                error=str(error),
+                weather_zip=zip_code,
+                weather_lat=lat,
+                weather_lon=lon,
+                weather_label=label,
+            ), 400
+
+        zip_code, lat, lon, label = config.current_weather_location()
+        return jsonify(
+            weather_zip=zip_code,
+            weather_lat=lat,
+            weather_lon=lon,
+            weather_label=label,
+        )
 
     @app.post("/nametag")
     def set_nametag():  # type: ignore[no-untyped-def]

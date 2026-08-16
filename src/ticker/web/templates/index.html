@@ -242,6 +242,32 @@
       <div id="muni-results" class="bike-results" role="listbox" aria-label="Muni stop results"></div>
       <p id="muni-note" class="schedule">Enter the 5-digit stopcode from the shelter sign, or search by cross-street.</p>
     </section>
+    <section class="flight" data-for="weather aqi">
+      {# One ZIP aims both weather and air quality: they share the same
+         coordinate pair in config, so the card is bound to both modes and
+         appears whichever of the two is selected. #}
+      <label for="weather-zip">Weather location</label>
+      {# No pattern= attribute on the input, on purpose: native constraint
+         validation blocks the submit event entirely, so the JS handler never
+         runs and the note line keeps showing a stale message from the previous
+         attempt. Let the request through and report the server's error text. #}
+      <form id="weather-zip-form" class="flight-row">
+        <input id="weather-zip" name="zip" type="text" inputmode="numeric"
+               value="{{ weather_zip }}" placeholder="94103"
+               autocomplete="postal-code" spellcheck="false" maxlength="10"
+               aria-label="US ZIP code for weather">
+        <button type="submit" class="flight-go">Set</button>
+      </form>
+      <p id="weather-zip-note" class="schedule">
+        {%- if weather_label %}
+          Showing {{ weather_label }}{% if weather_zip %} ({{ weather_zip }}){% endif %}.
+        {%- elif weather_lat and weather_lon %}
+          Aimed at {{ weather_lat }}, {{ weather_lon }} from .env. Enter a ZIP to override.
+        {%- else %}
+          Enter a 5-digit US ZIP to set the forecast and air-quality location.
+        {%- endif %}
+      </p>
+    </section>
     <section class="flight" data-for="bikes">
       <label for="bike-search">Bay Wheels station</label>
       <form id="bike-form" class="flight-row">
@@ -1424,6 +1450,48 @@
       event.preventDefault();
       await saveNametag({name: nametagInput.value, color: nametagHex.value, font: nametagFont.value});
     });
+    /* Weather ZIP: one field aiming both the weather and AQI modes. The
+       server geocodes and answers with the resolved city, which we echo back
+       so a wrong-but-valid ZIP (transposed digits that land in another
+       state) is caught by the user reading the city name. */
+    const weatherZipForm = document.getElementById('weather-zip-form');
+    const weatherZipInput = document.getElementById('weather-zip');
+    const weatherZipNote = document.getElementById('weather-zip-note');
+    if (weatherZipForm) {
+      weatherZipForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        const zip = weatherZipInput.value.trim();
+        weatherZipNote.textContent = zip ? 'Looking up ZIP…' : 'Clearing…';
+        let data;
+        try {
+          const response = await fetch('/weather/zip', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({zip}),
+          });
+          data = await response.json();
+          if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        } catch (err) {
+          /* Server messages read as lowercase fragments (they double as Python
+             exception text); sentence-case them so the note line matches the
+             other cards. Leave the field as typed so a transposed digit can be
+             corrected in place instead of retyping the whole ZIP. */
+          const raw = err.message || 'Could not set the ZIP';
+          const shown = raw.charAt(0).toUpperCase() + raw.slice(1);
+          weatherZipNote.textContent = /[.!?]$/.test(shown) ? shown : `${shown}.`;
+          return;
+        }
+        if (data.weather_label) {
+          const suffix = data.weather_zip ? ` (${data.weather_zip})` : '';
+          weatherZipNote.textContent = `Showing ${data.weather_label}${suffix}.`;
+        } else if (data.weather_lat && data.weather_lon) {
+          weatherZipNote.textContent = `Aimed at ${data.weather_lat}, ${data.weather_lon} from .env. Enter a ZIP to override.`;
+        } else {
+          weatherZipNote.textContent = 'Enter a 5-digit US ZIP to set the forecast and air-quality location.';
+        }
+        if (typeof data.weather_zip === 'string') weatherZipInput.value = data.weather_zip;
+      });
+    }
     nametagSwatches.forEach(el => {
       el.addEventListener('click', () => saveNametag({name: nametagInput.value, color: el.dataset.color, font: nametagFont.value}));
     });
