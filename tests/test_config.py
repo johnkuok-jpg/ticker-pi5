@@ -64,3 +64,87 @@ def test_watchlist_cap_is_enforced(config) -> None:  # type: ignore[no-untyped-d
 def test_clearing_the_file_falls_back_to_env(config) -> None:  # type: ignore[no-untyped-def]
     config.set_symbols([])
     assert config.current_symbols() == config.symbols
+
+
+# --- Quake alert settings ---------------------------------------------------
+#
+# The webapp writes to a small JSON overlay next to the .env-derived defaults.
+# These tests pin the round-trip and the validation ranges since the setter is
+# the only guard between a mistyped magnitude and a watcher that would happily
+# alert on any USGS wobble.
+
+
+@pytest.fixture
+def quake_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("ticker.config._first_writable_state_dir", lambda: tmp_path / "state")
+    env = tmp_path / ".env"
+    env.write_text(
+        "TICKER_WIDTH=128\nTICKER_HEIGHT=32\n"
+        "QUAKE_ALERT_MIN_MAG=3.5\nQUAKE_ALERT_REGION=California\nQUAKE_ALERT_DWELL_SECONDS=120\n",
+        encoding="utf-8",
+    )
+    return load_config(env)
+
+
+def test_quake_defaults_come_from_env(quake_config) -> None:  # type: ignore[no-untyped-def]
+    assert quake_config.current_quake_alert_min_mag() == pytest.approx(3.5)
+    assert quake_config.current_quake_alert_region() == "California"
+    assert quake_config.current_quake_alert_dwell_seconds() == 120
+
+
+def test_quake_set_partial_leaves_others_at_env(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_alert_settings(min_mag=4.2)
+    assert quake_config.current_quake_alert_min_mag() == pytest.approx(4.2)
+    # Region and dwell not written; should still resolve from env.
+    assert quake_config.current_quake_alert_region() == "California"
+    assert quake_config.current_quake_alert_dwell_seconds() == 120
+
+
+def test_quake_set_all_three_round_trips(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_alert_settings(min_mag=5.0, region="Japan", dwell_seconds=300)
+    assert quake_config.current_quake_alert_min_mag() == pytest.approx(5.0)
+    assert quake_config.current_quake_alert_region() == "Japan"
+    assert quake_config.current_quake_alert_dwell_seconds() == 300
+
+
+def test_quake_worldwide_is_empty_string(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_alert_settings(region="")
+    assert quake_config.current_quake_alert_region() == ""
+
+
+def test_quake_min_mag_rejects_below_2_5(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_alert_settings(min_mag=2.0)
+
+
+def test_quake_min_mag_rejects_above_9_9(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_alert_settings(min_mag=10.5)
+
+
+def test_quake_min_mag_rejects_non_numeric(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_alert_settings(min_mag="not-a-number")
+
+
+def test_quake_dwell_rejects_below_15(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_alert_settings(dwell_seconds=5)
+
+
+def test_quake_dwell_rejects_above_900(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_alert_settings(dwell_seconds=1200)
+
+
+def test_quake_region_rejects_over_80_chars(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_alert_settings(region="x" * 81)
+
+
+def test_quake_clearing_state_file_returns_to_env(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_alert_settings(min_mag=5.5, region="Japan", dwell_seconds=300)
+    quake_config.quake_alert_settings_file.unlink()
+    assert quake_config.current_quake_alert_min_mag() == pytest.approx(3.5)
+    assert quake_config.current_quake_alert_region() == "California"
+    assert quake_config.current_quake_alert_dwell_seconds() == 120

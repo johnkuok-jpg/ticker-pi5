@@ -244,8 +244,11 @@ class EarthquakesMode(Mode):
         # abbreviated to the first eight chars so "California" -> "CALIFORN"
         # only if we really need to fit -- for the default "California" we
         # abbreviate manually to "CA" because that reads better.
-        region_label = _short_region(self.config.quake_alert_region)
-        threshold_label = f"M{self.config.quake_alert_min_mag:g}+"
+        # Header labels reflect the *effective* settings (state file overlaid
+        # on .env), not the .env defaults, so a webapp change shows up in the
+        # ALERT header on the next frame.
+        region_label = _short_region(self.config.current_quake_alert_region())
+        threshold_label = f"M{self.config.current_quake_alert_min_mag():g}+"
         canvas.text(1, 1, canvas.fit(f"ALERT  {region_label}  {threshold_label}"), color, SMALL)
         canvas.hline(11, (90, 25, 25))
 

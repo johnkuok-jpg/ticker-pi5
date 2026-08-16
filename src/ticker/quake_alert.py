@@ -230,7 +230,7 @@ class QuakeAlertWatcher:
             self.alert_file.unlink(missing_ok=True)
             return None
         age = self._monotonic() - alert.first_detected_monotonic
-        if age >= self.config.quake_alert_dwell_seconds:
+        if age >= self.config.current_quake_alert_dwell_seconds():
             self.alert_file.unlink(missing_ok=True)
             return None
         return alert
@@ -268,8 +268,10 @@ class QuakeAlertWatcher:
         features = payload.get("features")
         if not isinstance(features, list):
             return
-        region = self.config.quake_alert_region
-        threshold = self.config.quake_alert_min_mag
+        # Re-read on each poll so a webapp edit takes effect at the next
+        # 60s tick without a service restart.
+        region = self.config.current_quake_alert_region()
+        threshold = self.config.current_quake_alert_min_mag()
         now_wall = self._wall()
 
         # Walk newest-first: USGS is not required to sort, and the freshest

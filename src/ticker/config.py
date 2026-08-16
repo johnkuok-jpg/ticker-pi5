@@ -359,6 +359,17 @@ class Config:
         return self.state_dir / "nametag_color"
 
     @property
+    def quake_alert_settings_file(self) -> Path:
+        """JSON blob for quake-alert settings (min_mag / region / dwell).
+
+        One file because these three knobs are always edited together in the
+        webapp settings card, and a single atomic write keeps them consistent.
+        Missing / corrupt file falls back to the .env defaults so a bad edit
+        can't disable alerts silently.
+        """
+        return self.state_dir / "quake_alert_settings.json"
+
+    @property
     def spotify_token_file(self) -> Path:
         """Where the refresh + access tokens land after OAuth.
 
@@ -654,6 +665,95 @@ class Config:
         canonical = _canonical_hex_color(hex_color)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.nametag_color_file.write_text(f"{canonical}\n", encoding="utf-8")
+
+    def _read_quake_alert_overrides(self) -> dict:
+        """Return whatever's in the settings file, or {} on any error.
+
+        The watcher polls once a second; a bad JSON payload here would flap the
+        panel between alert on/off, so we're deliberate about swallowing errors
+        and letting the .env defaults win in that case.
+        """
+        try:
+            raw = self.quake_alert_settings_file.read_text(encoding="utf-8")
+        except OSError:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def current_quake_alert_min_mag(self) -> float:
+        """Threshold for firing an alert. Web-app setting wins over .env."""
+        override = self._read_quake_alert_overrides().get("min_mag")
+        try:
+            value = float(override) if override is not None else self.quake_alert_min_mag
+        except (TypeError, ValueError):
+            return self.quake_alert_min_mag
+        # Clamp to the same sane range the setter uses, so a hand-edited file
+        # can't put the watcher into a state the webapp can't get out of.
+        return max(2.5, min(9.9, value))
+
+    def current_quake_alert_region(self) -> str:
+        """Region substring / preset. Web-app setting wins over .env."""
+        override = self._read_quake_alert_overrides().get("region")
+        if override is None:
+            return self.quake_alert_region
+        try:
+            return str(override).strip()
+        except Exception:  # pragma: no cover - defensive
+            return self.quake_alert_region
+
+    def current_quake_alert_dwell_seconds(self) -> int:
+        """Dwell window in seconds. Web-app setting wins over .env."""
+        override = self._read_quake_alert_overrides().get("dwell_seconds")
+        try:
+            value = int(override) if override is not None else self.quake_alert_dwell_seconds
+        except (TypeError, ValueError):
+            return self.quake_alert_dwell_seconds
+        # Same 15s floor and 15-minute ceiling the setter enforces.
+        return max(15, min(900, value))
+
+    def set_quake_alert_settings(
+        self,
+        *,
+        min_mag: float | None = None,
+        region: str | None = None,
+        dwell_seconds: int | None = None,
+    ) -> None:
+        """Merge new values into the settings file. Any None arg leaves that field alone.
+
+        Validation matches the getters so a value that lands on disk is always
+        one a getter would return unchanged. An out-of-range value raises; the
+        webapp turns that into a 400 rather than a silent clamp so the user
+        knows what they typed was rejected.
+        """
+        overrides = self._read_quake_alert_overrides()
+        if min_mag is not None:
+            try:
+                mag = float(min_mag)
+            except (TypeError, ValueError) as error:
+                raise ValueError("minimum magnitude must be a number") from error
+            if not 2.5 <= mag <= 9.9:
+                raise ValueError("minimum magnitude must be between 2.5 and 9.9")
+            overrides["min_mag"] = round(mag, 1)
+        if region is not None:
+            text = str(region).strip()
+            if len(text) > 80:
+                raise ValueError("region string is unreasonably long")
+            overrides["region"] = text
+        if dwell_seconds is not None:
+            try:
+                dwell = int(dwell_seconds)
+            except (TypeError, ValueError) as error:
+                raise ValueError("dwell must be an integer number of seconds") from error
+            if not 15 <= dwell <= 900:
+                raise ValueError("dwell must be between 15 and 900 seconds")
+            overrides["dwell_seconds"] = dwell
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.quake_alert_settings_file.write_text(
+            json.dumps(overrides, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     def current_symbols(self) -> tuple[str, ...]:
         """Watchlist for the stocks mode: state file wins, else ``TICKER_SYMBOLS``.

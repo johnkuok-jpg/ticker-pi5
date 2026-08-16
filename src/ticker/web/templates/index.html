@@ -181,6 +181,85 @@
       </select>
       <p id="nametag-note" class="schedule">Names that are too long scroll left-to-right.</p>
     </section>
+    {# Quake alert settings. The watcher runs in the background on every mode;
+       this card lets a phone tweak the two things people actually want to
+       change (how big a shake, where) without editing .env on the Pi. #}
+    <section class="flight quake-card" data-for="quakes">
+      <label for="quake-region-preset">Alerts</label>
+      <p class="schedule quake-lead">
+        Auto-switch to quakes mode when USGS reports a fresh shake at or above
+        the threshold in the selected area.
+      </p>
+      <div class="quake-row">
+        <label class="quake-field">
+          <span class="quake-field-label">Minimum magnitude</span>
+          <span class="quake-mag-wrap">
+            <input id="quake-min-mag" type="number" min="2.5" max="9.9" step="0.1"
+                   value="{{ '%.1f'|format(quake_min_mag) }}"
+                   inputmode="decimal" aria-label="Minimum magnitude">
+            <span class="quake-mag-plus">+</span>
+          </span>
+        </label>
+      </div>
+      <div class="quake-presets" role="group" aria-label="Magnitude presets">
+        {% for preset in ['3.0', '3.5', '4.0', '4.5'] %}
+        <button type="button" class="quake-preset" data-min-mag="{{ preset }}">M{{ preset }}+</button>
+        {% endfor %}
+      </div>
+      <div class="quake-row">
+        <label class="quake-field">
+          <span class="quake-field-label">Location</span>
+          <select id="quake-region-preset" aria-label="Location preset">
+            {# The preset list is a curated shortcut over the underlying substring
+               match. "Custom" lets the user type any USGS `place` substring.
+               Empty string = worldwide. #}
+            {% set quake_presets = [
+              ('California', 'California'),
+              ('Northern California', 'Northern California'),
+              ('Southern California', 'Southern California'),
+              ('Alaska', 'Alaska'),
+              ('Nevada', 'Nevada'),
+              ('Oregon', 'Oregon'),
+              ('Washington', 'Washington'),
+              ('Hawaii', 'Hawaii'),
+              ('Japan', 'Japan'),
+              ('', 'Worldwide')
+            ] %}
+            {% set known = quake_presets|map(attribute=0)|list %}
+            {% for value, label in quake_presets %}
+            <option value="{{ value }}" {% if value == quake_region %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+            <option value="__custom__" {% if quake_region not in known %}selected{% endif %}>Custom…</option>
+          </select>
+        </label>
+      </div>
+      <label class="quake-custom {% if quake_region in known %}hidden{% endif %}" id="quake-custom-wrap">
+        <span class="quake-field-label">Custom location</span>
+        <input id="quake-region-custom" type="text"
+               value="{% if quake_region not in known %}{{ quake_region }}{% endif %}"
+               placeholder="USGS 'place' substring, e.g. Chile"
+               autocomplete="off" spellcheck="false" maxlength="80"
+               aria-label="Custom region substring">
+      </label>
+      <div class="quake-row">
+        <label class="quake-field">
+          <span class="quake-field-label">Hold alert for</span>
+          <span class="quake-dwell-wrap">
+            <input id="quake-dwell" type="number" min="15" max="900" step="15"
+                   value="{{ quake_dwell_seconds }}"
+                   inputmode="numeric" aria-label="Dwell seconds">
+            <span class="quake-dwell-unit">seconds</span>
+          </span>
+        </label>
+      </div>
+      <div class="quake-controls">
+        <button type="button" id="quake-save" class="flight-go">Save</button>
+      </div>
+      <p id="quake-note" class="schedule">
+        {% if not quake_alert_enabled %}Alerting is disabled in the .env — the panel will not auto-switch.
+        {% else %}Currently: M{{ '%.1f'|format(quake_min_mag) }}+ {{ 'worldwide' if not quake_region else 'in ' + quake_region }}, held for {{ quake_dwell_seconds }}s.{% endif %}
+      </p>
+    </section>
     {# Focus timer. Settings surface for the focus mode: presets, start/pause,
        nudge, and a session label. The card mirrors the LED's countdown so a
        phone glance can replace looking at the panel. #}
@@ -719,6 +798,72 @@
     /* Font: change fires as soon as the user picks a different option; save
        immediately (like the swatches) so the LED updates on the same tap. */
     nametagFont.addEventListener('change', () => saveNametag({name: nametagInput.value, color: nametagHex.value, font: nametagFont.value}));
+    /* Quake alert settings: minimum magnitude, region preset (or custom),
+       and dwell. Everything hangs off a single Save button because these
+       three knobs go together conceptually and a phone accidentally tapping
+       past a preset shouldn't fire the LED into a new state until the user
+       confirms with Save. Presets update the number in place, still
+       requiring Save so the pattern stays predictable. */
+    const quakeMinMag = document.getElementById('quake-min-mag');
+    const quakePresets = document.querySelectorAll('.quake-preset');
+    const quakeRegionPreset = document.getElementById('quake-region-preset');
+    const quakeRegionCustom = document.getElementById('quake-region-custom');
+    const quakeCustomWrap = document.getElementById('quake-custom-wrap');
+    const quakeDwell = document.getElementById('quake-dwell');
+    const quakeSave = document.getElementById('quake-save');
+    const quakeNote = document.getElementById('quake-note');
+    function updateQuakeCustomVisibility() {
+      const showCustom = quakeRegionPreset.value === '__custom__';
+      quakeCustomWrap.classList.toggle('hidden', !showCustom);
+      if (showCustom) quakeRegionCustom.focus();
+    }
+    if (quakeRegionPreset) {
+      quakeRegionPreset.addEventListener('change', updateQuakeCustomVisibility);
+    }
+    quakePresets.forEach(btn => {
+      btn.addEventListener('click', () => {
+        quakeMinMag.value = btn.dataset.minMag;
+        /* Highlight the tapped preset briefly so it feels like a discrete tap
+           rather than the number just changing. */
+        quakePresets.forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
+    });
+    async function saveQuakeSettings() {
+      const region = quakeRegionPreset.value === '__custom__'
+        ? quakeRegionCustom.value.trim()
+        : quakeRegionPreset.value;
+      const body = {
+        min_mag: quakeMinMag.value,
+        region: region,
+        dwell_seconds: quakeDwell.value,
+      };
+      quakeSave.disabled = true;
+      const originalText = quakeSave.textContent;
+      quakeSave.textContent = 'Saving…';
+      try {
+        const response = await fetch('/quakes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          quakeNote.textContent = data.error || 'Could not save settings.';
+          return;
+        }
+        const regionLabel = data.region ? `in ${data.region}` : 'worldwide';
+        quakeNote.textContent = `Saved. Alerting on M${Number(data.min_mag).toFixed(1)}+ ${regionLabel}, held for ${data.dwell_seconds}s.`;
+      } catch (err) {
+        quakeNote.textContent = 'Could not reach the ticker. Try again.';
+      } finally {
+        quakeSave.disabled = false;
+        quakeSave.textContent = originalText;
+      }
+    }
+    if (quakeSave) {
+      quakeSave.addEventListener('click', saveQuakeSettings);
+    }
     /* Spotify disconnect. Only the button exists (the connect button is a
        plain anchor because it must fully navigate to Spotify's auth page).
        After disconnect the whole section needs a re-render to swap the

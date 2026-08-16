@@ -387,6 +387,7 @@ body[data-mode="bikes"]   .flight[data-for~="bikes"],
 body[data-mode="nametag"] .flight[data-for~="nametag"],
 body[data-mode="focus"]   .flight[data-for~="focus"],
 body[data-mode="worldclock"] .flight[data-for~="worldclock"] { display: block; }
+body[data-mode="quakes"] .flight[data-for~="quakes"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
@@ -1213,6 +1214,179 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
   transform: rotate(45deg);
 }
 
+
+/* ----- Quake alert card ------------------------------------------------- */
+/*
+ * The card lives inside .flight, so it inherits the outer padding, label
+ * treatment, and "visible only when in quakes mode" wiring for free. What's
+ * added here is the three-part settings body: magnitude (with M+/-- style
+ * preset chips), region (preset dropdown with a reveal-on-Custom text field),
+ * and dwell (seconds spinner).
+ */
+
+.quake-card .quake-lead {
+  margin: 6px 0 12px 0;
+}
+
+.quake-card .quake-row {
+  margin-top: 12px;
+}
+
+.quake-card .quake-field {
+  display: block;
+}
+
+.quake-card .quake-field-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.quake-card .quake-mag-wrap,
+.quake-card .quake-dwell-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border-bottom: 1px solid var(--line-strong);
+  transition: border-bottom-color .15s;
+}
+
+.quake-card .quake-mag-wrap:focus-within,
+.quake-card .quake-dwell-wrap:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.quake-card .quake-mag-wrap input,
+.quake-card .quake-dwell-wrap input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: .04em;
+  outline: none;
+  /* Kill the up/down spinner on WebKit; the presets do the same job with more
+     tactile feedback on a phone. */
+  -moz-appearance: textfield;
+}
+.quake-card .quake-mag-wrap input::-webkit-outer-spin-button,
+.quake-card .quake-mag-wrap input::-webkit-inner-spin-button,
+.quake-card .quake-dwell-wrap input::-webkit-outer-spin-button,
+.quake-card .quake-dwell-wrap input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.quake-card .quake-mag-plus,
+.quake-card .quake-dwell-unit {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  padding: 0 4px 12px 0;
+}
+
+.quake-card .quake-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.quake-card .quake-preset {
+  background: transparent;
+  color: #e6e6e6;
+  border: 1px dashed rgba(230, 230, 230, 0.25);
+  border-radius: 6px;
+  padding: 10px 6px;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms, background 120ms;
+}
+
+.quake-card .quake-preset:hover,
+.quake-card .quake-preset.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-style: solid;
+}
+
+.quake-card #quake-region-preset {
+  width: 100%;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: .06em;
+  outline: none;
+}
+
+.quake-card #quake-region-preset:focus {
+  border-bottom-color: var(--accent);
+}
+
+.quake-card .quake-custom {
+  display: block;
+  margin-top: 12px;
+}
+
+.quake-card .quake-custom input {
+  width: 100%;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: .04em;
+  outline: none;
+}
+
+.quake-card .quake-custom input:focus {
+  border-bottom-color: var(--accent);
+}
+
+.quake-card .quake-controls {
+  margin-top: 14px;
+}
+
+.quake-card #quake-save {
+  padding: 10px 20px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+
+.quake-card #quake-save:disabled {
+  opacity: .5;
+  cursor: default;
+}
 
 /* ----- Mobile tweaks ---------------------------------------------------- */
 

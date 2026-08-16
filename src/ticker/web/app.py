@@ -189,6 +189,10 @@ def create_app() -> Flask:
             youtube_selection=config.current_youtube_playlist(),
             worldclock_cities=config.current_worldclock_cities(),
             worldclock_view=config.current_worldclock_view(),
+            quake_alert_enabled=config.quake_alert_enabled,
+            quake_min_mag=config.current_quake_alert_min_mag(),
+            quake_region=config.current_quake_alert_region(),
+            quake_dwell_seconds=config.current_quake_alert_dwell_seconds(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -466,6 +470,41 @@ def create_app() -> Flask:
             color=_rgb_to_hex(config.current_nametag_color()),
             font=config.current_nametag_font(),
             current_mode=config.current_mode(),
+        )
+
+    @app.post("/quakes")
+    def set_quakes():  # type: ignore[no-untyped-def]
+        """Update the auto-switch alert settings (magnitude, region, dwell).
+
+        Any field may be omitted -- send only the ones you want to change.
+        The magnitude field is a float clamped 2.5-9.9; region is any USGS
+        "place" substring, or empty for worldwide; dwell is seconds, 15-900.
+
+        The response always echoes the *current effective* settings so the
+        webapp can update its own inputs without a second GET.
+        """
+        payload = request.get_json(silent=True) or {}
+        raw_mag = payload.get("min_mag", request.form.get("min_mag"))
+        raw_region = payload.get("region", request.form.get("region"))
+        raw_dwell = payload.get("dwell_seconds", request.form.get("dwell_seconds"))
+        config = load_config()
+        try:
+            config.set_quake_alert_settings(
+                min_mag=raw_mag if raw_mag is not None and str(raw_mag).strip() != "" else None,
+                region=raw_region if raw_region is not None else None,
+                dwell_seconds=raw_dwell if raw_dwell is not None and str(raw_dwell).strip() != "" else None,
+            )
+        except ValueError as error:
+            return jsonify(
+                error=str(error),
+                min_mag=config.current_quake_alert_min_mag(),
+                region=config.current_quake_alert_region(),
+                dwell_seconds=config.current_quake_alert_dwell_seconds(),
+            ), 400
+        return jsonify(
+            min_mag=config.current_quake_alert_min_mag(),
+            region=config.current_quake_alert_region(),
+            dwell_seconds=config.current_quake_alert_dwell_seconds(),
         )
 
     @app.post("/bart")
