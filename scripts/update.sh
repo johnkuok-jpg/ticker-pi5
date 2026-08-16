@@ -11,6 +11,10 @@ cd /home/pi/ticker-pi5
 git -c safe.directory=/home/pi/ticker-pi5 pull --ff-only
 venv/bin/python -m pip install --upgrade -r requirements.txt
 venv/bin/python -m pip install --editable .
+# fonts-noto-cjk was added later than the first Pi installs, so an update
+# on an older box needs to backfill it. `apt install -y` is a no-op when
+# it's already present, so this is cheap.
+sudo apt install -y fonts-noto-cjk
 sudo cp systemd/ticker.service systemd/ticker-web.service /etc/systemd/system/
 # Keep the fleet auto-update units in sync too, so a rollout that tweaks the
 # poll interval or the updater script itself takes effect on the next tick.

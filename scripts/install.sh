@@ -14,7 +14,10 @@ fi
 
 cd "$TARGET"
 sudo apt update
-sudo apt install -y python3-venv python3-dev build-essential pkg-config git
+# fonts-noto-cjk is required to render Chinese/Japanese/Korean glyphs in
+# Spotify track titles; without it the canvas CJK fallback returns None
+# and the characters render as blank space.
+sudo apt install -y python3-venv python3-dev build-essential pkg-config git fonts-noto-cjk
 
 if [[ ! -d venv ]]; then
   # PioMatter needs the distro-provided GPIO bindings, so keep system packages visible.
