@@ -36,9 +36,9 @@ vertically centred; the right half stacks the location and prices::
     ┌────────────────────────────────────────────────────────────┐
     │                     ●○○  El Camino                     │  rows 0-7   SMALL
     │                                                            │
-    │ COSTCO              REGULAR                  $5.30    │  rows 9-16  MEDIUM
+    │ COSTCO              REGULAR                  $5.30       │  rows 12-19 SMALL
     │ ==== GASOLINE                                              │
-    │                     PREMIUM                  $5.74       │  rows 24-31 SMALL
+    │                     PREMIUM                  $5.74       │  rows 22-29 SMALL
     └────────────────────────────────────────────────────────────┘
 
 Diesel, when the API returns it, replaces PREMIUM as the third row and pushes
@@ -570,25 +570,19 @@ class CostcoMode(Mode):
         if warehouse.diesel:
             rows_to_render.append(("DIESEL", _format_price(warehouse.diesel), AMBER))
 
-        # REG sits in a MEDIUM band (rows 10-21) so it visually pairs with
-        # the wordmark's centre line -- the mark spans rows 9-22, so a
-        # 12-row price row that lands rows 10-21 has the same optical
-        # centre. PREM/DIES stays SMALL on the bottom row (rows 24-31)
-        # both because a second MEDIUM row would overlap the mark and
-        # because the primary grade should carry the biggest number.
-        row_layouts: tuple[tuple[int, int], ...] = (
-            (10, MEDIUM),  # REG: rows 10-21
-            (24, SMALL),   # PREM/DIES: rows 24-31
-        )
+        # Both price rows share one size so REGULAR and PREMIUM read as a
+        # matched pair rather than a primary + secondary. SMALL keeps the
+        # 32-row card comfortable: city on rows 0-7, price rows at 12-19
+        # and 22-29, leaving one row of gutter between them and one row
+        # of bottom padding. Going MEDIUM would force the city off the
+        # card, which we need when the mode rotates between warehouses.
+        row_tops: tuple[int, ...] = (12, 22)
         for slot, (label, price, color) in enumerate(rows_to_render[:2]):
-            top, font_size = row_layouts[slot]
-            # Label baseline lines up with the price glyphs by dropping the
-            # SMALL label down inside the MEDIUM row so ascenders align.
-            label_top = top + (font_size - SMALL)
-            canvas.text(right_x, label_top, label, DIM, SMALL)
+            top = row_tops[slot]
+            canvas.text(right_x, top, label, DIM, SMALL)
             # Right-flush price so decimal columns line up between rows.
-            price_x = canvas.width - 1 - canvas.text_width(price, font_size)
-            canvas.text(price_x, top, price, color, font_size)
+            price_x = canvas.width - 1 - canvas.text_width(price, SMALL)
+            canvas.text(price_x, top, price, color, SMALL)
 
     def _draw_wordmark(self, canvas: Canvas, x: int, y: int, dim: bool = False) -> None:
         """Draw the hand-drawn Costco Gasoline mark.
