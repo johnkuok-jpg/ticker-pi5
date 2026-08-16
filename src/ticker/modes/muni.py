@@ -7,7 +7,7 @@ shelter sign, or by searching the stop directory the picker builds on
 demand.
 
 Layout matches the BART mode's grammar so a rider glances at either panel
-the same way: red Muni worm-style wordmark and stop label across the top,
+the same way: a red ``SF MUNI`` wordmark and stop label across the top,
 then three rows of ``ROUTE  DESTINATION           NNM``. Route colours come
 from Muni's own hex palette, brightened along their own hue to clear the
 LED panel's legibility floor — a channel-uniform scale preserves each
@@ -44,88 +44,32 @@ LABEL_X = 0
 GAP = 3
 
 # ---------------------------------------------------------------------------
-# Muni "worm" wordmark, hand-drawn as a bitmap
+# ``SF MUNI`` wordmark
 # ---------------------------------------------------------------------------
 #
-# The real Muni worm is one continuous cursive stroke; at eight pixels tall
-# a faithful trace would blob into a red smear. The renderer's version
-# instead spells "muni" in a bold pixel font whose 'm' and 'n' curl back
-# into their stems, echoing the worm's ligatures. All four glyphs are 7
-# pixels wide and 8 tall, with a 1-pixel kern, so the mark occupies a
-# 31-pixel-wide band that leaves the top row's right side free for the
-# stop label and clock.
-_WORM_GLYPHS: dict[str, tuple[str, ...]] = {
-    # Bold, slightly rounded 'm' with the shoulder curve preserved.
-    "m": (
-        ".......",
-        ".##.##.",
-        "##.#.##",
-        "##.#.##",
-        "##.#.##",
-        "##.#.##",
-        "##.#.##",
-        ".......",
-    ),
-    # 'u' curls back at its stems in the worm's own manner.
-    "u": (
-        ".......",
-        "##...##",
-        "##...##",
-        "##...##",
-        "##...##",
-        "##...##",
-        ".#####.",
-        ".......",
-    ),
-    # 'n' mirrors the 'm' half.
-    "n": (
-        ".......",
-        ".####..",
-        "##..##.",
-        "##..##.",
-        "##..##.",
-        "##..##.",
-        "##..##.",
-        ".......",
-    ),
-    # 'i' with a proper worm-red dot floating a pixel above its stem, so
-    # the dot doesn't collide with the top of the row and still reads.
-    "i": (
-        "##.....",
-        ".......",
-        "##.....",
-        "##.....",
-        "##.....",
-        "##.....",
-        "##.....",
-        ".......",
-    ),
-}
-
-_WORM_TEXT = "muni"
-_WORM_GLYPH_W = 7
-_WORM_KERN = 1
-WORM_WIDTH = len(_WORM_TEXT) * (_WORM_GLYPH_W + _WORM_KERN) - _WORM_KERN  # 31
-WORM_HEIGHT = 8
-
-
-def _worm_palette(dim: bool) -> dict[str, tuple[int, int, int]]:
-    red = MUNI_RED_DIM if dim else MUNI_RED
-    return {"#": red}
+# The real Muni "worm" doesn't reproduce at eight pixels tall — the meander
+# collapses into a red smear. Instead we render the transit-agency name in
+# plain small caps, in Muni red, at the same vertical band the worm would
+# occupy. This keeps the mark red-and-identifiable without pretending the
+# worm survives the panel's resolution.
+WORDMARK_TEXT = "SF MUNI"
+WORDMARK_HEIGHT = 8
 
 
 def draw_worm(canvas: Canvas, x: int, y: int, dim: bool = False) -> None:
-    """Paint the 'muni' worm-style wordmark at ``(x, y)`` in Muni red.
+    """Paint the ``SF MUNI`` wordmark at ``(x, y)`` in Muni red.
 
     A helper rather than a private method so the tests and the preview
     script can exercise the mark in isolation from the mode's fetch loop.
+    Kept named ``draw_worm`` for API stability with earlier callers.
     """
-    palette = _worm_palette(dim)
-    cursor = x
-    for character in _WORM_TEXT:
-        glyph = _WORM_GLYPHS[character]
-        canvas.sprite(cursor, y, list(glyph), palette)
-        cursor += _WORM_GLYPH_W + _WORM_KERN
+    color = MUNI_RED_DIM if dim else MUNI_RED
+    canvas.text(x, y, WORDMARK_TEXT, color, SMALL)
+
+
+def wordmark_width(canvas: Canvas) -> int:
+    """Measured pixel width of the wordmark on ``canvas``'s font."""
+    return canvas.text_width(WORDMARK_TEXT, SMALL)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +144,7 @@ class MuniMode(Mode):
         actually needs to confirm they're at the right shelter.
         """
         draw_worm(canvas, 0, HEADER_Y, dim=False)
+        mark_width = wordmark_width(canvas)
 
         # 12-hour clock trimmed to HH:MM: the AM/PM suffix eats seven pixels
         # that the stop label needs more, and the rider already knows what
@@ -208,7 +153,7 @@ class MuniMode(Mode):
         clock_width = canvas.text_width(clock, SMALL)
         clock_x = canvas.width - clock_width
 
-        label_x = WORM_WIDTH + GAP
+        label_x = mark_width + GAP
         label_width = clock_x - GAP - label_x
         stop = self.predictions.stop_name if self.predictions else ""
         if not stop:
@@ -268,7 +213,8 @@ def _trim_clock(text: str) -> str:
 __all__ = [
     "MUNI_RED",
     "MuniMode",
-    "WORM_HEIGHT",
-    "WORM_WIDTH",
+    "WORDMARK_HEIGHT",
+    "WORDMARK_TEXT",
     "draw_worm",
+    "wordmark_width",
 ]

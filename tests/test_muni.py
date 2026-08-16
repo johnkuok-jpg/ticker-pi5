@@ -18,9 +18,9 @@ from ticker.canvas import Canvas
 from ticker.modes.muni import (
     MUNI_RED,
     MuniMode,
-    WORM_HEIGHT,
-    WORM_WIDTH,
+    WORDMARK_HEIGHT,
     draw_worm,
+    wordmark_width,
 )
 
 
@@ -217,8 +217,8 @@ def test_worm_fits_declared_box() -> None:
     draw_worm(canvas, 0, 0)
     lit = _lit(canvas)
     assert lit, "worm drew nothing"
-    assert max(x for x, _ in lit) < WORM_WIDTH
-    assert max(y for _, y in lit) < WORM_HEIGHT
+    assert max(x for x, _ in lit) < wordmark_width(canvas)
+    assert max(y for _, y in lit) < WORDMARK_HEIGHT
 
 
 def test_worm_is_muni_red() -> None:
@@ -263,7 +263,7 @@ def test_mode_renders_header_and_rows() -> None:
     mode.render(canvas, 0)
     lit = _lit(canvas)
     # Header band and each of the three arrival rows have content.
-    assert any(y < WORM_HEIGHT for _, y in lit), "header empty"
+    assert any(y < WORDMARK_HEIGHT for _, y in lit), "header empty"
     for row in (8, 16, 24):
         assert any(y in (row, row + 1, row + 2, row + 3, row + 4, row + 5) for _, y in lit), (
             f"row {row} empty"
@@ -275,7 +275,7 @@ def test_mode_places_worm_in_muni_red() -> None:
     canvas = Canvas(128, 32)
     mode.render(canvas, 0)
     pixels = canvas.image_buffer.load()
-    header_colors = {pixels[x, y] for x, y in _lit(canvas) if y < WORM_HEIGHT and x < WORM_WIDTH}
+    header_colors = {pixels[x, y] for x, y in _lit(canvas) if y < WORDMARK_HEIGHT and x < wordmark_width(canvas)}
     assert MUNI_RED in header_colors
 
 
