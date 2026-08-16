@@ -1,12 +1,12 @@
 # MIT License — Copyright (c) 2026 John Kuok
-"""Bay Wheels station availability — Lyft logo, station name, and 3 counts.
+"""Bay Wheels station availability — Lyft bike silhouette, name, and counts.
 
 Layout at 128x32 (a locked design; see docs/bikes-layout.md if it ever needs
 revisiting):
 
     +--------- 26 -------+ +---------------- 102 -------------------+
-    |    LYFT (pink 16)  | | station name row (y=0)                  |
-    |    pink bike (20x10)| | ⚡3   8    ▢12    (values row, y=12)   |
+    |                    | | station name row (y=0)                  |
+    |   LYFT BIKE (pink) | | ⚡3   8    ▢12    (values row, y=12)   |
     |                    | | EBIKE BIKE DOCK   (labels row, y=22)    |
     +--------------------+ +----------------------------------------+
 
@@ -42,8 +42,6 @@ RED = (255, 60, 60)
 # Layout constants. Extracted rather than inlined so tests can import them.
 LOGO_ZONE_WIDTH = 26
 LOGO_HEIGHT = 16
-LOGO_Y = 2  # Lyft wordmark hugs the top so a pink bike fits under it.
-BIKE_Y = LOGO_Y + LOGO_HEIGHT + 2  # 20 -- sprite baseline in the left zone.
 RIGHT_ZONE_X = LOGO_ZONE_WIDTH + 3  # 29
 COL2_X = RIGHT_ZONE_X + 30          # 59
 COL3_X = RIGHT_ZONE_X + 62          # 91
@@ -63,24 +61,6 @@ _BOLT_ROWS = [
     ".##..",
     "##...",
     "#....",
-]
-
-# Pink bike sprite that lives under the Lyft wordmark. 20 wide x 10 tall,
-# facing LEFT: front wheel + handlebars on the left, rear wheel + seat on the
-# right. Two 5x5 hollow wheels + an A-frame between them, with the seat
-# post rising above the apex. Nothing crosses the wheel outlines so both
-# wheels stay readable as circles from across the room.
-_BIKE_ROWS = [
-    "..........###.......",  # seat top
-    "..........#.........",  # seat post
-    ".........#.#........",  # apex of A-frame
-    "..##...##...#.......",  # handlebar + down tube climbing + seat tube dropping
-    "...#..#......#......",
-    "..####........####..",  # head tube + wheel tops (front, rear)
-    ".#...#........#...#.",
-    ".#...#........#...#.",
-    ".#...#........#...#.",
-    "..###..........###..",  # wheel bottoms
 ]
 
 # Logo path is package-relative so the module works whether Python imports
@@ -110,7 +90,7 @@ class BikesMode(Mode):
     # ---------------------------------------------------------------- helpers
 
     def _load_logo(self) -> Image.Image | None:
-        """The Lyft wordmark, cached after the first successful load."""
+        """The Lyft bike silhouette, cached after the first successful load."""
         if self._logo is not None:
             return self._logo
         try:
@@ -183,17 +163,12 @@ class BikesMode(Mode):
 
         self._refresh(station_id)
 
-        # Lyft wordmark near the top of the left zone; leaves room for the
-        # pink bike sprite underneath it.
+        # Lyft bike silhouette, centred both ways in the 26-pixel zone.
         logo = self._load_logo()
         if logo is not None:
             lx = (LOGO_ZONE_WIDTH - logo.width) // 2
-            canvas.image(lx, LOGO_Y, logo)
-
-        # Pink bike sprite, horizontally centred in the same 26-pixel zone.
-        bike_w = len(_BIKE_ROWS[0])
-        bx = (LOGO_ZONE_WIDTH - bike_w) // 2
-        canvas.sprite(bx, BIKE_Y, _BIKE_ROWS, {"#": LYFT_PINK})
+            ly = (canvas.height - logo.height) // 2
+            canvas.image(lx, ly, logo)
 
         if self._station is None:
             # Two-line notice sitting where the counts normally go, so the
