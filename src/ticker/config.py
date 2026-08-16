@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube", "costco")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube", "costco")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -292,6 +292,10 @@ class Config:
     quake_alert_region: str = "California"
     quake_alert_dwell_seconds: int = 120
     bart_station: str = "EMBR"
+    # Muni stopcode: the 5-digit number printed on every SF Muni shelter
+    # sign. Empty by default so the mode nudges the user to the picker on
+    # first run; the webapp writes the chosen code into the state file.
+    muni_stop_code: str = ""
     bike_station_id: str = ""
     nametag_name: str = ""
     nametag_color: str = "#FFFFFF"
@@ -372,6 +376,10 @@ class Config:
     @property
     def bart_station_file(self) -> Path:
         return self.state_dir / "bart_station"
+
+    @property
+    def muni_stop_file(self) -> Path:
+        return self.state_dir / "muni_stop"
 
     @property
     def bike_station_file(self) -> Path:
@@ -1223,6 +1231,33 @@ class Config:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.bart_station_file.write_text(f"{value}\n", encoding="utf-8")
 
+    def current_muni_stop(self) -> str:
+        """Muni stopcode to show: the web app's pick, otherwise .env.
+
+        Unlike BART's closed roster this is validated by shape only (4-6
+        digits), because Muni's ~3,700 stops are not enumerated at boot;
+        an unknown code just returns empty predictions and the mode shows
+        the "NO ARRIVALS" state, which is the honest render for it.
+        """
+        try:
+            chosen = self.muni_stop_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            chosen = ""
+        return chosen or self.muni_stop_code.strip()
+
+    def set_muni_stop(self, stop_code: str) -> None:
+        """Persist the chosen Muni stopcode; an empty string clears it.
+
+        Shape check only: 4-6 digits. That covers every Muni stopcode
+        printed on a shelter sign today (all five-digit) without hard-
+        coding the assumption that SFMTA won't ever renumber.
+        """
+        value = "".join(str(stop_code).split())
+        if value and not (value.isdigit() and 4 <= len(value) <= 6):
+            raise ValueError(f"Muni stopcode must be 4-6 digits: {stop_code}")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.muni_stop_file.write_text(f"{value}\n", encoding="utf-8")
+
     def current_brightness(self) -> float:
         """Resolve schedule and manual override into one level.
 
@@ -1673,6 +1708,7 @@ def load_config(env_file: Path | None = None) -> Config:
         quake_alert_region=os.getenv("QUAKE_ALERT_REGION", "California").strip(),
         quake_alert_dwell_seconds=max(15, _parse_int_env("QUAKE_ALERT_DWELL_SECONDS", 120)),
         bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
+        muni_stop_code=os.getenv("MUNI_STOP_CODE", "").strip(),
         bike_station_id=os.getenv("BIKE_STATION_ID", "").strip(),
         nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
         nametag_color=(os.getenv("NAMETAG_COLOR", "").strip() or _DEFAULT_NAMETAG_HEX),

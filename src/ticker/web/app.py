@@ -9,7 +9,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request
 
-from ticker import bart, baywheels, net, spotify as spotify_client
+from ticker import bart, baywheels, muni, net, spotify as spotify_client
 from ticker.config import (
     MAX_COSTCO_WAREHOUSES,
     MAX_CURRENCY_PAIRS,
@@ -28,6 +28,7 @@ from ticker.modes.youtube import (
 # which is fine for single-word modes like "stocks" or "news".
 MODE_LABELS = {
     "bart": "BART",
+    "muni": "Muni",
     "aqi": "AQI",
     "bikes": "Bikes",
     "currency": "Currency",
@@ -182,6 +183,7 @@ def create_app() -> Flask:
             flight_airport=config.current_flight_airport(),
             stations=bart.STATIONS,
             station=config.current_bart_station(),
+            muni_stop=config.current_muni_stop(),
             symbols=config.current_symbols(),
             max_symbols=MAX_SYMBOLS,
             stocks_lock=config.current_stocks_lock_symbol(),
@@ -383,6 +385,78 @@ def create_app() -> Flask:
         if chosen:
             config.set_mode("bikes")
         return jsonify(bike_station=chosen, current_mode=config.current_mode())
+
+    # -- SF Muni arrivals ----------------------------------------------------
+    #
+    # Muni stops are keyed by the 5-digit stopcode printed on every shelter
+    # sign, so the fastest path is a direct code entry. For riders who don't
+    # already know their code the picker exposes a name search and a nearest-
+    # stop lookup that both resolve to the same code the mode ultimately reads.
+
+    @app.get("/api/muni/search")
+    def muni_search():  # type: ignore[no-untyped-def]
+        """Return up to 20 Muni stops matching the name substring *q*.
+
+        Fails quietly on network trouble because the picker still has the
+        code-entry field as a fallback and a 503 here would strand the user
+        who typed a search but has a printed shelter code in front of them.
+        """
+        query = request.args.get("q", "").strip()
+        try:
+            hits = muni.search_stops(query, limit=20)
+        except Exception:
+            hits = []
+        return jsonify(
+            stops=[
+                {"code": stop.code, "name": stop.name, "lat": stop.lat, "lon": stop.lon}
+                for stop in hits
+            ]
+        )
+
+    @app.get("/api/muni/nearest")
+    def muni_nearest():  # type: ignore[no-untyped-def]
+        """Return the Muni stop closest to (lat, lon).
+
+        Same fallback ladder as the Bay Wheels equivalent: the browser can
+        hand over geolocation, and the ticker's configured weather coords
+        pinch-hit when the browser refuses or the user is setting up from a
+        desk laptop.
+        """
+        config = load_config()
+        try:
+            lat = float(request.args.get("lat") or config.weather_lat)
+            lon = float(request.args.get("lon") or config.weather_lon)
+        except ValueError:
+            return jsonify(error="lat and lon must be numbers"), 400
+        try:
+            stop = muni.nearest_stop(lat, lon)
+        except Exception:
+            stop = None
+        if stop is None:
+            return jsonify(error="no stops available"), 503
+        return jsonify(
+            stop={"code": stop.code, "name": stop.name, "lat": stop.lat, "lon": stop.lon}
+        )
+
+    @app.post("/muni")
+    def set_muni_stop():  # type: ignore[no-untyped-def]
+        """Persist the chosen Muni stopcode and switch to the muni mode.
+
+        Follows the flight/bart/bikes contract: picking what to watch is a
+        request to watch it, so the panel switches modes as part of the
+        same tap rather than making the user hunt for the mode grid.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("stop", request.form.get("stop", ""))
+        config = load_config()
+        try:
+            config.set_muni_stop(str(requested))
+        except ValueError as error:
+            return jsonify(error=str(error), muni_stop=config.current_muni_stop()), 400
+        chosen = config.current_muni_stop()
+        if chosen:
+            config.set_mode("muni")
+        return jsonify(muni_stop=chosen, current_mode=config.current_mode())
 
     # -- Stocks watchlist ----------------------------------------------------
     #
@@ -925,6 +999,7 @@ def create_app() -> Flask:
             flight=config.current_flight(),
             flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
+            muni_stop=config.current_muni_stop(),
             symbols=list(config.current_symbols()),
             currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
             currency_show_change=config.current_currency_show_change(),

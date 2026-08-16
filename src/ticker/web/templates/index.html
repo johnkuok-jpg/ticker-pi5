@@ -234,6 +234,28 @@
       </form>
       <p id="station-note" class="schedule">Next three trains, soonest first.</p>
     </section>
+    <section class="flight" data-for="muni">
+      {# Muni: the 5-digit stopcode is printed on every shelter sign, so
+         primary entry is a numeric field. Riders who don't already know
+         their code can search by name or ask for the nearest stop. #}
+      <label for="muni-stop">Muni stop</label>
+      <form id="muni-form" class="flight-row">
+        <input id="muni-stop" name="stop" type="text" inputmode="numeric" pattern="[0-9]{4,6}"
+               value="{{ muni_stop }}" placeholder="13463"
+               autocomplete="off" spellcheck="false" maxlength="6"
+               aria-label="Muni stopcode">
+        <button type="submit" class="flight-go">Show</button>
+      </form>
+      <form id="muni-search-form" class="flight-row" style="margin-top:6px">
+        <input id="muni-search" name="query" type="search"
+               placeholder="24th &amp; Castro / Powell / Van Ness…"
+               autocomplete="off" autocorrect="off" spellcheck="false"
+               aria-label="Search Muni stops by name">
+        <button type="button" id="muni-nearest" class="flight-go">Nearest</button>
+      </form>
+      <div id="muni-results" class="bike-results" role="listbox" aria-label="Muni stop results"></div>
+      <p id="muni-note" class="schedule">Enter the 5-digit stopcode from the shelter sign, or search by cross-street.</p>
+    </section>
     <section class="flight" data-for="bikes">
       <label for="bike-search">Bay Wheels station</label>
       <form id="bike-form" class="flight-row">
@@ -616,6 +638,12 @@
     const bikeResults = document.getElementById('bike-results');
     const bikeNote = document.getElementById('bike-note');
     const bikeNearest = document.getElementById('bike-nearest');
+    const muniForm = document.getElementById('muni-form');
+    const muniStop = document.getElementById('muni-stop');
+    const muniSearch = document.getElementById('muni-search');
+    const muniResults = document.getElementById('muni-results');
+    const muniNote = document.getElementById('muni-note');
+    const muniNearest = document.getElementById('muni-nearest');
     const nametagForm = document.getElementById('nametag-form');
     const nametagInput = document.getElementById('nametag-input');
     const nametagHex = document.getElementById('nametag-hex');
@@ -850,6 +878,82 @@
           return;
         }
         pickBikeStation(data.station.id, data.station.name);
+      };
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          position => finish(position.coords.latitude, position.coords.longitude),
+          () => finish(),
+          {timeout: 4000, enableHighAccuracy: false}
+        );
+      } else {
+        finish();
+      }
+    });
+    /* Muni: primary path is the stopcode input; the search field is a
+       fallback for riders who don't have the number in front of them. The
+       server writes a stopcode either way, so both paths share the same
+       success handler. */
+    let muniSearchTimer = null;
+    async function pickMuniStop(code, name) {
+      const response = await fetch('/muni', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({stop: code})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        muniNote.textContent = data.error || 'Could not set that stop.';
+        return;
+      }
+      muniNote.textContent = name ? `Showing ${name}.` : `Showing stop ${data.muni_stop}.`;
+      muniResults.innerHTML = '';
+      muniSearch.value = '';
+      muniStop.value = data.muni_stop || '';
+      refreshStatus();
+    }
+    muniForm.addEventListener('submit', event => {
+      event.preventDefault();
+      pickMuniStop((muniStop.value || '').trim(), '');
+    });
+    async function runMuniSearch(query) {
+      if (!query || query.trim().length < 2) {
+        muniResults.innerHTML = '';
+        return;
+      }
+      const response = await fetch(`/api/muni/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      muniResults.innerHTML = '';
+      (data.stops || []).forEach(stop => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'bike-result';
+        button.textContent = `${stop.name} · ${stop.code}`;
+        button.addEventListener('click', () => pickMuniStop(stop.code, stop.name));
+        muniResults.appendChild(button);
+      });
+      if ((data.stops || []).length === 0) {
+        muniNote.textContent = 'No matches. Building the stop list can take a moment on the first search.';
+      } else {
+        muniNote.textContent = 'Tap a stop to show it.';
+      }
+    }
+    muniSearch.addEventListener('input', () => {
+      window.clearTimeout(muniSearchTimer);
+      muniSearchTimer = window.setTimeout(() => runMuniSearch(muniSearch.value), 300);
+    });
+    muniNearest.addEventListener('click', async () => {
+      muniNote.textContent = 'Finding the closest stop…';
+      const finish = async (lat, lon) => {
+        const url = (lat !== undefined && lon !== undefined)
+          ? `/api/muni/nearest?lat=${lat}&lon=${lon}`
+          : '/api/muni/nearest';
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok || !data.stop) {
+          muniNote.textContent = data.error || 'Could not find a stop near you.';
+          return;
+        }
+        pickMuniStop(data.stop.code, data.stop.name);
       };
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
