@@ -24,6 +24,8 @@ MODE_LABELS = {
     "bart": "BART",
     "aqi": "AQI",
     "bikes": "Bikes",
+    "currency": "Currency",
+    "quakes": "Quakes",
     "nametag": "Name Tag",
     "spotify": "Spotify",
     "pokemon": "Pok\u00e9mon",

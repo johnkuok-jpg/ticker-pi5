@@ -7,6 +7,8 @@ from ticker.modes.bart import BartMode
 from ticker.modes.base import Mode
 from ticker.modes.bikes import BikesMode
 from ticker.modes.crypto import CryptoMode
+from ticker.modes.currency import CurrencyMode
+from ticker.modes.earthquakes import EarthquakesMode
 from ticker.modes.flights import FlightsMode
 from ticker.modes.focus import FocusMode
 from ticker.modes.market import MarketMode
@@ -27,6 +29,8 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "flights": FlightsMode,
     "market": MarketMode,
     "crypto": CryptoMode,
+    "currency": CurrencyMode,
+    "quakes": EarthquakesMode,
     "bart": BartMode,
     "aqi": AirQualityMode,
     "bikes": BikesMode,
@@ -55,6 +59,8 @@ __all__ = [
     "FlightsMode",
     "MarketMode",
     "CryptoMode",
+    "CurrencyMode",
+    "EarthquakesMode",
     "BartMode",
     "AirQualityMode",
     "BikesMode",

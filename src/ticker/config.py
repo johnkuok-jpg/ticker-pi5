@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -182,6 +182,16 @@ class Config:
     flight_number: str = ""
     flight_airport: str = ""
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
+    # Foreign-exchange watchlist as (BASE, QUOTE) pairs. Defaults hit the
+    # currencies John's family and partner-billing work touch: JPY (SBKK/
+    # Japan), EUR (Telefónica/DT), CNY (personal/family). Anything past three
+    # is silently ignored by the renderer -- the panel only has room for three
+    # rows before the SMALL font kicks in and readability drops off.
+    currency_pairs: tuple[tuple[str, str], ...] = (
+        ("USD", "JPY"),
+        ("USD", "EUR"),
+        ("USD", "CNY"),
+    )
     bart_station: str = "EMBR"
     bike_station_id: str = ""
     nametag_name: str = ""
@@ -1137,6 +1147,26 @@ def load_config(env_file: Path | None = None) -> Config:
         for symbol in os.getenv("CRYPTO_SYMBOLS", "BTC,ETH").split(",")
         if symbol.strip()
     ) or ("BTC", "ETH")
+    # CURRENCY_PAIRS accepts a comma-separated list of BASE/QUOTE tokens, e.g.
+    # ``USD/JPY,USD/EUR,USD/CNY``. Malformed tokens (missing slash, non-alpha)
+    # are silently dropped rather than raised: an obscure typo must not knock
+    # the panel offline, and the currency mode already handles an empty list
+    # by falling back to its class defaults via the dataclass.
+    _raw_pairs = os.getenv("CURRENCY_PAIRS", "USD/JPY,USD/EUR,USD/CNY")
+    _parsed_pairs: list[tuple[str, str]] = []
+    for _token in _raw_pairs.split(","):
+        _token = _token.strip().upper()
+        if "/" not in _token:
+            continue
+        _base, _, _quote = _token.partition("/")
+        _base, _quote = _base.strip(), _quote.strip()
+        if _base.isalpha() and _quote.isalpha() and 3 <= len(_base) <= 4 and 3 <= len(_quote) <= 4:
+            _parsed_pairs.append((_base, _quote))
+    currency_pairs = tuple(_parsed_pairs) or (
+        ("USD", "JPY"),
+        ("USD", "EUR"),
+        ("USD", "CNY"),
+    )
     return Config(
         width=int(os.getenv("TICKER_WIDTH", "128")),
         height=int(os.getenv("TICKER_HEIGHT", "32")),
@@ -1152,6 +1182,7 @@ def load_config(env_file: Path | None = None) -> Config:
         flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
         flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,
+        currency_pairs=currency_pairs,
         bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
         bike_station_id=os.getenv("BIKE_STATION_ID", "").strip(),
         nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
