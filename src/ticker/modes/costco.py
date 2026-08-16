@@ -32,17 +32,20 @@ region == extending the table; nothing else changes.
 Layout is a two-warehouse rotation (well, up to three) at ~5 s per slide:
 
     ┌────────────────────────────────────────────────────────────┐
-    │ COSTCO  ●○○  El Camino                                     │  header (rows 0-11)
-    │                                                            │
-    │ REG    $5.199                                              │  row 14-21
-    │ PREM   $5.699                                              │  row 22-29
+    │ COSTCO      ●○○  El Camino                                 │  rows 0-7   red
+    │ ═════ GASOLINE                                             │  rows 9-13  blue
+    │ REG                                                 $5.30  │  rows 16-23
+    │ PREM                                                $5.74  │  rows 24-31
     └────────────────────────────────────────────────────────────┘
 
 Diesel, when the API returns it, replaces PREM as the third row and pushes
 PREM up -- most Costco warehouses only publish regular + premium, so a
-three-row layout would leave a dead row 90% of the time. The wordmark uses
-Costco red (#E31837) drawn in MEDIUM Spleen; not a bitmap of the real
-logo, but at 128×32 the letterforms carry the identity just fine.
+three-row layout would leave a dead row 90% of the time.
+
+The header is a hand-drawn bitmap of the Costco Gasoline sign -- red
+``COSTCO`` over blue ``GASOLINE`` with the blue stripes filling the left
+shoulder -- because setting it in the panel font produced something that
+read as a filename rather than a logo. See the glyph tables below.
 """
 
 from __future__ import annotations
@@ -54,7 +57,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-from ticker.canvas import MEDIUM, SMALL, Canvas
+from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
 LOGGER = logging.getLogger(__name__)
@@ -125,6 +128,13 @@ COSTCO_RED = (227, 24, 55)
 # navy that reads too dark on the panel; a slightly-warmer sky blue for
 # the premium price row keeps the palette honest without going muddy.
 COSTCO_BLUE = (90, 170, 255)
+# Logo blue for the ``GASOLINE`` tagline and the speed stripes. Costco's
+# spec is PMS 286 (~#003DA5), a deep navy that disappears against black
+# on an LED panel -- the individual diodes are too small to carry a dark
+# colour. This is that navy pushed up in luminance until it survives the
+# panel while staying unmistakably the logo blue rather than the sky-blue
+# used for the premium price row.
+LOGO_BLUE = (52, 104, 235)
 WHITE = (235, 240, 250)
 DIM = (108, 118, 138)
 GREEN = (40, 230, 90)
@@ -134,6 +144,107 @@ AMBER = (255, 176, 0)
 # advances. Five seconds is enough to read regular + premium comfortably
 # without the panel feeling stuck. Mirrors the crypto/stocks card cadence.
 SLIDE_SECONDS = 5.0
+
+# ---------------------------------------------------------------------------
+# Costco Gasoline wordmark
+# ---------------------------------------------------------------------------
+# Spleen (the panel font) is a thin programmer's typeface -- typing
+# ``COSTCO`` in it looks like a filename, not a logo. The real Costco
+# Gasoline sign is a heavy rounded sans in red with a smaller blue
+# ``GASOLINE`` tucked under its right shoulder, plus blue speed stripes
+# filling the space under the left. None of that survives a font
+# substitution, so the mark is hand-drawn.
+#
+# ``1`` lights a pixel, ``0`` leaves it black. 6x8 gives a 2px stroke
+# weight, which is what makes it read as a logo instead of as text -- a
+# 1px stroke at this size looks like any other label on the panel.
+_LOGO_GLYPHS_6x8: dict[str, tuple[str, ...]] = {
+    "C": (
+        "011110",
+        "111111",
+        "110000",
+        "110000",
+        "110000",
+        "110000",
+        "111111",
+        "011110",
+    ),
+    "O": (
+        "011110",
+        "111111",
+        "110011",
+        "110011",
+        "110011",
+        "110011",
+        "111111",
+        "011110",
+    ),
+    "S": (
+        "011111",
+        "111111",
+        "110000",
+        "111110",
+        "011111",
+        "000011",
+        "111111",
+        "111110",
+    ),
+    "T": (
+        "111111",
+        "111111",
+        "001100",
+        "001100",
+        "001100",
+        "001100",
+        "001100",
+        "001100",
+    ),
+}
+
+# Tagline face for ``GASOLINE``. Letters are 5 rows tall and mostly 3px
+# wide, drawn with a 1px gap between them. The first attempt used a 4px
+# body on a gapless 4px grid to buy stroke weight, but with no gap the
+# round letters fused into their neighbours -- ``SO`` became one blob and
+# the word read as "GAEOLIME". Narrower letters plus real separation is
+# far more legible at this size than fatter letters that touch.
+#
+# ``N`` is the one 4px-wide letter. At 3px there is no room for a
+# diagonal, so it renders as a bar-and-two-stems shape indistinguishable
+# from ``M``; the 4th column buys the diagonal that makes it an ``N``.
+# ``I`` carries top and bottom serifs so it fills its slot -- a bare
+# centre stem reads as a word break.
+_LOGO_GLYPHS_TAG: dict[str, tuple[str, ...]] = {
+    "G": ("111", "100", "101", "101", "111"),
+    "A": ("111", "101", "111", "101", "101"),
+    "S": ("111", "100", "111", "001", "111"),
+    "O": ("111", "101", "101", "101", "111"),
+    "L": ("100", "100", "100", "100", "111"),
+    "I": ("111", "010", "010", "010", "111"),
+    "N": ("1001", "1101", "1011", "1001", "1001"),
+    "E": ("111", "100", "111", "100", "111"),
+}
+
+# Rendered geometry, all relative to the wordmark's top-left origin.
+_LOGO_TEXT = "COSTCO"
+_TAG_TEXT = "GASOLINE"
+_LOGO_CHAR_W = 6           # ``COSTCO`` glyph width
+_LOGO_KERN = 1             # 1px gap between ``COSTCO`` letters
+_LOGO_WIDTH = len(_LOGO_TEXT) * (_LOGO_CHAR_W + _LOGO_KERN) - _LOGO_KERN   # 41px
+_TAG_KERN = 1              # 1px gap between tagline letters
+_TAG_WIDTH = (
+    sum(len(_LOGO_GLYPHS_TAG[c][0]) for c in _TAG_TEXT)
+    + _TAG_KERN * (len(_TAG_TEXT) - 1)
+)                                                            # 32px
+_TAG_TOP = 9               # ``GASOLINE`` band: rows 9-13
+_LOGO_HEIGHT = _TAG_TOP + 5                                  # 14 rows total
+
+# Two straight stripes fill the gap under ``COSTCO``'s left shoulder,
+# where the right-aligned ``GASOLINE`` doesn't reach. The real sign slants
+# them for a speed effect, but a diagonal drawn across 9px of height
+# becomes a visible staircase rather than a line at this resolution, so
+# these run flat.
+_STRIPE_ROWS = (_TAG_TOP + 1, _TAG_TOP + 3)   # rows 10 and 12
+_STRIPE_GAP = 2            # clear pixels between stripe end and ``GASOLINE``
 
 
 @dataclass(frozen=True)
@@ -356,8 +467,10 @@ class CostcoMode(Mode):
         # placeholder would let the panel look "broken" on a slow network
         # even though the card itself is fine.
         self._draw_wordmark(canvas, 0, 0, dim=True)
-        canvas.text(0, 14, "WAITING FOR", DIM, SMALL)
-        canvas.text(0, 23, "COSTCO PRICES", DIM, SMALL)
+        # Single line on the last row: the dim mark already says COSTCO
+        # GASOLINE, so repeating it in the copy wastes the only line we
+        # have left under a 14-row wordmark.
+        canvas.text(0, _LOGO_HEIGHT + 2, "FETCHING PRICES", DIM, SMALL)
 
     def _render_warehouse(
         self,
@@ -368,11 +481,9 @@ class CostcoMode(Mode):
     ) -> None:
         # -- header row --------------------------------------------------
         self._draw_wordmark(canvas, 0, 0)
-        # MEDIUM COSTCO is 6 chars × 6px = 36px wide. Leave a 2px gutter,
-        # then draw the position dots (if more than one warehouse) and the
-        # city label.
-        wordmark_width = 6 * 6  # MEDIUM char width from canvas._FONTS
-        cursor_x = wordmark_width + 2
+        # The mark is _LOGO_WIDTH wide. Leave a 2px gutter, then draw the
+        # position dots (if more than one warehouse) and the city label.
+        cursor_x = _LOGO_WIDTH + 2
 
         if total > 1:
             # Draw the position dots pixel-by-pixel instead of as text --
@@ -393,14 +504,14 @@ class CostcoMode(Mode):
                     canvas.fill_rect(dx, dot_y + dot_size - 1, dot_size, 1, DIM)
             cursor_x += total * (dot_size + dot_gap) + 2
 
-        # City name in white, SMALL, sitting at row 4 so it visually
-        # aligns with the mid-line of the MEDIUM ``COSTCO`` wordmark (rows
-        # 0-11). Row 2 -- which I tried first -- reads as clipped because
-        # SMALL glyphs are 8px tall and their top edge lands even with the
-        # top of the panel, competing with the wordmark's crown.
+        # City name in white, SMALL. The wordmark spans rows 0-13, so its
+        # optical centre is row 6-7; an 8px-tall SMALL line started at row
+        # 3 lands rows 3-10 and centres against it. Starting at row 0
+        # instead reads as clipped, because the glyph tops sit flush with
+        # the panel edge and compete with the COSTCO crown.
         available = canvas.width - cursor_x
         if available > 0:
-            canvas.text(cursor_x, 4, canvas.fit(warehouse.display_city, available, SMALL), WHITE, SMALL)
+            canvas.text(cursor_x, 3, canvas.fit(warehouse.display_city, available, SMALL), WHITE, SMALL)
 
         # -- price rows --------------------------------------------------
         # Diesel replaces PREM as the second row when present, and PREM
@@ -414,37 +525,80 @@ class CostcoMode(Mode):
         if warehouse.diesel:
             rows_to_render.append(("DIES", _format_price(warehouse.diesel), AMBER))
 
-        # Two rows at MEDIUM fits below the header cleanly (12 + 12 = 24
-        # rows, header ends at row 12, panel ends at row 32). Three rows
-        # would need SMALL font and read as clutter; the third grade
-        # rotates in over time on the third slide instead.
+        # The wordmark now ends at row 13 (``_LOGO_HEIGHT``), so the price
+        # block starts at 16 -- a 2px gutter, then two 8px SMALL rows that
+        # land exactly on the panel's bottom edge (16-23, 24-31). Butting
+        # the first row against row 14 makes GASOLINE and REG look like one
+        # smeared block on the panel. Three grades would need a smaller
+        # face and read as clutter; the third rotates in on its own slide.
         for slot, (label, price, color) in enumerate(rows_to_render[:2]):
-            top = 14 + slot * 9  # 14 -> 23, 23 -> 32 (last row bottom lines up)
+            top = _LOGO_HEIGHT + 2 + slot * 8  # 16 -> 24
             canvas.text(0, top, label, DIM, SMALL)
             # Right-flush price so decimal columns line up between rows.
             price_x = canvas.width - 1 - canvas.text_width(price, SMALL)
             canvas.text(price_x, top, price, color, SMALL)
 
-    @staticmethod
-    def _position_dots(index: int, total: int) -> str:
-        """``● ○ ○`` style row-of-N indicator using tiny bullet glyphs."""
-        # Filled bullet for the current slot, hollow for the rest. Using
-        # ASCII fallbacks would read as ``* .`` which looks like noise on
-        # the panel; the box-drawing bullets from Spleen render cleanly.
-        return "".join("*" if i == index else "." for i in range(total))
-
     def _draw_wordmark(self, canvas: Canvas, x: int, y: int, dim: bool = False) -> None:
-        """Draw the ``COSTCO`` wordmark in MEDIUM red.
+        """Draw the hand-drawn Costco Gasoline mark.
 
-        Not a pixel-perfect trace of the real logo -- at 128×32 there is
-        not enough resolution to render the serifs the brand book insists
-        on -- but the shape + colour + row-1 placement carries the
-        identity. When ``dim`` is set we drop to a darker red so the
-        placeholder frame reads as "loading" rather than "here is your
-        card".
+        Layout, relative to ``(x, y)``::
+
+            rows 0-7    COSTCO      red,  6x8 glyphs, 1px kern   (41px)
+            rows 10,12  stripes     blue, straight, left shoulder (7px)
+            rows 9-13   GASOLINE    blue, 3-4px glyphs, 1px kern (32px)
+
+        ``GASOLINE`` is right-aligned under ``COSTCO`` and the stripes fill
+        the gap left over on the left, which is how the real sign is
+        composed. Total footprint is ``_LOGO_WIDTH`` x ``_LOGO_HEIGHT``
+        (41 x 14).
+
+        When ``dim`` is set both inks drop to roughly half luminance so the
+        loading frame reads as "not ready yet" rather than as a live card
+        that has lost its prices.
         """
-        color = (110, 20, 30) if dim else COSTCO_RED
-        canvas.text(x, y, "COSTCO", color, MEDIUM)
+        red = (110, 20, 28) if dim else COSTCO_RED
+        blue = (26, 52, 116) if dim else LOGO_BLUE
 
+        self._draw_glyphs(canvas, x, y, _LOGO_TEXT, _LOGO_GLYPHS_6x8, red, kern=_LOGO_KERN)
 
+        tag_x = x + _LOGO_WIDTH - _TAG_WIDTH
+        self._draw_glyphs(
+            canvas, tag_x, y + _TAG_TOP, _TAG_TEXT, _LOGO_GLYPHS_TAG, blue, kern=_TAG_KERN
+        )
 
+        # Stripes run from the mark's left edge to just short of where
+        # GASOLINE begins. With the current metrics that is 7px; if the
+        # tagline ever grows wide enough to leave no room, skip them rather
+        # than drawing a 1-2px stub that reads as a stuck pixel.
+        stripe_width = tag_x - x - _STRIPE_GAP
+        if stripe_width >= 4:
+            for row in _STRIPE_ROWS:
+                canvas.fill_rect(x, y + row, stripe_width, 1, blue)
+
+    @staticmethod
+    def _draw_glyphs(
+        canvas: Canvas,
+        x: int,
+        y: int,
+        word: str,
+        table: dict[str, tuple[str, ...]],
+        color: tuple[int, int, int],
+        kern: int,
+    ) -> None:
+        """Blit a hand-drawn word onto the canvas one pixel at a time.
+
+        Each glyph advances by its own width plus ``kern``, so the same
+        helper draws the uniform 6px ``COSTCO`` and the mixed 3/4px
+        tagline. Unknown characters are skipped rather than raised on, so a
+        typo in a caller can't crash the render loop on the panel.
+        """
+        cursor = x
+        for char in word:
+            glyph = table.get(char)
+            if glyph is None:
+                continue
+            for row_index, row in enumerate(glyph):
+                for col_index, pixel in enumerate(row):
+                    if pixel == "1":
+                        canvas.fill_rect(cursor + col_index, y + row_index, 1, 1, color)
+            cursor += len(glyph[0]) + kern
