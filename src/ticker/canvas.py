@@ -143,23 +143,30 @@ _CJK_FONT_PATHS: tuple[str, ...] = (
     "/usr/share/fonts/truetype/arphic/uming.ttc",
 )
 
+# When the CJK outline glyph is drawn at the same y as the Latin bitmap,
+# its cap top sits ~1px below Spleen's. Shifting the CJK glyph up 1px
+# aligns cap tops so a mixed-script line like ``Ne-Yo 你好`` reads on one
+# baseline. Measured empirically for both SMALL and MEDIUM cells.
+_CJK_VERTICAL_OFFSET = -1
+
 
 @lru_cache(maxsize=8)
 def _load_cjk_font(font_size: int) -> ImageFont.ImageFont | None:
     """Return an outline CJK font sized to match a Spleen row, or None.
 
     CJK glyphs are drawn one character at a time in the same row that the
-    Latin-1 Spleen text uses, so the outline size is picked to hug the
-    Spleen cell height (line_height - 2 leaves a 1px breathing gap top and
-    bottom that keeps stacked lines from touching). Rendering falls back
-    to ``fontmode='1'`` at the Canvas level, so the antialiasing an outline
-    font would normally introduce becomes hard on/off pixels.
+    Latin-1 Spleen text uses. Sizing to the full cell height (SMALL=8,
+    MEDIUM=12) is what visually matches Spleen's cap height instead of
+    leaving the CJK glyphs as tiny 6-10px blobs floating in the row.
+    ``fontmode='1'`` at the Canvas level converts the antialiased outline
+    render into hard on/off pixels that read as a bitmap on the LED panel.
     """
     cell_height = _FONTS.get(font_size, _FONTS[SMALL])[2]
-    # The outline hinter aims for the em box, which is usually taller than the
-    # visible cap height. Trimming 2px gives the glyph body room without the
-    # descenders clipping against the row below.
-    pixel_size = max(6, cell_height - 2)
+    # Noto CJK's em square is almost fully filled by the ideograph body
+    # (very little ascender space), so sizing to the full cell gives a
+    # glyph that visually lines up with the Latin cap height. Sizing
+    # smaller (cell - 2) leaves the CJK looking undersized next to Latin.
+    pixel_size = max(6, cell_height)
     for candidate in _CJK_FONT_PATHS:
         try:
             return ImageFont.truetype(candidate, pixel_size)
@@ -227,7 +234,6 @@ class Canvas:
         cjk_font = _load_cjk_font(font_size)
         latin_advance = char_width(font_size)
         cjk_advance = _cjk_char_width(font_size)
-        cell_height = line_height(font_size)
         cx = x
         for run_is_cjk, run in _script_runs(cleaned):
             if not run_is_cjk:
@@ -238,11 +244,12 @@ class Canvas:
                 cx += cjk_advance * len(run)
                 continue
             for char in run:
-                # Nudge the outline glyph up so its baseline sits inside the
-                # Spleen cell. Noto CJK's default baseline is designed for a
-                # taller box than a Spleen row and would otherwise clip.
+                # Noto CJK's outline top sits ~1px below Spleen's cap top
+                # at the same y, so shift the CJK glyph up 1px to align.
+                # Measured empirically for both SMALL (8px cell) and
+                # MEDIUM (12px cell) -- see cjk_align_test.png.
                 self._draw.text(
-                    (cx, y - max(0, (cjk_advance // 2) - cell_height + 2)),
+                    (cx, y + _CJK_VERTICAL_OFFSET),
                     char,
                     font=cjk_font,
                     fill=color,
@@ -293,17 +300,14 @@ class Canvas:
         cjk_font = _load_cjk_font(font_size)
         latin_advance = char_width(font_size) + weight
         cjk_advance = _cjk_char_width(font_size) + weight
-        cell_height = line_height(font_size)
         cx = x
         for character in cleaned:
             if _is_cjk(character):
                 if cjk_font is not None:
                     for dx in range(weight + 1):
+                        # Same -1px cap-top alignment used in :meth:`text`.
                         self._draw.text(
-                            (
-                                cx + dx,
-                                y - max(0, (cjk_advance // 2) - cell_height + 2),
-                            ),
+                            (cx + dx, y + _CJK_VERTICAL_OFFSET),
                             character,
                             font=cjk_font,
                             fill=color,
