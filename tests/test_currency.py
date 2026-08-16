@@ -148,8 +148,15 @@ def test_flag_mode_label_collapses_to_quote_code(currency_config) -> None:
     assert canvas.text_width("JPY ", MEDIUM) < canvas.text_width("USD/JPY ", MEDIUM)
 
 
-def test_flag_mode_hard_caps_at_two_rows(currency_config) -> None:
-    """Even with three configured pairs, flag mode renders only the first two."""
+def test_flag_mode_three_pairs_uses_small_four_row_layout(currency_config) -> None:
+    """Three pairs share the SMALL four-row layout, not the MEDIUM two-row one.
+
+    Under the old cap this test used to assert the third row was suppressed;
+    now the third pair renders on its own SMALL row and only the fourth slot
+    is empty. A stray CNY-red pixel above y=24 or below y=16 would indicate
+    the row landed on the wrong band, and the top-of-band pixel at y=16
+    (band 3) must be lit somewhere in the flag column for CNY to be visible.
+    """
     currency_config.set_currency_pairs([("USD", "JPY"), ("USD", "EUR"), ("USD", "CNY")])
     currency_config.set_currency_flag_mode(True)
     mode = _prep_mode(
@@ -162,15 +169,109 @@ def test_flag_mode_hard_caps_at_two_rows(currency_config) -> None:
     )
     canvas = Canvas(128, 32)
     mode.render(canvas, 0)
-    # The third row's flag would be the CNY red field. If it accidentally
-    # rendered, the entire lower-left band would light up red -- the two
-    # legit rows only paint y=2..15 and y=18..31 in that column, so any
-    # lit CNY-red pixel at y >= 30 is a bug.
     pixels = canvas.image_buffer.load()
-    # Row 2 (EUR) ends ~y=25 with the flag; anything below is dead space.
-    for y in range(28, 32):
-        for x in range(0, flags.FLAG_WIDTH):
-            assert pixels[x, y] == (0, 0, 0)
+    # CNY's third-band flag lives at y in [16..23]. Confirm at least one lit
+    # pixel there in the flag column.
+    lit_in_band_3 = [
+        (x, y)
+        for x in range(flags.FLAG_WIDTH)
+        for y in range(16, 24)
+        if pixels[x, y] != (0, 0, 0)
+    ]
+    assert lit_in_band_3, "CNY did not render in band 3 (y=16..23)"
+    # The fourth slot (y=24..31) must be empty since only three pairs configured.
+    for y in range(24, 32):
+        for x in range(flags.FLAG_WIDTH):
+            assert pixels[x, y] == (0, 0, 0), (x, y)
+
+
+def test_flag_mode_four_pairs_fills_four_rows(currency_config) -> None:
+    """Four pairs pack the panel flush: SMALL font, all four 8-row bands used."""
+    currency_config.set_currency_pairs(
+        [("USD", "JPY"), ("USD", "EUR"), ("USD", "CNY"), ("USD", "GBP")]
+    )
+    currency_config.set_currency_flag_mode(True)
+    currency_config.set_currency_show_change(False)
+    mode = _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.0, 148.5),
+            ForexQuote("USD", "EUR", 0.92, 0.93),
+            ForexQuote("USD", "CNY", 7.18, 7.20),
+            ForexQuote("USD", "GBP", 0.78, 0.79),
+        ],
+    )
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    # Every 8-row band must contain at least one lit flag pixel in the
+    # left column. A missed band would mean a row was dropped.
+    for band_top in (0, 8, 16, 24):
+        lit = [
+            (x, y)
+            for x in range(flags.FLAG_WIDTH)
+            for y in range(band_top, band_top + 8)
+            if pixels[x, y] != (0, 0, 0)
+        ]
+        assert lit, f"band starting at y={band_top} rendered no flag pixels"
+
+
+def test_flag_mode_four_pairs_show_change_still_fits(currency_config) -> None:
+    """Four pairs + show_change on: SMALL font must still render every row.
+
+    The old MEDIUM font can only stack two rows in 32 pixels, so if flag mode
+    ever falls back to MEDIUM here the third and fourth rows drop. This test
+    guards against that regression: with show_change ON and four pairs, we
+    still expect four bands lit.
+    """
+    currency_config.set_currency_pairs(
+        [("USD", "JPY"), ("USD", "EUR"), ("USD", "CNY"), ("USD", "GBP")]
+    )
+    currency_config.set_currency_flag_mode(True)
+    currency_config.set_currency_show_change(True)
+    mode = _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.0, 148.5),
+            ForexQuote("USD", "EUR", 0.92, 0.93),
+            ForexQuote("USD", "CNY", 7.18, 7.20),
+            ForexQuote("USD", "GBP", 0.78, 0.79),
+        ],
+    )
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    for band_top in (0, 8, 16, 24):
+        lit = [
+            (x, y)
+            for x in range(flags.FLAG_WIDTH)
+            for y in range(band_top, band_top + 8)
+            if pixels[x, y] != (0, 0, 0)
+        ]
+        assert lit, f"band y={band_top} empty; four rows didn't fit with show_change on"
+
+
+def test_flag_mode_two_pairs_keeps_medium_layout(currency_config) -> None:
+    """Two pairs must keep the taller MEDIUM font (tops at 2 and 18)."""
+    currency_config.set_currency_pairs([("USD", "JPY"), ("USD", "EUR")])
+    currency_config.set_currency_flag_mode(True)
+    mode = _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.0, 148.5),
+            ForexQuote("USD", "EUR", 0.92, 0.93),
+        ],
+    )
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    # MEDIUM row 1 lives at y=2..15; MEDIUM row 2 at y=18..31. If the code
+    # accidentally used SMALL, band 3 (y=16..23) would light up between rows
+    # -- which for two pairs must stay dark in the flag column between y=13
+    # and y=17.
+    for y in range(14, 18):
+        for x in range(flags.FLAG_WIDTH):
+            assert pixels[x, y] == (0, 0, 0), (x, y)
 
 
 def test_flag_mode_centres_single_row(currency_config) -> None:

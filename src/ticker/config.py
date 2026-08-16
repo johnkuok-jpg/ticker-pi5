@@ -78,10 +78,11 @@ DEFAULT_MODE = "weather"
 # first and a guard against a runaway state file second.
 MAX_SYMBOLS = 12
 
-# Currency mode shows at most three pairs (a fourth would overflow the panel at
-# SMALL font). The cap has to allow at least MAX_ROWS in the mode; keeping it at
-# three means the webapp will not let a user add a pair that would never render.
-MAX_CURRENCY_PAIRS = 3
+# Currency mode shows up to four pairs on the panel. The classic (no-flag)
+# layout still caps at three rows (SMALL font, MAX_ROWS in the mode), but the
+# flag-column layout without the % change column packs four SMALL rows flush
+# against the 32-row panel edges, and this cap has to allow at least that many.
+MAX_CURRENCY_PAIRS = 4
 # ISO 4217 codes are always three letters. Widening this would let a typo slip
 # through as a mystery-lookup that the upstream endpoint would just reject.
 _CURRENCY_CODE_LEN = 3

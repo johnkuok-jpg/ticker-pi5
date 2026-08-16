@@ -285,14 +285,21 @@ def test_currency_rejects_bad_codes(currency_config) -> None:  # type: ignore[no
 
 
 def test_currency_cap_is_enforced(currency_config) -> None:  # type: ignore[no-untyped-def]
+    # Overflow the cap: MAX_CURRENCY_PAIRS + 1 must always be rejected, no
+    # matter what the cap is set to. Build the list from a slice of a bank of
+    # valid presets so the test survives a future cap bump without editing.
+    presets = [
+        ("USD", "JPY"),
+        ("USD", "EUR"),
+        ("USD", "GBP"),
+        ("USD", "CNY"),
+        ("USD", "CAD"),
+        ("USD", "AUD"),
+    ]
     with pytest.raises(ValueError):
-        currency_config.set_currency_pairs(
-            [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP"), ("USD", "CNY")]
-        )
+        currency_config.set_currency_pairs(presets[: MAX_CURRENCY_PAIRS + 1])
     # Boundary: exactly MAX_CURRENCY_PAIRS is allowed.
-    currency_config.set_currency_pairs(
-        [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP")][:MAX_CURRENCY_PAIRS]
-    )
+    currency_config.set_currency_pairs(presets[:MAX_CURRENCY_PAIRS])
     assert len(currency_config.current_currency_pairs()) == MAX_CURRENCY_PAIRS
 
 

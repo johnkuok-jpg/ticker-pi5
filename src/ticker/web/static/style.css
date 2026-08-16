@@ -489,6 +489,87 @@ body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
 
 /* ----- Currency card --------------------------------------------------- */
 
+/* Quick-pick tile grid. Auto-fill columns give us 3 tiles across on a phone
+   and 4-5 on a tablet without needing a media query. Fixed 68px min column
+   keeps a single tile from ballooning when the row is short. */
+.fx-hint {
+  margin: 4px 0 10px 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+.fx-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+  margin: 4px 0 12px 0;
+}
+.fx-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 6px 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+.fx-tile:hover:not(:disabled) { border-color: var(--dim); }
+.fx-tile:active:not(:disabled) { opacity: 0.7; }
+.fx-tile:disabled { opacity: 0.32; cursor: not-allowed; }
+.fx-tile.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.fx-tile-flag {
+  display: block;
+  line-height: 0;
+  /* 1px inner border keeps white flags (JPY, MXN) legible against the dark
+     card background without adding an extra wrapper element. */
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+}
+.fx-tile-flag svg { display: block; }
+.fx-tile-code {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--accent);
+}
+.fx-tile.is-selected .fx-tile-code { text-shadow: 0 0 6px var(--accent); }
+.fx-tile-base {
+  font-size: 9px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+
+/* Custom pair drops behind a native <details> expando so the primary
+   flow (tile grid) isn't crowded. The summary keeps the same accent/font
+   as the other section labels. */
+.fx-custom-details {
+  margin: 4px 0 6px 0;
+}
+.fx-custom-details summary {
+  cursor: pointer;
+  padding: 6px 0;
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  list-style: none;
+}
+.fx-custom-details summary::-webkit-details-marker { display: none; }
+.fx-custom-details summary::before {
+  content: '+ ';
+  color: var(--accent);
+}
+.fx-custom-details[open] summary::before { content: '- '; }
+.fx-custom-details .currency-custom {
+  margin-top: 8px;
+}
+
 /* Custom BASE/QUOTE inputs sit under the preset row and stay hidden until
    the user picks "Custom…" from the dropdown. Same monospace/border look as
    the other two-input rows on the page so it doesn't feel like a bolt-on. */

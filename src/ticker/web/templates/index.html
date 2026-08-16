@@ -90,53 +90,29 @@
       <p class="schedule" style="opacity:.65">Prices refresh every 60 s via Yahoo Finance. US equities are typically delayed 15-20 min; crypto is roughly live.</p>
     </section>
     <section class="flight" data-for="currency">
-      <label for="currency-pair-select">Currency pairs</label>
-      {# Preset dropdown gets 90% of the taps; the free-text field is there for
-         the occasional NOK/SEK/AUD watcher. Presets are USD-based because the
-         upstream endpoint returns rates relative to a single base per request,
-         and USD is the base most users will already know. #}
-      <form id="currency-form" class="flight-row">
-        <select id="currency-pair-select" name="pair" aria-label="Currency pair preset">
-          {% set fx_presets = [
-            ("USD/JPY", "USD → JPY  (Japanese yen)"),
-            ("USD/EUR", "USD → EUR  (Euro)"),
-            ("USD/CNY", "USD → CNY  (Chinese yuan)"),
-            ("USD/GBP", "USD → GBP  (British pound)"),
-            ("USD/CAD", "USD → CAD  (Canadian dollar)"),
-            ("USD/AUD", "USD → AUD  (Australian dollar)"),
-            ("USD/CHF", "USD → CHF  (Swiss franc)"),
-            ("USD/HKD", "USD → HKD  (Hong Kong dollar)"),
-            ("USD/KRW", "USD → KRW  (Korean won)"),
-            ("USD/TWD", "USD → TWD  (Taiwan dollar)"),
-            ("USD/INR", "USD → INR  (Indian rupee)"),
-            ("USD/MXN", "USD → MXN  (Mexican peso)"),
-            ("EUR/USD", "EUR → USD"),
-            ("EUR/GBP", "EUR → GBP"),
-            ("GBP/USD", "GBP → USD"),
-            ("JPY/USD", "JPY → USD")
-          ] %}
-          {% for value, label in fx_presets %}
-          <option value="{{ value }}">{{ label }}</option>
-          {% endfor %}
-          <option value="custom">Custom…</option>
-        </select>
-        <button type="submit" class="flight-go">Add</button>
-      </form>
-      {# Hidden until the user picks Custom in the dropdown. Three-letter ISO
-         codes only — the config layer refuses anything else, and this input
-         mirrors that rule so the error path is quiet. #}
-      <div id="currency-custom" class="currency-custom hidden">
-        <input id="currency-custom-base" type="text" maxlength="3"
-               placeholder="USD" autocapitalize="characters" autocomplete="off"
-               spellcheck="false" aria-label="Base currency">
-        <span class="currency-slash">/</span>
-        <input id="currency-custom-quote" type="text" maxlength="3"
-               placeholder="JPY" autocapitalize="characters" autocomplete="off"
-               spellcheck="false" aria-label="Quote currency">
-      </div>
-      {# Server-rendered so the list is right before JS runs, then replaced
-         wholesale by renderCurrencyPairs() after every add or remove. #}
-      <div id="currency-list" class="symbol-list" aria-label="Currency pairs"></div>
+      <label>Currency pairs</label>
+      {# The old dropdown + Add-button form was two taps per pair and buried
+         the actual choice inside a dense menu. This grid trades that for a
+         one-tap toggle: each tile is a whole currency (flag + code), tapping
+         adds it against the current base, tapping again removes it. Presets
+         are USD-based because the upstream endpoint returns rates relative
+         to a single base per request. Custom pairs live behind a details
+         drop-open so they don't clutter the primary flow. #}
+      <p class="fx-hint">Tap a currency to add it. Tap again to remove. Up to {{ max_currency_pairs }} pairs.</p>
+      <div id="currency-quick-grid" class="fx-grid" aria-label="Quick-add currency pairs"></div>
+      <details id="currency-custom-details" class="fx-custom-details">
+        <summary>Custom pair (any ISO code)</summary>
+        <form id="currency-form" class="currency-custom">
+          <input id="currency-custom-base" type="text" maxlength="3"
+                 placeholder="USD" autocapitalize="characters" autocomplete="off"
+                 spellcheck="false" aria-label="Base currency">
+          <span class="currency-slash">/</span>
+          <input id="currency-custom-quote" type="text" maxlength="3"
+                 placeholder="JPY" autocapitalize="characters" autocomplete="off"
+                 spellcheck="false" aria-label="Quote currency">
+          <button type="submit" class="flight-go">Add</button>
+        </form>
+      </details>
       <label class="currency-toggle">
         <input id="currency-show-change" type="checkbox"
                {% if currency_show_change %}checked{% endif %}>
@@ -145,9 +121,9 @@
       <label class="currency-toggle">
         <input id="currency-flag-mode" type="checkbox"
                {% if currency_flag_mode %}checked{% endif %}>
-        <span>Two-line flag layout</span>
+        <span>Flag layout (2-4 rows)</span>
       </label>
-      <p id="currency-note" class="schedule">Up to {{ max_currency_pairs }} pairs. Rates refresh every 10 minutes; the upstream feed itself updates hourly.</p>
+      <p id="currency-note" class="schedule">Rates refresh every 10 minutes; the upstream feed updates hourly.</p>
     </section>
     <section class="flight" data-for="costco">
       <label for="costco-preset-select">Costco warehouses</label>
@@ -1084,46 +1060,114 @@
       }
     });
     renderSymbols();
-    /* Currency card: pair chips + change-column toggle. Mirrors the stocks
-       chip model rather than the crypto card because currency has an actual
-       user-facing add/remove flow -- crypto still runs env-var only. */
+    /* Currency card: one-tap quick-pick grid + custom-pair fallback. Each
+       tile shows a flag SVG + code and toggles that currency in/out of the
+       watchlist. USD/JPY, EUR/GBP etc. are treated as "the JPY tile, base
+       = USD" -- the currency the user cares about is the quote, so that's
+       what the tile represents. The base picker sits above so the user can
+       switch to a non-USD base without leaving the card. */
     const currencyForm = document.getElementById('currency-form');
-    const currencyPresetSelect = document.getElementById('currency-pair-select');
-    const currencyCustomWrap = document.getElementById('currency-custom');
     const currencyCustomBase = document.getElementById('currency-custom-base');
     const currencyCustomQuote = document.getElementById('currency-custom-quote');
-    const currencyList = document.getElementById('currency-list');
+    const currencyQuickGrid = document.getElementById('currency-quick-grid');
+    const currencyCustomDetails = document.getElementById('currency-custom-details');
     const currencyNote = document.getElementById('currency-note');
     const currencyShowChangeToggle = document.getElementById('currency-show-change');
     const currencyFlagModeToggle = document.getElementById('currency-flag-mode');
-    function renderCurrencyPairs() {
-      currencyList.innerHTML = '';
-      currencyPairs.forEach(pair => {
-        const chip = document.createElement('span');
-        chip.className = 'symbol-chip';
-        const label = document.createElement('b');
-        label.className = 'symbol-toggle';
-        /* Not a lockable chip like stocks -- no per-pair pin makes sense for
-           FX -- so this is just a plain b tag styled like symbol-toggle for
-           visual parity. Wrapping in a button would imply an action. */
-        label.textContent = pair;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'symbol-remove';
-        remove.textContent = '\u00d7';
-        remove.setAttribute('aria-label', `Remove ${pair}`);
-        remove.addEventListener('click', () => removeCurrencyPair(pair));
-        chip.appendChild(label);
-        chip.appendChild(remove);
-        currencyList.appendChild(chip);
+    /* Tile catalog: the 12 currencies that get 90% of the taps. The base
+       defaults to USD unless the tile itself is USD (then base flips to
+       EUR so USD/USD never happens). "Custom…" is a details expando below. */
+    const FX_TILES = [
+      {code: 'JPY', name: 'Japanese yen'},
+      {code: 'EUR', name: 'Euro'},
+      {code: 'CNY', name: 'Chinese yuan'},
+      {code: 'GBP', name: 'British pound'},
+      {code: 'CAD', name: 'Canadian dollar'},
+      {code: 'AUD', name: 'Australian dollar'},
+      {code: 'CHF', name: 'Swiss franc'},
+      {code: 'HKD', name: 'Hong Kong dollar'},
+      {code: 'KRW', name: 'Korean won'},
+      {code: 'TWD', name: 'Taiwan dollar'},
+      {code: 'INR', name: 'Indian rupee'},
+      {code: 'MXN', name: 'Mexican peso'},
+      {code: 'USD', name: 'US dollar'}
+    ];
+    /* Compact SVG flags. Each returns a 24x16 flag matching (roughly) the
+       panel's flag palette, so the webapp preview lines up visually with
+       what actually shows on the LED. Fields defined as inline strings
+       rather than templates so the whole map stays a single lookup. */
+    const FX_FLAG_SVG = {
+      JPY: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fff"/><circle cx="12" cy="8" r="4.5" fill="#bc002d"/></svg>',
+      EUR: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#003399"/><g fill="#ffcc00"><circle cx="12" cy="8" r="1"/><circle cx="12" cy="3" r="0.8"/><circle cx="12" cy="13" r="0.8"/><circle cx="7" cy="8" r="0.8"/><circle cx="17" cy="8" r="0.8"/><circle cx="8.6" cy="4.6" r="0.8"/><circle cx="15.4" cy="4.6" r="0.8"/><circle cx="8.6" cy="11.4" r="0.8"/><circle cx="15.4" cy="11.4" r="0.8"/></g></svg>',
+      CNY: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#de2910"/><polygon points="5,3 5.7,4.9 7.7,4.9 6.1,6 6.7,7.9 5,6.8 3.3,7.9 3.9,6 2.3,4.9 4.3,4.9" fill="#ffde00"/><circle cx="9" cy="3" r="0.6" fill="#ffde00"/><circle cx="10.5" cy="5" r="0.6" fill="#ffde00"/><circle cx="10.5" cy="7" r="0.6" fill="#ffde00"/><circle cx="9" cy="9" r="0.6" fill="#ffde00"/></svg>',
+      GBP: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#012169"/><path d="M0,0 L24,16 M24,0 L0,16" stroke="#fff" stroke-width="3"/><path d="M0,0 L24,16 M24,0 L0,16" stroke="#c8102e" stroke-width="1.2"/><path d="M12,0 V16 M0,8 H24" stroke="#fff" stroke-width="4"/><path d="M12,0 V16 M0,8 H24" stroke="#c8102e" stroke-width="2"/></svg>',
+      CAD: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fff"/><rect width="6" height="16" fill="#d80020"/><rect x="18" width="6" height="16" fill="#d80020"/><polygon points="12,4 12.7,6.5 15,5.5 13.5,7.5 15.5,8 13.5,8.5 15,10.5 12.7,9.5 12,12 11.3,9.5 9,10.5 10.5,8.5 8.5,8 10.5,7.5 9,5.5 11.3,6.5" fill="#d80020"/></svg>',
+      AUD: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#00247d"/><rect width="10" height="7" fill="#00247d"/><path d="M0,0 L10,7 M10,0 L0,7" stroke="#fff" stroke-width="1.4"/><path d="M0,0 L10,7 M10,0 L0,7" stroke="#c8102e" stroke-width="0.6"/><path d="M5,0 V7 M0,3.5 H10" stroke="#fff" stroke-width="1.8"/><path d="M5,0 V7 M0,3.5 H10" stroke="#c8102e" stroke-width="0.9"/><circle cx="5" cy="12" r="0.8" fill="#fff"/><circle cx="14" cy="4" r="0.6" fill="#fff"/><circle cx="19" cy="7" r="0.6" fill="#fff"/><circle cx="16" cy="11" r="0.6" fill="#fff"/><circle cx="20" cy="13" r="0.6" fill="#fff"/><circle cx="22" cy="9" r="0.4" fill="#fff"/></svg>',
+      CHF: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#d52b1e"/><rect x="10" y="4" width="4" height="8" fill="#fff"/><rect x="8" y="6" width="8" height="4" fill="#fff"/></svg>',
+      HKD: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#de2910"/><g transform="translate(12,8)"><g fill="#fff"><path d="M0,-4 Q1.5,-1 0,1 Q-1.5,-1 0,-4"/><path d="M0,-4 Q1.5,-1 0,1 Q-1.5,-1 0,-4" transform="rotate(72)"/><path d="M0,-4 Q1.5,-1 0,1 Q-1.5,-1 0,-4" transform="rotate(144)"/><path d="M0,-4 Q1.5,-1 0,1 Q-1.5,-1 0,-4" transform="rotate(216)"/><path d="M0,-4 Q1.5,-1 0,1 Q-1.5,-1 0,-4" transform="rotate(288)"/></g></g></svg>',
+      KRW: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fff"/><g transform="translate(12,8) rotate(-30)"><path d="M-3.5,0 A3.5,3.5 0 0,1 0,-3.5 A1.75,1.75 0 0,1 0,0 A1.75,1.75 0 0,0 0,3.5 A3.5,3.5 0 0,1 -3.5,0Z" fill="#cd2e3a"/><path d="M3.5,0 A3.5,3.5 0 0,1 0,3.5 A1.75,1.75 0 0,1 0,0 A1.75,1.75 0 0,0 0,-3.5 A3.5,3.5 0 0,1 3.5,0Z" fill="#0047a0"/></g></svg>',
+      TWD: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fe0000"/><rect width="12" height="8" fill="#000095"/><circle cx="6" cy="4" r="2.4" fill="#fff"/><circle cx="6" cy="4" r="1.4" fill="#000095"/></svg>',
+      INR: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fff"/><rect width="24" height="5.3" fill="#ff9933"/><rect y="10.6" width="24" height="5.4" fill="#138808"/><circle cx="12" cy="8" r="1.6" fill="none" stroke="#000080" stroke-width="0.5"/></svg>',
+      MXN: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fff"/><rect width="8" height="16" fill="#006847"/><rect x="16" width="8" height="16" fill="#ce1126"/><circle cx="12" cy="8" r="1.6" fill="none" stroke="#8a5a2b" stroke-width="0.4"/></svg>',
+      USD: '<svg viewBox="0 0 24 16" width="24" height="16"><rect width="24" height="16" fill="#fff"/><g fill="#b22234"><rect y="0" width="24" height="1.2"/><rect y="2.5" width="24" height="1.2"/><rect y="5" width="24" height="1.2"/><rect y="7.5" width="24" height="1.2"/><rect y="10" width="24" height="1.2"/><rect y="12.5" width="24" height="1.2"/><rect y="15" width="24" height="1"/></g><rect width="10" height="8.7" fill="#3c3b6e"/></svg>'
+    };
+    /* Given the current watchlist, pick the base for a tile: prefer USD;
+       if the tile itself is USD, fall back to EUR so USD/USD is impossible. */
+    function tileBase(code) {
+      return code === 'USD' ? 'EUR' : 'USD';
+    }
+    /* A tile represents the quote currency of a pair -- the one the base is
+       being converted into, which is what the panel row actually reports on.
+       So a tile is "selected" iff some pair in the watchlist has this code
+       as its quote. Matching base too would cause the USD tile to light up
+       for every USD/x pair, which visually reads as "I'm watching USD"
+       instead of the actual meaning (I'm watching the other currency). */
+    function tileIsSelected(code) {
+      return currencyPairs.some(pair => {
+        const [, quote] = pair.split('/');
+        return quote === code;
       });
-      /* Hard cap the Add button when the list is full so the endpoint's 400
-         is never the way the user finds out. */
+    }
+    function pairForTile(code) {
+      /* Return the pair on the watchlist whose quote is this tile's code, so
+         a tap removes exactly that pair. Fall back to the default add pair
+         (rare -- only if callers ask for a tile that isn't selected). */
+      return currencyPairs.find(pair => {
+        const [, quote] = pair.split('/');
+        return quote === code;
+      }) || `${tileBase(code)}/${code}`;
+    }
+    function renderCurrencyPairs() {
+      currencyQuickGrid.innerHTML = '';
       const atCap = currencyPairs.length >= maxCurrencyPairs;
-      const submitButton = currencyForm.querySelector('button[type="submit"]');
-      if (submitButton) submitButton.disabled = atCap;
-      if (atCap && currencyNote) {
-        currencyNote.textContent = `Currency mode fits ${maxCurrencyPairs} pairs. Remove one to add another.`;
+      FX_TILES.forEach(({code, name}) => {
+        const selected = tileIsSelected(code);
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'fx-tile' + (selected ? ' is-selected' : '');
+        tile.dataset.code = code;
+        tile.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        tile.setAttribute('aria-label', selected ? `Remove ${code} (${name})` : `Add ${code} (${name}) against ${tileBase(code)}`);
+        /* At-cap greys out unselected tiles so the user finds out from the
+           tile itself, not from a 400 after tapping. Selected tiles stay
+           tappable so they can be removed to free a slot. */
+        if (atCap && !selected) tile.disabled = true;
+        tile.innerHTML =
+          `<span class="fx-tile-flag">${FX_FLAG_SVG[code] || ''}</span>` +
+          `<span class="fx-tile-code">${code}</span>` +
+          `<span class="fx-tile-base">vs ${tileBase(code)}</span>`;
+        tile.addEventListener('click', () => toggleCurrencyTile(code));
+        currencyQuickGrid.appendChild(tile);
+      });
+      /* Note reflects the count so the user can see how many slots are left
+         without counting selected tiles. Overridden by add/remove/error
+         handlers below with their own transient message. */
+      if (currencyNote) {
+        if (atCap) {
+          currencyNote.textContent = `At ${maxCurrencyPairs}/${maxCurrencyPairs}. Tap a lit tile to remove one.`;
+        } else {
+          currencyNote.textContent = `${currencyPairs.length}/${maxCurrencyPairs} pairs selected. Rates refresh every 10 minutes.`;
+        }
       }
     }
     async function postCurrency(path, pair) {
@@ -1143,32 +1187,41 @@
       }
       return data;
     }
-    async function removeCurrencyPair(pair) {
-      const data = await postCurrency('/currency/remove', pair);
-      if (data) currencyNote.textContent = `Removed ${pair}.`;
+    async function toggleCurrencyTile(code) {
+      if (tileIsSelected(code)) {
+        const pair = pairForTile(code);
+        currencyNote.textContent = `Removing ${pair}\u2026`;
+        const data = await postCurrency('/currency/remove', pair);
+        if (data) currencyNote.textContent = `Removed ${pair}.`;
+        return;
+      }
+      if (currencyPairs.length >= maxCurrencyPairs) {
+        currencyNote.textContent = `Already at ${maxCurrencyPairs} pairs. Remove one first.`;
+        return;
+      }
+      const pair = `${tileBase(code)}/${code}`;
+      currencyNote.textContent = `Adding ${pair}\u2026`;
+      const data = await postCurrency('/currency/add', pair);
+      if (data) {
+        currencyNote.textContent = `Added ${pair}. Rates refresh within a few seconds.`;
+        refreshStatus();
+      }
     }
-    currencyPresetSelect.addEventListener('change', () => {
-      /* Show the two three-letter inputs only when the user picked "Custom…".
-         Autofocus the base field so a keyboard user can start typing right
-         away, matching how the flight card's Airport input behaves. */
-      const isCustom = currencyPresetSelect.value === 'custom';
-      currencyCustomWrap.classList.toggle('hidden', !isCustom);
-      if (isCustom) currencyCustomBase.focus();
-    });
     currencyForm.addEventListener('submit', async event => {
       event.preventDefault();
-      let pair = currencyPresetSelect.value;
-      if (pair === 'custom') {
-        const base = currencyCustomBase.value.trim().toUpperCase();
-        const quote = currencyCustomQuote.value.trim().toUpperCase();
-        if (!base || !quote) {
-          currencyNote.textContent = 'Fill in both codes, e.g. USD and JPY.';
-          return;
-        }
-        pair = `${base}/${quote}`;
+      const base = currencyCustomBase.value.trim().toUpperCase();
+      const quote = currencyCustomQuote.value.trim().toUpperCase();
+      if (!base || !quote) {
+        currencyNote.textContent = 'Fill in both codes, e.g. USD and JPY.';
+        return;
       }
+      const pair = `${base}/${quote}`;
       if (currencyPairs.includes(pair)) {
         currencyNote.textContent = `${pair} is already on the list.`;
+        return;
+      }
+      if (currencyPairs.length >= maxCurrencyPairs) {
+        currencyNote.textContent = `Already at ${maxCurrencyPairs} pairs. Remove one first.`;
         return;
       }
       currencyNote.textContent = `Adding ${pair}\u2026`;
@@ -1177,6 +1230,7 @@
         currencyNote.textContent = `Added ${pair}. Rates refresh within a few seconds.`;
         currencyCustomBase.value = '';
         currencyCustomQuote.value = '';
+        if (currencyCustomDetails) currencyCustomDetails.open = false;
         refreshStatus();
       }
     });
@@ -1215,7 +1269,7 @@
       currencyFlagMode = !!data.currency_flag_mode;
       currencyFlagModeToggle.checked = currencyFlagMode;
       currencyNote.textContent = currencyFlagMode
-        ? 'Flag layout on. Two rows, quote flag on the left.'
+        ? 'Flag layout on. Two rows big, or four rows small when change is off.'
         : 'Classic layout: up to three rows with the full pair label.';
     });
     renderCurrencyPairs();
