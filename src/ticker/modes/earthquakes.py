@@ -32,8 +32,23 @@ LOGGER = logging.getLogger(__name__)
 
 # USGS publishes several thresholds; 4.5+ is the sweet spot for "something
 # happened somewhere in the world today" without spamming the panel with the
-# constant low-mag chatter along the Ring of Fire.
+# constant low-mag chatter along the Ring of Fire. When the user lowers the
+# display filter below 4.5 we switch to the M2.5+ daily feed instead, since
+# the 4.5+ daily feed literally does not contain sub-4.5 events.
 FEED_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/{threshold}_day.geojson"
+
+
+def _feed_url_for(min_mag: float) -> str:
+    """Pick the smallest USGS feed that covers the requested threshold.
+
+    USGS publishes tiered summary feeds; when the user filters below M4.5
+    we need the 2.5+ feed since the 4.5+ feed literally does not contain
+    sub-4.5 events. Anything at or above 4.5 uses the smaller 4.5+ feed
+    (faster fetch, smaller payload).
+    """
+    if min_mag < 4.5:
+        return FEED_URL.format(threshold="2.5")
+    return FEED_URL.format(threshold="4.5")
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
 
@@ -166,6 +181,10 @@ class EarthquakesMode(Mode):
         # Far enough back that the first render always fetches.
         self._last_refresh = -1e9
         self._failed = False
+        # Cache invalidation: remember which feed URL produced `self.quakes`
+        # so a webapp filter edit that changes the feed (e.g. crossing the
+        # M4.5 threshold) forces a re-fetch on the next frame.
+        self._cached_feed_url: str | None = None
         # A callable that returns the current QuakeAlert (or None). The
         # renderer wires this to its long-lived QuakeAlertWatcher so the mode
         # doesn't own the polling; the mode is a pure display of whatever
@@ -175,9 +194,9 @@ class EarthquakesMode(Mode):
 
     # -- data ---------------------------------------------------------------
 
-    def _fetch(self) -> list[Quake] | None:
+    def _fetch(self, feed_url: str) -> list[Quake] | None:
         request = urllib.request.Request(
-            FEED_URL.format(threshold=self.FEED_THRESHOLD),
+            feed_url,
             headers={"User-Agent": USER_AGENT},
         )
         try:
@@ -206,10 +225,31 @@ class EarthquakesMode(Mode):
         # USGS ships oldest-first sometimes; sort newest-first so the card the
         # user is most likely to care about is the one that comes up first.
         quakes.sort(key=lambda q: q.time_ms, reverse=True)
-        return quakes[: self.MAX_ROWS]
+        # Return the raw newest-first list; the caller applies user filter and
+        # the MAX_ROWS cap so a filter change doesn't require a refetch when
+        # the raw payload is still fresh in memory.
+        return quakes
 
-    def _refresh(self) -> None:
-        quakes = self._fetch()
+    def _apply_filter(
+        self, quakes: list[Quake], min_mag: float, region: str
+    ) -> list[Quake]:
+        """Drop quakes below the mag floor or outside the region substring.
+
+        Region uses the same case-insensitive substring match as the alert
+        watcher's ``_in_region``, minus the California bbox fallback -- the
+        display doesn't need the bbox because a user who typed "California"
+        can just as easily type it into the dropdown.
+        """
+        region_lower = region.strip().lower()
+        filtered = [
+            q for q in quakes
+            if q.magnitude >= min_mag
+            and (not region_lower or region_lower in q.place.lower())
+        ]
+        return filtered[: self.MAX_ROWS]
+
+    def _refresh(self, feed_url: str) -> None:
+        quakes = self._fetch(feed_url)
         if quakes is None:
             self._failed = True
             self._last_refresh = time.monotonic()
@@ -217,14 +257,28 @@ class EarthquakesMode(Mode):
         # An empty list is a legitimate result -- it means the quiet-day
         # placeholder card should appear -- so it is not a failure.
         self.quakes = quakes
+        self._cached_feed_url = feed_url
         self._failed = False
         self._last_refresh = time.monotonic()
 
     # -- render -------------------------------------------------------------
 
-    def _draw_header(self, canvas: Canvas) -> None:
-        """Top-of-panel eyebrow: source + threshold. Same idiom as news mode."""
-        canvas.text(1, 1, canvas.fit("USGS 24H  M4.5+"), (95, 135, 195), SMALL)
+    def _draw_header(self, canvas: Canvas, min_mag: float, region: str) -> None:
+        """Top-of-panel eyebrow: source + threshold + region abbreviation.
+
+        The header echoes the current filter so a user who narrowed to
+        California sees ``USGS  M3.5+  CA`` rather than the misleading fixed
+        ``USGS 24H  M4.5+`` label. Time window drops out of the header when
+        the filter is engaged because the panel then sources from the M2.5+
+        hourly/daily feed rather than the M4.5+ 24-hour feed and the label
+        would be a lie.
+        """
+        threshold = f"M{min_mag:g}+"
+        region_label = _short_region(region)
+        parts = ["USGS", threshold]
+        if region_label:
+            parts.append(region_label)
+        canvas.text(1, 1, canvas.fit("  ".join(parts)), (95, 135, 195), SMALL)
         canvas.hline(11, (26, 36, 56))
 
     def _draw_alert_header(self, canvas: Canvas, tick: int) -> None:
@@ -286,10 +340,17 @@ class EarthquakesMode(Mode):
         if rel:
             canvas.text(1, 24, rel, DIM, SMALL)
 
-    def _draw_quiet(self, canvas: Canvas) -> None:
+    def _draw_quiet(self, canvas: Canvas, min_mag: float, region: str) -> None:
         """When the feed is up but has nothing above threshold today."""
-        canvas.text(1, 15, "No M4.5+ quakes", WHITE, SMALL)
-        canvas.text(1, 24, "in the last 24 hours.", DIM, SMALL)
+        threshold = f"M{min_mag:g}+"
+        if region:
+            # Two lines: threshold on top, region on bottom. Region gets the
+            # same short-region treatment as the header so "California" -> "CA".
+            canvas.text(1, 15, canvas.fit(f"No {threshold} quakes"), WHITE, SMALL)
+            canvas.text(1, 24, canvas.fit(f"in {_short_region(region)}"), DIM, SMALL)
+        else:
+            canvas.text(1, 15, canvas.fit(f"No {threshold} quakes"), WHITE, SMALL)
+            canvas.text(1, 24, "in the last 24 hours.", DIM, SMALL)
 
     def _draw_error(self, canvas: Canvas, tick: int) -> None:
         """When the fetch itself failed. Keeps the header so it looks alive."""
@@ -334,22 +395,38 @@ class EarthquakesMode(Mode):
             self._draw_alert(canvas, alert, tick)
             return
 
-        age_limit = self.ERROR_BACKOFF_SECONDS if self._failed else self.CACHE_SECONDS
-        if time.monotonic() - self._last_refresh >= age_limit:
-            self._refresh()
+        # Read the display filter live so a webapp edit takes effect on the
+        # next frame -- no service restart, no waiting on the cache TTL.
+        min_mag = self.config.current_quake_filter_min_mag()
+        region = self.config.current_quake_filter_region()
+        feed_url = _feed_url_for(min_mag)
 
-        self._draw_header(canvas)
+        # Refetch if the cache is stale OR the required feed URL changed --
+        # e.g. the user just crossed the M4.5 threshold and we now need the
+        # M2.5+ feed. Feed switches invalidate immediately because the cached
+        # list from the previous feed is a subset that would hide events the
+        # new filter should show.
+        age_limit = self.ERROR_BACKOFF_SECONDS if self._failed else self.CACHE_SECONDS
+        stale = time.monotonic() - self._last_refresh >= age_limit
+        feed_changed = self._cached_feed_url != feed_url
+        if stale or feed_changed:
+            self._refresh(feed_url)
+
+        self._draw_header(canvas, min_mag, region)
 
         if self._failed and not self.quakes:
             self._draw_error(canvas, tick)
             return
 
-        if not self.quakes:
-            self._draw_quiet(canvas)
+        visible = self._apply_filter(self.quakes, min_mag, region)
+
+        if not visible:
+            self._draw_quiet(canvas, min_mag, region)
             return
 
-        # Rotate through the feed. The last-good list stays on screen through
-        # a failed refresh, so a temporary outage doesn't blank the mode.
+        # Rotate through the *filtered* list. The last-good raw list stays in
+        # memory through a failed refresh, so a temporary outage doesn't blank
+        # the mode -- and the filter still applies to that stale data.
         frames = max(1, int(self.ROTATE_SECONDS * max(1, self.config.fps)))
-        current = self.quakes[(tick // frames) % len(self.quakes)]
+        current = visible[(tick // frames) % len(visible)]
         self._draw_quake(canvas, current)

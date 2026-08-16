@@ -193,6 +193,8 @@ def create_app() -> Flask:
             quake_min_mag=config.current_quake_alert_min_mag(),
             quake_region=config.current_quake_alert_region(),
             quake_dwell_seconds=config.current_quake_alert_dwell_seconds(),
+            quake_filter_min_mag=config.current_quake_filter_min_mag(),
+            quake_filter_region=config.current_quake_filter_region(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -469,6 +471,40 @@ def create_app() -> Flask:
             name=config.current_nametag_name(),
             color=_rgb_to_hex(config.current_nametag_color()),
             font=config.current_nametag_font(),
+            current_mode=config.current_mode(),
+        )
+
+    @app.post("/quakes/filter")
+    def set_quake_filter():  # type: ignore[no-untyped-def]
+        """Update the display filter for the passive quakes mode.
+
+        Distinct endpoint from ``/quakes`` (which controls the auto-switch
+        alert) because the two settings are semantically different -- see
+        ``config.quake_filter_file`` for the reasoning. Accepts an optional
+        subset of ``{min_mag, region}``. Switches into quakes mode on success
+        so the user can see the effect immediately.
+        """
+        payload = request.get_json(silent=True) or {}
+        raw_mag = payload.get("min_mag", request.form.get("min_mag"))
+        raw_region = payload.get("region", request.form.get("region"))
+        config = load_config()
+        try:
+            config.set_quake_filter(
+                min_mag=raw_mag if raw_mag is not None and str(raw_mag).strip() != "" else None,
+                region=raw_region if raw_region is not None else None,
+            )
+        except ValueError as error:
+            return jsonify(
+                error=str(error),
+                min_mag=config.current_quake_filter_min_mag(),
+                region=config.current_quake_filter_region(),
+            ), 400
+        # Switch to quakes mode so the user sees the filter applied without a
+        # manual mode switch. Mirrors the pattern set by /nametag and /bart.
+        config.set_mode("quakes")
+        return jsonify(
+            min_mag=config.current_quake_filter_min_mag(),
+            region=config.current_quake_filter_region(),
             current_mode=config.current_mode(),
         )
 

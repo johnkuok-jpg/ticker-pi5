@@ -1323,7 +1323,11 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
   border-style: solid;
 }
 
-.quake-card #quake-region-preset {
+/* Region preset dropdown. Selector matches both the alert card
+   (#quake-region-preset) and the filter card (#quake-filter-region-preset)
+   since both are just dressed-up native <select>s that need identical
+   treatment. */
+.quake-card select[id$="region-preset"] {
   width: 100%;
   padding: 12px 0;
   background: transparent;
@@ -1337,7 +1341,7 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
   outline: none;
 }
 
-.quake-card #quake-region-preset:focus {
+.quake-card select[id$="region-preset"]:focus {
   border-bottom-color: var(--accent);
 }
 
@@ -1368,7 +1372,10 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
   margin-top: 14px;
 }
 
-.quake-card #quake-save {
+/* Save button. Matches both alert (#quake-save) and filter (#quake-filter-save)
+   -- the filter card reuses the same visual chip. */
+.quake-card #quake-save,
+.quake-card #quake-filter-save {
   padding: 10px 20px;
   border: 1px solid var(--accent);
   border-radius: 6px;
@@ -1383,7 +1390,8 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
   transition: opacity 120ms;
 }
 
-.quake-card #quake-save:disabled {
+.quake-card #quake-save:disabled,
+.quake-card #quake-filter-save:disabled {
   opacity: .5;
   cursor: default;
 }

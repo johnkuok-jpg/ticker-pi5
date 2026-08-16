@@ -359,6 +359,21 @@ class Config:
         return self.state_dir / "nametag_color"
 
     @property
+    def quake_filter_file(self) -> Path:
+        """JSON blob for the *display* filter on the passive quakes mode.
+
+        Distinct from ``quake_alert_settings_file`` because these two features
+        are semantically different: alert is "when should the panel interrupt
+        me?", filter is "while I'm looking at quakes, what should I see?".
+        Keeping them separate means a user can, say, filter the display to
+        California while still keeping worldwide alerts on.
+
+        Schema: ``{"min_mag": 3.5, "region": "California"}``. Both keys are
+        optional; missing keys fall back to env defaults.
+        """
+        return self.state_dir / "quake_filter.json"
+
+    @property
     def quake_alert_settings_file(self) -> Path:
         """JSON blob for quake-alert settings (min_mag / region / dwell).
 
@@ -752,6 +767,76 @@ class Config:
             overrides["dwell_seconds"] = dwell
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.quake_alert_settings_file.write_text(
+            json.dumps(overrides, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    # --- Quakes display filter --------------------------------------------
+    #
+    # Parallel structure to the alert settings above, but scoped to the passive
+    # display: which quakes should appear when the user manually opens the
+    # quakes mode. Deliberately not sharing state with the alert settings --
+    # some people want "alert me on California only" but "show me global
+    # quakes when I open the mode" (or vice-versa).
+
+    def _read_quake_filter_overrides(self) -> dict:
+        try:
+            raw = self.quake_filter_file.read_text(encoding="utf-8")
+        except OSError:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def current_quake_filter_min_mag(self) -> float:
+        """Display floor for the quakes mode. Falls back to 4.5 (the classic feed)."""
+        override = self._read_quake_filter_overrides().get("min_mag")
+        try:
+            value = float(override) if override is not None else 4.5
+        except (TypeError, ValueError):
+            return 4.5
+        # Clamp to the same range the setter uses so a hand-edited file can't
+        # push the display below the underlying M2.5+ feed floor.
+        return max(2.5, min(9.9, value))
+
+    def current_quake_filter_region(self) -> str:
+        """Region substring for the display. Empty string = worldwide."""
+        override = self._read_quake_filter_overrides().get("region")
+        if override is None:
+            return ""
+        try:
+            return str(override).strip()
+        except Exception:  # pragma: no cover - defensive
+            return ""
+
+    def set_quake_filter(
+        self,
+        *,
+        min_mag: float | None = None,
+        region: str | None = None,
+    ) -> None:
+        """Merge new values into the display filter file.
+
+        Ranges mirror the alert setter so the same UI validation applies:
+        magnitude 2.5-9.9, region <=80 chars.
+        """
+        overrides = self._read_quake_filter_overrides()
+        if min_mag is not None:
+            try:
+                mag = float(min_mag)
+            except (TypeError, ValueError) as error:
+                raise ValueError("minimum magnitude must be a number") from error
+            if not 2.5 <= mag <= 9.9:
+                raise ValueError("minimum magnitude must be between 2.5 and 9.9")
+            overrides["min_mag"] = round(mag, 1)
+        if region is not None:
+            text = str(region).strip()
+            if len(text) > 80:
+                raise ValueError("region string is unreasonably long")
+            overrides["region"] = text
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.quake_filter_file.write_text(
             json.dumps(overrides, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
 

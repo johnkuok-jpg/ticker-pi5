@@ -148,3 +148,75 @@ def test_quake_clearing_state_file_returns_to_env(quake_config) -> None:  # type
     assert quake_config.current_quake_alert_min_mag() == pytest.approx(3.5)
     assert quake_config.current_quake_alert_region() == "California"
     assert quake_config.current_quake_alert_dwell_seconds() == 120
+
+
+# --- Quake display filter ---------------------------------------------------
+#
+# Separate from the alert settings: the filter controls what shows up while
+# the user is actively viewing the quakes mode. Defaults are hardcoded (4.5 /
+# worldwide) rather than env-derived because the filter is a display-only
+# convenience and not something a deployment would want to pin.
+
+
+def test_quake_filter_defaults_when_file_absent(quake_config) -> None:  # type: ignore[no-untyped-def]
+    # No filter file yet -> defaults are baked in, independent of the env.
+    assert quake_config.current_quake_filter_min_mag() == pytest.approx(4.5)
+    assert quake_config.current_quake_filter_region() == ""
+
+
+def test_quake_filter_round_trip(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_filter(min_mag=3.5, region="California")
+    assert quake_config.current_quake_filter_min_mag() == pytest.approx(3.5)
+    assert quake_config.current_quake_filter_region() == "California"
+
+
+def test_quake_filter_set_partial_min_mag(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_filter(min_mag=5.5)
+    assert quake_config.current_quake_filter_min_mag() == pytest.approx(5.5)
+    # Region not written -> still default worldwide, not whatever the alert has.
+    assert quake_config.current_quake_filter_region() == ""
+
+
+def test_quake_filter_worldwide_is_empty_string(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_filter(region="Japan")
+    quake_config.set_quake_filter(region="")
+    assert quake_config.current_quake_filter_region() == ""
+
+
+def test_quake_filter_min_mag_rejects_below_2_5(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_filter(min_mag=2.0)
+
+
+def test_quake_filter_min_mag_rejects_above_9_9(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_filter(min_mag=10.5)
+
+
+def test_quake_filter_min_mag_rejects_non_numeric(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_filter(min_mag="nope")
+
+
+def test_quake_filter_region_rejects_over_80_chars(quake_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        quake_config.set_quake_filter(region="x" * 81)
+
+
+def test_quake_filter_and_alert_are_independent(quake_config) -> None:  # type: ignore[no-untyped-def]
+    # A California-only alert paired with a worldwide display -- the exact use
+    # case that motivated splitting the two settings files apart in the first
+    # place. Writing one must not touch the other.
+    quake_config.set_quake_alert_settings(min_mag=5.0, region="California")
+    quake_config.set_quake_filter(min_mag=2.5, region="")
+    assert quake_config.current_quake_alert_region() == "California"
+    assert quake_config.current_quake_alert_min_mag() == pytest.approx(5.0)
+    assert quake_config.current_quake_filter_region() == ""
+    assert quake_config.current_quake_filter_min_mag() == pytest.approx(2.5)
+
+
+def test_quake_filter_clearing_state_file_returns_to_defaults(quake_config) -> None:  # type: ignore[no-untyped-def]
+    quake_config.set_quake_filter(min_mag=3.0, region="Japan")
+    quake_config.quake_filter_file.unlink()
+    assert quake_config.current_quake_filter_min_mag() == pytest.approx(4.5)
+    assert quake_config.current_quake_filter_region() == ""

@@ -181,11 +181,80 @@
       </select>
       <p id="nametag-note" class="schedule">Names that are too long scroll left-to-right.</p>
     </section>
-    {# Quake alert settings. The watcher runs in the background on every mode;
-       this card lets a phone tweak the two things people actually want to
-       change (how big a shake, where) without editing .env on the Pi. #}
+    {# Quakes display filter. Scopes what shows up while you're looking at
+       the quakes mode -- separate from the auto-switch alert card below so
+       a user can filter the display to California while keeping worldwide
+       alerts. Both cards share the same styling. #}
     <section class="flight quake-card" data-for="quakes">
-      <label for="quake-region-preset">Alerts</label>
+      <label for="quake-filter-region-preset">Filter</label>
+      <p class="schedule quake-lead">
+        What shows up while you're looking at the quakes mode. Applied live —
+        no service restart, no waiting on the cache.
+      </p>
+      <div class="quake-row">
+        <label class="quake-field">
+          <span class="quake-field-label">Minimum magnitude</span>
+          <span class="quake-mag-wrap">
+            <input id="quake-filter-min-mag" type="number" min="2.5" max="9.9" step="0.1"
+                   value="{{ '%.1f'|format(quake_filter_min_mag) }}"
+                   inputmode="decimal" aria-label="Minimum magnitude for display">
+            <span class="quake-mag-plus">+</span>
+          </span>
+        </label>
+      </div>
+      <div class="quake-presets" role="group" aria-label="Filter magnitude presets">
+        {% for preset in ['2.5', '3.5', '4.5', '5.5'] %}
+        <button type="button" class="quake-preset quake-filter-preset" data-min-mag="{{ preset }}">M{{ preset }}+</button>
+        {% endfor %}
+      </div>
+      {% set quake_filter_presets = [
+        ('', 'Worldwide'),
+        ('California', 'California'),
+        ('Northern California', 'Northern California'),
+        ('Southern California', 'Southern California'),
+        ('Alaska', 'Alaska'),
+        ('Nevada', 'Nevada'),
+        ('Oregon', 'Oregon'),
+        ('Washington', 'Washington'),
+        ('Hawaii', 'Hawaii'),
+        ('Japan', 'Japan'),
+        ('Chile', 'Chile'),
+        ('Indonesia', 'Indonesia'),
+        ('Turkey', 'Turkey'),
+        ('Mexico', 'Mexico')
+      ] %}
+      {% set quake_filter_known = quake_filter_presets|map(attribute=0)|list %}
+      <div class="quake-row">
+        <label class="quake-field">
+          <span class="quake-field-label">Location</span>
+          <select id="quake-filter-region-preset" aria-label="Filter location preset">
+            {% for value, label in quake_filter_presets %}
+            <option value="{{ value }}" {% if value == quake_filter_region %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+            <option value="__custom__" {% if quake_filter_region not in quake_filter_known %}selected{% endif %}>Custom…</option>
+          </select>
+        </label>
+      </div>
+      <label class="quake-custom {% if quake_filter_region in quake_filter_known %}hidden{% endif %}" id="quake-filter-custom-wrap">
+        <span class="quake-field-label">Custom location</span>
+        <input id="quake-filter-region-custom" type="text"
+               value="{% if quake_filter_region not in quake_filter_known %}{{ quake_filter_region }}{% endif %}"
+               placeholder="USGS 'place' substring, e.g. Peru"
+               autocomplete="off" spellcheck="false" maxlength="80"
+               aria-label="Custom filter region substring">
+      </label>
+      <div class="quake-controls">
+        <button type="button" id="quake-filter-save" class="flight-go">Save filter</button>
+      </div>
+      <p id="quake-filter-note" class="schedule">
+        Showing: M{{ '%.1f'|format(quake_filter_min_mag) }}+ {{ 'worldwide' if not quake_filter_region else 'in ' + quake_filter_region }}.
+      </p>
+    </section>
+    {# Auto-switch alert settings. The watcher runs in the background on every
+       mode; this card lets a phone tweak the two things people actually want
+       to change (how big a shake, where) without editing .env on the Pi. #}
+    <section class="flight quake-card" data-for="quakes">
+      <label for="quake-region-preset">Auto-switch alert</label>
       <p class="schedule quake-lead">
         Auto-switch to quakes mode when USGS reports a fresh shake at or above
         the threshold in the selected area.
@@ -805,7 +874,10 @@
        confirms with Save. Presets update the number in place, still
        requiring Save so the pattern stays predictable. */
     const quakeMinMag = document.getElementById('quake-min-mag');
-    const quakePresets = document.querySelectorAll('.quake-preset');
+    /* Alert card presets: everything with .quake-preset that is NOT tagged
+       .quake-filter-preset. Filter presets are a sibling class so we can
+       reuse the CSS but bind their own click handler below. */
+    const quakePresets = document.querySelectorAll('.quake-preset:not(.quake-filter-preset)');
     const quakeRegionPreset = document.getElementById('quake-region-preset');
     const quakeRegionCustom = document.getElementById('quake-region-custom');
     const quakeCustomWrap = document.getElementById('quake-custom-wrap');
@@ -863,6 +935,65 @@
     }
     if (quakeSave) {
       quakeSave.addEventListener('click', saveQuakeSettings);
+    }
+    /* Quakes display filter -- parallel to the alert card above. Distinct
+       IDs, distinct endpoint (/quakes/filter). No dwell (the display filter
+       is idempotent: it's what shows up now, not how long an alert lingers). */
+    const quakeFilterMinMag = document.getElementById('quake-filter-min-mag');
+    const quakeFilterPresets = document.querySelectorAll('.quake-filter-preset');
+    const quakeFilterRegionPreset = document.getElementById('quake-filter-region-preset');
+    const quakeFilterRegionCustom = document.getElementById('quake-filter-region-custom');
+    const quakeFilterCustomWrap = document.getElementById('quake-filter-custom-wrap');
+    const quakeFilterSave = document.getElementById('quake-filter-save');
+    const quakeFilterNote = document.getElementById('quake-filter-note');
+    function updateQuakeFilterCustomVisibility() {
+      const showCustom = quakeFilterRegionPreset.value === '__custom__';
+      quakeFilterCustomWrap.classList.toggle('hidden', !showCustom);
+      if (showCustom) quakeFilterRegionCustom.focus();
+    }
+    if (quakeFilterRegionPreset) {
+      quakeFilterRegionPreset.addEventListener('change', updateQuakeFilterCustomVisibility);
+    }
+    quakeFilterPresets.forEach(btn => {
+      btn.addEventListener('click', () => {
+        quakeFilterMinMag.value = btn.dataset.minMag;
+        quakeFilterPresets.forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
+    });
+    async function saveQuakeFilter() {
+      const region = quakeFilterRegionPreset.value === '__custom__'
+        ? quakeFilterRegionCustom.value.trim()
+        : quakeFilterRegionPreset.value;
+      const body = {
+        min_mag: quakeFilterMinMag.value,
+        region: region,
+      };
+      quakeFilterSave.disabled = true;
+      const originalText = quakeFilterSave.textContent;
+      quakeFilterSave.textContent = 'Saving…';
+      try {
+        const response = await fetch('/quakes/filter', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          quakeFilterNote.textContent = data.error || 'Could not save filter.';
+          return;
+        }
+        const regionLabel = data.region ? `in ${data.region}` : 'worldwide';
+        quakeFilterNote.textContent = `Saved. Showing M${Number(data.min_mag).toFixed(1)}+ ${regionLabel}.`;
+      } catch (err) {
+        quakeFilterNote.textContent = 'Could not reach the ticker. Try again.';
+      } finally {
+        quakeFilterSave.disabled = false;
+        quakeFilterSave.textContent = originalText;
+      }
+    }
+    if (quakeFilterSave) {
+      quakeFilterSave.addEventListener('click', saveQuakeFilter);
     }
     /* Spotify disconnect. Only the button exists (the connect button is a
        plain anchor because it must fully navigate to Spotify's auth page).
