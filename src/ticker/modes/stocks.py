@@ -27,13 +27,17 @@ Data sources, in preference order:
 from __future__ import annotations
 
 import json
+import re
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from io import BytesIO
+from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from ticker import icons, market
 from ticker.canvas import LARGE, SMALL, Canvas
@@ -178,6 +182,100 @@ class Quote:
         return GREY
 
 
+# Ticker patterns that FMP can plausibly serve a logo for: 1-5 uppercase
+# letters, optionally followed by a class suffix like ``.B`` (BRK.B) or ``-B``
+# for Yahoo-style class shares. Excludes crypto (``BTC-USD``), Yahoo index
+# tickers (``^GSPC``), and any other flavour of non-equity symbol so we
+# don't waste an HTTP call per refresh producing 404s.
+_EQUITY_TICKER_RE = re.compile(r"^[A-Z]{1,5}([.\-][A-Z]{1,2})?$")
+
+
+def _looks_like_equity(symbol: str) -> bool:
+    return bool(_EQUITY_TICKER_RE.match(symbol))
+
+
+_FMP_LOGO_URL = "https://financialmodelingprep.com/image-stock/{ticker}.png"
+_LOGO_TIMEOUT = 8.0
+
+
+def _fetch_and_prep_logo(symbol: str) -> Image.Image | None:
+    """Download a company logo from FMP and normalise it for the LED matrix.
+
+    Returns None on any failure -- 404, timeout, non-image response -- so the
+    caller can add the symbol to its negative cache and stop retrying for the
+    rest of the process lifetime.
+
+    Normalisation steps:
+
+    1. Downscale to 16x16 with a high-quality filter (Lanczos). The source
+       PNGs are 100x100 or 250x250; nearest-neighbour would murder the fine
+       detail on logos with thin strokes like the Google G.
+    2. Sample the four corners of the *original* source for background
+       luminance. If the corners are near-white, the logo is dark-on-light
+       and needs an RGB invert so it shows up on a black LED panel. If the
+       corners are near-black, leave the logo untouched (NVDA green, TSLA
+       red, GOOGL multi-colour all read directly).
+    3. Return an RGBA image so alpha blending onto the canvas works cleanly.
+    """
+    url = _FMP_LOGO_URL.format(ticker=symbol)
+    req = urllib.request.Request(url, headers={"User-Agent": "ticker-pi5/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=_LOGO_TIMEOUT) as resp:
+            data = resp.read()
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        return None
+    if len(data) < 128:
+        # 22-byte "error" body means the ticker isn't in FMP's index.
+        return None
+    try:
+        src = Image.open(BytesIO(data)).convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+    # Decide whether the logo needs inverting to show up on a black LED.
+    # Two failure modes to handle:
+    #
+    #   * Light background, dark logo (Apple's official 100x100 white-bg
+    #     apple). Corners are near-white; content is dark.
+    #   * Transparent background, dark logo (Palantir's black wordmark on
+    #     an alpha channel). Corners are alpha=0; content is dark.
+    #
+    # Sample opaque corners first for the light-bg case; if none are opaque,
+    # sample the opaque pixels of the whole image for the transparent-bg
+    # case. Either way we invert only when the visible content is dark.
+    w, h = src.size
+    corner_lums: list[float] = []
+    corner_alphas: list[int] = []
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        r, g, b, a = src.getpixel((x, y))
+        corner_alphas.append(a)
+        if a > 128:
+            corner_lums.append(0.299 * r + 0.587 * g + 0.114 * b)
+
+    needs_invert = False
+    if corner_lums:
+        # Opaque corners -- light background means dark logo on light card.
+        if (sum(corner_lums) / len(corner_lums)) > 200:
+            needs_invert = True
+    elif all(a < 8 for a in corner_alphas):
+        # Fully transparent corners -- sample the actually-drawn pixels.
+        content_lums: list[float] = []
+        for y in range(0, h, max(1, h // 8)):
+            for x in range(0, w, max(1, w // 8)):
+                r, g, b, a = src.getpixel((x, y))
+                if a > 128:
+                    content_lums.append(0.299 * r + 0.587 * g + 0.114 * b)
+        if content_lums and (sum(content_lums) / len(content_lums)) < 64:
+            needs_invert = True
+
+    small = src.resize((16, 16), Image.LANCZOS)
+    if needs_invert:
+        r, g, b, a = small.split()
+        inv = ImageOps.invert(Image.merge("RGB", (r, g, b)))
+        small = Image.merge("RGBA", (*inv.split(), a))
+    return small
+
+
 def market_status(now) -> tuple[str, tuple[int, int, int]]:  # type: ignore[no-untyped-def]
     """Label and colour for the current US market session.
 
@@ -231,6 +329,11 @@ class StocksMode(Mode):
         self.quotes: list[Quote] = []
         self._last_refresh = 0.0
         self._watched: tuple[str, ...] = ()
+        # Logo lookup state. Kept per-process rather than on disk: an FMP 404
+        # can flip to a 200 if a company relists, so a service restart is a
+        # reasonable cadence for retrying missing logos.
+        self._logo_fetches_in_flight: set[str] = set()
+        self._logo_missing: set[str] = set()
 
     # -- data ----------------------------------------------------------------
 
@@ -317,13 +420,92 @@ class StocksMode(Mode):
         self._last_refresh = time.monotonic()
 
     def _logo_for(self, symbol: str) -> Image.Image | None:
-        candidates = [path for path in self.config.logos_dir.glob("*.png") if path.stem.upper() == symbol.upper()]
-        if not candidates:
+        """Return a 16x16 RGBA logo for *symbol*, or None if we don't have one.
+
+        Lookup order:
+
+        1. A bundled or user-supplied PNG matching the symbol name in
+           ``logos_dir`` (e.g. ``lyft.png``). Legacy path -- these are the
+           two hand-drawn logos used by other modes and still supported here.
+        2. The runtime FMP cache at ``logos_dir/cache/<SYMBOL>.png``. If a
+           previous fetch downloaded and prepped a logo we'll load it here.
+        3. A background fetch against Financial Modeling Prep, kicked off
+           once per symbol per process. The next render tick picks it up
+           from the cache.
+
+        Crypto and index symbols (``BTC-USD``, ``^GSPC``) are skipped without
+        a network call -- FMP would just 404 and we'd burn a request each
+        pass.
+        """
+        upper = symbol.upper()
+
+        # 1. Bundled / user-supplied logos, kept for backwards compat.
+        candidates = [
+            path for path in self.config.logos_dir.glob("*.png")
+            if path.stem.upper() == upper
+        ]
+        if candidates:
+            try:
+                return Image.open(candidates[0]).convert("RGBA").resize((16, 16))
+            except OSError:
+                pass
+
+        # 2 + 3: FMP company-logo cache. Bail on non-company symbols so we
+        # don't hammer FMP with 404s for BTC-USD/^GSPC every 15 seconds.
+        if not _looks_like_equity(upper):
             return None
-        try:
-            return Image.open(candidates[0]).convert("RGBA").resize((16, 16))
-        except OSError:
+        cache_path = self._logo_cache_dir / f"{upper}.png"
+        if cache_path.exists():
+            try:
+                return Image.open(cache_path).convert("RGBA")
+            except OSError:
+                # A truncated download would land here. Delete and re-fetch.
+                cache_path.unlink(missing_ok=True)
+        # Negative cache: if we already tried this symbol and it 404'd, don't
+        # keep asking every 15 seconds.
+        if upper in self._logo_missing:
             return None
+        self._maybe_fetch_logo(upper, cache_path)
+        return None
+
+    @property
+    def _logo_cache_dir(self) -> Path:
+        d = self.config.logos_dir / "cache"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _maybe_fetch_logo(self, symbol: str, cache_path: Path) -> None:
+        """Kick off a single background download of ``symbol``'s logo.
+
+        Single-flight per symbol: the guard set prevents piling up threads
+        for the same ticker when the card rotates through a symbol whose
+        fetch is already running. Runs off the render thread so a slow FMP
+        response can't stall the 30fps LED loop.
+        """
+        if symbol in self._logo_fetches_in_flight:
+            return
+        self._logo_fetches_in_flight.add(symbol)
+
+        def _work():
+            try:
+                prepped = _fetch_and_prep_logo(symbol)
+                if prepped is None:
+                    self._logo_missing.add(symbol)
+                    return
+                # Write to a temp path then rename so a partial file never
+                # survives a crash mid-write.
+                tmp = cache_path.with_suffix(".png.tmp")
+                prepped.save(tmp, format="PNG")
+                tmp.replace(cache_path)
+            except Exception:
+                # Swallow -- next refresh will retry unless we already got
+                # a definitive 404, and the negative cache is scoped to
+                # this process anyway.
+                pass
+            finally:
+                self._logo_fetches_in_flight.discard(symbol)
+
+        threading.Thread(target=_work, daemon=True, name=f"logo-{symbol}").start()
 
     # -- entry point ---------------------------------------------------------
 
@@ -384,9 +566,27 @@ class StocksMode(Mode):
         canvas.text(percent_x, 0, percent, quote.color, LARGE)
         canvas.sprite(percent_x - 7, 6, icons.arrow_for(quote.change), icons.ARROW_PALETTE)
 
-        # Fit the symbol to whatever the percent and arrow leave behind, so a
-        # long symbol like BTC-USD is not clipped to BTC-U.
-        canvas.text(left, 0, canvas.fit(quote.symbol, percent_x - 8 - left, LARGE), AMBER, LARGE)
+        # Logo goes on the top row if we have one for this symbol. A 16x16
+        # sits neatly beside the LARGE-typed symbol and lands on the same
+        # visual row as the ticker letters. When there's no logo, the symbol
+        # takes back the full left-of-arrow width so long tickers like
+        # BTC-USD still fit without truncation.
+        logo = self._logo_for(quote.symbol)
+        if logo is not None:
+            canvas.image(left, 0, logo)
+            symbol_x = left + 16 + 2
+        else:
+            symbol_x = left
+
+        # Fit the symbol to whatever the percent, arrow, and logo leave
+        # behind, so a long symbol like BTC-USD is not clipped to BTC-U.
+        canvas.text(
+            symbol_x,
+            0,
+            canvas.fit(quote.symbol, percent_x - 8 - symbol_x, LARGE),
+            AMBER,
+            LARGE,
+        )
 
         price = compact_price(quote.price, 7)
         canvas.text_bold(left, 17, price, WHITE, LARGE)
