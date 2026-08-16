@@ -22,6 +22,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from ticker import flags
 from ticker.canvas import MEDIUM, SMALL, Canvas
 from ticker.modes.base import Mode
 from ticker.modes.stocks import compact_percent
@@ -111,6 +112,26 @@ class CurrencyMode(Mode):
     # window; a transient DNS hiccup shouldn't leave the panel stale for ten.
     ERROR_BACKOFF_SECONDS = 120
     MAX_ROWS = 3
+    # Flag mode is always exactly two rows: MEDIUM font, 12x8 flag, then
+    # pair label + rate + change on the right. Two rows is a hard cap here
+    # rather than a soft ladder so the flag column stays vertically aligned
+    # between rows even when the user configures only one pair.
+    FLAG_MAX_ROWS = 2
+    # Column layout for flag mode -- kept as constants so the tests can
+    # assert on the geometry without re-reading render() logic.
+    FLAG_X = 0
+    FLAG_ROW_TOPS = (2, 18)
+    # When the user has only one pair configured we vertically centre that
+    # one row rather than parking it against the top edge -- a lone row at
+    # y=2 looks like a rendering bug next to the empty half below it.
+    FLAG_ROW_TOP_SINGLE = 10
+    # Flag is 12 wide; give it 3 pixels of breathing room before the text
+    # column so the flag's edge does not blur into a currency letter.
+    FLAG_TEXT_X = flags.FLAG_WIDTH + 3
+    # The flag itself sits 2 pixels below the text top so its top edge
+    # aligns with the cap-height of the MEDIUM font rather than the
+    # rendered ascender line.
+    FLAG_Y_OFFSET = 2
 
     def __init__(self, config, opener=None) -> None:  # type: ignore[no-untyped-def]
         super().__init__(config)
@@ -210,7 +231,9 @@ class CurrencyMode(Mode):
         # Read the webapp state live on every render (same convention as
         # stocks); a config that ignored edits until service restart would
         # be a confusing, stale card.
-        pairs = tuple(self.config.current_currency_pairs()[: self.MAX_ROWS])
+        flag_mode = self.config.current_currency_flag_mode()
+        row_cap = self.FLAG_MAX_ROWS if flag_mode else self.MAX_ROWS
+        pairs = tuple(self.config.current_currency_pairs()[:row_cap])
         show_change = self.config.current_currency_show_change()
 
         age_limit = self.ERROR_BACKOFF_SECONDS if self._failed else self.CACHE_SECONDS
@@ -223,6 +246,13 @@ class CurrencyMode(Mode):
             canvas.scroll_text(12, "FX: WAITING FOR RATES", DIM, tick * 2, SMALL)
             return
 
+        if flag_mode:
+            self._render_flag_mode(canvas, show_change)
+        else:
+            self._render_classic(canvas, show_change)
+
+    def _render_classic(self, canvas: Canvas, show_change: bool) -> None:
+        """Historical three-row rate board."""
         rows = self.quotes[: self.MAX_ROWS]
         # Same font ladder as crypto: two rows fit MEDIUM cleanly; a third
         # only fits at SMALL. Matches the muscle memory a stocks/crypto user
@@ -255,3 +285,46 @@ class CurrencyMode(Mode):
                     text = _format_rate(quote.rate, budget)
                     x = canvas.width - 1 - canvas.text_width(text, font)
                     canvas.text(x, top, text, WHITE, font)
+
+    def _render_flag_mode(self, canvas: Canvas, show_change: bool) -> None:
+        """Two-row layout with a country flag beside each pair.
+
+        The flag identifies the quote currency (the one the base is buying
+        into), because that is the country whose economy the row is
+        reporting on, and the label collapses to just the quote code -- the
+        flag already carries the country, so a full ``USD/EUR`` label would
+        waste the pixels the rate column needs. If a currency has no
+        bundled flag, the row falls back to the full ``BASE/QUOTE`` label
+        so an unfamiliar pair still identifies itself.
+        """
+        rows = self.quotes[: self.FLAG_MAX_ROWS]
+        tops = (self.FLAG_ROW_TOP_SINGLE,) if len(rows) == 1 else self.FLAG_ROW_TOPS
+        for quote, top in zip(rows, tops):
+            flag = flags.flag_for(quote.quote)
+            if flag is not None:
+                flag_rows, palette = flag
+                canvas.sprite(self.FLAG_X, top + self.FLAG_Y_OFFSET, flag_rows, palette)
+                text_x = self.FLAG_TEXT_X
+                label = quote.quote
+            else:
+                text_x = 0
+                label = quote.pair_label
+
+            canvas.text(text_x, top, label, AMBER, MEDIUM)
+            label_end = text_x + canvas.text_width(label + " ", MEDIUM)
+
+            if show_change:
+                percent = compact_percent(quote.change_percent, 6)
+                percent_x = canvas.width - 1 - canvas.text_width(percent, MEDIUM)
+                canvas.text(percent_x, top, percent, quote.color, MEDIUM)
+                available = percent_x - 2 - label_end
+                budget = canvas.max_chars_in(available, MEDIUM)
+                if budget >= 3:
+                    canvas.text(label_end, top, _format_rate(quote.rate, budget), WHITE, MEDIUM)
+            else:
+                available = canvas.width - 1 - label_end
+                budget = canvas.max_chars_in(available, MEDIUM)
+                if budget >= 3:
+                    text = _format_rate(quote.rate, budget)
+                    x = canvas.width - 1 - canvas.text_width(text, MEDIUM)
+                    canvas.text(x, top, text, WHITE, MEDIUM)

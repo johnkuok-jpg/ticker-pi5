@@ -315,6 +315,19 @@ def test_currency_show_change_round_trip(currency_config) -> None:  # type: igno
     assert currency_config.current_currency_show_change() is True
 
 
+def test_currency_flag_mode_defaults_off(currency_config) -> None:  # type: ignore[no-untyped-def]
+    # Missing file means "off" -- a fresh upgrade lands on the historical
+    # three-row rate board, and the flag layout is strictly opt-in.
+    assert currency_config.current_currency_flag_mode() is False
+
+
+def test_currency_flag_mode_round_trip(currency_config) -> None:  # type: ignore[no-untyped-def]
+    currency_config.set_currency_flag_mode(True)
+    assert currency_config.current_currency_flag_mode() is True
+    currency_config.set_currency_flag_mode(False)
+    assert currency_config.current_currency_flag_mode() is False
+
+
 # ---- costco warehouses ---------------------------------------------------
 
 

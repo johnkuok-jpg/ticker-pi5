@@ -142,6 +142,11 @@
                {% if currency_show_change %}checked{% endif %}>
         <span>Show 24-hour change</span>
       </label>
+      <label class="currency-toggle">
+        <input id="currency-flag-mode" type="checkbox"
+               {% if currency_flag_mode %}checked{% endif %}>
+        <span>Two-line flag layout</span>
+      </label>
       <p id="currency-note" class="schedule">Up to {{ max_currency_pairs }} pairs. Rates refresh every 10 minutes; the upstream feed itself updates hourly.</p>
     </section>
     <section class="flight" data-for="costco">
@@ -623,6 +628,7 @@
     let currencyPairs = {{ currency_pairs | list | tojson }};
     const maxCurrencyPairs = {{ max_currency_pairs | tojson }};
     let currencyShowChange = {{ currency_show_change | tojson }};
+    let currencyFlagMode = {{ currency_flag_mode | tojson }};
     let costcoWarehouses = {{ costco_warehouses | list | tojson }};
     const maxCostcoWarehouses = {{ max_costco_warehouses | tojson }};
     const flightForm = document.getElementById('flight-form');
@@ -717,6 +723,10 @@
       if (typeof data.currency_show_change === 'boolean' && data.currency_show_change !== currencyShowChange) {
         currencyShowChange = data.currency_show_change;
         if (currencyShowChangeToggle) currencyShowChangeToggle.checked = currencyShowChange;
+      }
+      if (typeof data.currency_flag_mode === 'boolean' && data.currency_flag_mode !== currencyFlagMode) {
+        currencyFlagMode = data.currency_flag_mode;
+        if (currencyFlagModeToggle) currencyFlagModeToggle.checked = currencyFlagMode;
       }
       /* Same guard for the Costco card: keep the chip list in step with the
          source of truth if another phone edited it. */
@@ -1085,6 +1095,7 @@
     const currencyList = document.getElementById('currency-list');
     const currencyNote = document.getElementById('currency-note');
     const currencyShowChangeToggle = document.getElementById('currency-show-change');
+    const currencyFlagModeToggle = document.getElementById('currency-flag-mode');
     function renderCurrencyPairs() {
       currencyList.innerHTML = '';
       currencyPairs.forEach(pair => {
@@ -1187,6 +1198,25 @@
       currencyNote.textContent = currencyShowChange
         ? '24-hour change column on.'
         : 'Change column off. Rate gets the full row.';
+    });
+    currencyFlagModeToggle.addEventListener('change', async () => {
+      const wanted = currencyFlagModeToggle.checked;
+      const response = await fetch('/currency/flag-mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: wanted})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        currencyNote.textContent = 'Could not save the layout.';
+        currencyFlagModeToggle.checked = currencyFlagMode;
+        return;
+      }
+      currencyFlagMode = !!data.currency_flag_mode;
+      currencyFlagModeToggle.checked = currencyFlagMode;
+      currencyNote.textContent = currencyFlagMode
+        ? 'Flag layout on. Two rows, quote flag on the left.'
+        : 'Classic layout: up to three rows with the full pair label.';
     });
     renderCurrencyPairs();
     /* Costco card: warehouse chips + preset/custom form. Mirrors the

@@ -409,6 +409,16 @@ class Config:
         return self.state_dir / "currency_show_change"
 
     @property
+    def currency_flag_mode_file(self) -> Path:
+        """Toggle for the two-row flag layout on the currency card.
+
+        Written as ``on`` or ``off``. Missing file = off, so a fresh install
+        keeps the historical three-row rate board and only opts in when the
+        user asks for it.
+        """
+        return self.state_dir / "currency_flag_mode"
+
+    @property
     def costco_warehouses_file(self) -> Path:
         """Comma-separated Costco warehouse IDs (e.g. ``475,422,118``).
 
@@ -1119,6 +1129,27 @@ class Config:
             ("on" if enabled else "off") + "\n", encoding="utf-8"
         )
         return self.current_currency_show_change()
+
+    def current_currency_flag_mode(self) -> bool:
+        """Whether the currency card renders the two-row flag layout.
+
+        Missing file returns False so an upgrade lands on the old three-row
+        rate board; only the exact string ``on`` (any case, ignoring
+        surrounding whitespace) opts in.
+        """
+        try:
+            raw = self.currency_flag_mode_file.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return raw.strip().lower() == "on"
+
+    def set_currency_flag_mode(self, enabled: bool) -> bool:
+        """Persist the flag-mode toggle; returns the effective state."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.currency_flag_mode_file.write_text(
+            ("on" if enabled else "off") + "\n", encoding="utf-8"
+        )
+        return self.current_currency_flag_mode()
 
     # -- costco --------------------------------------------------------------
 

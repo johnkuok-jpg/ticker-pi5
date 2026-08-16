@@ -207,6 +207,7 @@ def create_app() -> Flask:
             currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
             max_currency_pairs=MAX_CURRENCY_PAIRS,
             currency_show_change=config.current_currency_show_change(),
+            currency_flag_mode=config.current_currency_flag_mode(),
             costco_warehouses=list(config.current_costco_warehouses()),
             max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
         )
@@ -625,6 +626,21 @@ def create_app() -> Flask:
         value = config.set_currency_show_change(enabled)
         return jsonify(currency_show_change=value)
 
+    @app.post("/currency/flag-mode")
+    def set_currency_flag_mode():  # type: ignore[no-untyped-def]
+        """Toggle the two-row flag layout on the currency card.
+
+        Body: ``{"enabled": true|false}``. Same non-switching philosophy as
+        ``/currency/show-change`` -- flipping the layout is a config edit,
+        not necessarily an intent to look at the panel right now, so this
+        endpoint just persists the setting.
+        """
+        payload = request.get_json(silent=True) or {}
+        enabled = bool(payload.get("enabled", True))
+        config = load_config()
+        value = config.set_currency_flag_mode(enabled)
+        return jsonify(currency_flag_mode=value)
+
     @app.post("/nametag")
     def set_nametag():  # type: ignore[no-untyped-def]
         """Update the desk-plate name and/or color, and switch to nametag mode.
@@ -1003,6 +1019,7 @@ def create_app() -> Flask:
             symbols=list(config.current_symbols()),
             currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
             currency_show_change=config.current_currency_show_change(),
+            currency_flag_mode=config.current_currency_flag_mode(),
             costco_warehouses=list(config.current_costco_warehouses()),
             max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
             nametag_name=config.current_nametag_name(),
