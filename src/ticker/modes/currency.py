@@ -124,6 +124,10 @@ class CurrencyMode(Mode):
         # Far enough back that the first render always fetches.
         self._last_refresh = -1e9
         self._failed = False
+        # Cache the pair list _refresh() was called with so a webapp save
+        # invalidates the cache immediately instead of waiting for the
+        # 10-minute window to elapse.
+        self._last_pairs: tuple[tuple[str, str], ...] = ()
 
     # -- data ---------------------------------------------------------------
 
@@ -154,9 +158,13 @@ class CurrencyMode(Mode):
                 continue
         return clean or None
 
-    def _refresh(self) -> None:
-        """Fetch every unique base referenced by the configured pairs."""
-        pairs = self.config.currency_pairs[: self.MAX_ROWS]
+    def _refresh(self, pairs: tuple[tuple[str, str], ...]) -> None:
+        """Fetch every unique base referenced by *pairs*.
+
+        The pair list is passed in so a mid-render edit through the webapp
+        picks up on the next refresh cycle -- reading ``self.config`` here
+        again would race against the caller.
+        """
         bases = sorted({base for base, _ in pairs})
         tables: dict[str, dict[str, float]] = {}
         for base in bases:
@@ -199,9 +207,16 @@ class CurrencyMode(Mode):
     # -- render -------------------------------------------------------------
 
     def render(self, canvas: Canvas, tick: int) -> None:
+        # Read the webapp state live on every render (same convention as
+        # stocks); a config that ignored edits until service restart would
+        # be a confusing, stale card.
+        pairs = tuple(self.config.current_currency_pairs()[: self.MAX_ROWS])
+        show_change = self.config.current_currency_show_change()
+
         age_limit = self.ERROR_BACKOFF_SECONDS if self._failed else self.CACHE_SECONDS
-        if time.monotonic() - self._last_refresh >= age_limit:
-            self._refresh()
+        if time.monotonic() - self._last_refresh >= age_limit or pairs != self._last_pairs:
+            self._refresh(pairs)
+            self._last_pairs = pairs
 
         canvas.clear()
         if not self.quotes:
@@ -218,13 +233,25 @@ class CurrencyMode(Mode):
         for quote, top in zip(rows, tops):
             canvas.text(0, top, quote.pair_label, AMBER, font)
 
-            percent = compact_percent(quote.change_percent, 6)
-            # One-pixel inset so right-flush type does not tuck under the bezel.
-            percent_x = canvas.width - 1 - canvas.text_width(percent, font)
-            canvas.text(percent_x, top, percent, quote.color, font)
-
-            rate_x = canvas.text_width(quote.pair_label + " ", font)
-            available = percent_x - 2 - rate_x
-            budget = canvas.max_chars_in(available, font)
-            if budget >= 3:
-                canvas.text(rate_x, top, _format_rate(quote.rate, budget), WHITE, font)
+            if show_change:
+                percent = compact_percent(quote.change_percent, 6)
+                # One-pixel inset so right-flush type does not tuck under the bezel.
+                percent_x = canvas.width - 1 - canvas.text_width(percent, font)
+                canvas.text(percent_x, top, percent, quote.color, font)
+                rate_x = canvas.text_width(quote.pair_label + " ", font)
+                available = percent_x - 2 - rate_x
+                budget = canvas.max_chars_in(available, font)
+                if budget >= 3:
+                    canvas.text(rate_x, top, _format_rate(quote.rate, budget), WHITE, font)
+            else:
+                # With the change column off, the rate gets the full remaining
+                # width and is drawn right-flush -- same visual weight as the
+                # % it replaced, and easier to skim than a rate hanging in the
+                # middle of the row.
+                rate_x_min = canvas.text_width(quote.pair_label + " ", font)
+                available = canvas.width - 1 - rate_x_min
+                budget = canvas.max_chars_in(available, font)
+                if budget >= 3:
+                    text = _format_rate(quote.rate, budget)
+                    x = canvas.width - 1 - canvas.text_width(text, font)
+                    canvas.text(x, top, text, WHITE, font)

@@ -388,6 +388,7 @@ body[data-mode="nametag"] .flight[data-for~="nametag"],
 body[data-mode="focus"]   .flight[data-for~="focus"],
 body[data-mode="worldclock"] .flight[data-for~="worldclock"] { display: block; }
 body[data-mode="quakes"] .flight[data-for~="quakes"] { display: block; }
+body[data-mode="currency"] .flight[data-for~="currency"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
@@ -484,6 +485,57 @@ body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
 .symbol-remove:hover,
 .symbol-remove:focus-visible { color: var(--danger); background: transparent; }
 #symbol-input:disabled { opacity: 0.5; }
+
+/* ----- Currency card --------------------------------------------------- */
+
+/* Custom BASE/QUOTE inputs sit under the preset row and stay hidden until
+   the user picks "Custom…" from the dropdown. Same monospace/border look as
+   the other two-input rows on the page so it doesn't feel like a bolt-on. */
+.currency-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.currency-custom input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.currency-custom input:focus {
+  outline: 0;
+  border-color: var(--accent);
+}
+.currency-slash {
+  font-family: var(--mono);
+  font-size: 18px;
+  color: var(--dimmer);
+}
+/* Change-column toggle. A plain checkbox is quieter than a switch component
+   and doesn't compete with the accent-fill Save buttons elsewhere on the
+   page. */
+.currency-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--dim);
+  cursor: pointer;
+}
+.currency-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 
 /* Tapping a chip's label toggles a hard lock on that ticker so the panel
    stops rotating. The locked chip flips to a solid accent border + soft fill
@@ -952,6 +1004,7 @@ body[data-mode="pokemon"] { --accent: #ff3b3b; --accent-soft: rgba(255, 59, 59, 
 body[data-mode="spotify"] { --accent: #1ED760; --accent-soft: rgba(30, 215, 96, 0.16); }
 body[data-mode="focus"]   { --accent: #4eb0ff; --accent-soft: rgba(78, 176, 255, 0.16); }
 body[data-mode="youtube"] { --accent: #ff0033; --accent-soft: rgba(255, 0, 51, 0.16); }
+body[data-mode="currency"]{ --accent: #f6d24a; --accent-soft: rgba(246, 210, 74, 0.16); }
 
 /* -- Focus timer card ------------------------------------------------------
  * Big countdown mirror + preset row + start/reset row + nudge row. The card

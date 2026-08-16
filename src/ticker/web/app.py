@@ -10,7 +10,7 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template, request
 
 from ticker import bart, baywheels, net, spotify as spotify_client
-from ticker.config import MAX_SYMBOLS, VALID_MODES, load_config
+from ticker.config import MAX_CURRENCY_PAIRS, MAX_SYMBOLS, VALID_MODES, load_config
 from ticker.modes.youtube import (
     CATEGORIES as YT_CATEGORIES,
     DEFAULT_CATEGORY as YT_DEFAULT_CATEGORY,
@@ -195,6 +195,9 @@ def create_app() -> Flask:
             quake_dwell_seconds=config.current_quake_alert_dwell_seconds(),
             quake_filter_min_mag=config.current_quake_filter_min_mag(),
             quake_filter_region=config.current_quake_filter_region(),
+            currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
+            max_currency_pairs=MAX_CURRENCY_PAIRS,
+            currency_show_change=config.current_currency_show_change(),
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -430,6 +433,70 @@ def create_app() -> Flask:
         if value:
             config.set_mode("stocks")
         return jsonify(stocks_lock=value, current_mode=config.current_mode())
+
+    @app.post("/currency/add")
+    def add_currency_pair():  # type: ignore[no-untyped-def]
+        """Add a BASE/QUOTE pair to the currency list, switch to currency mode.
+
+        Same reasoning as ``/stocks/add``: adding is a request to see it, so
+        the panel follows the tap rather than waiting for a second one.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("pair", request.form.get("pair", ""))
+        config = load_config()
+        try:
+            pairs = config.add_currency_pair(str(requested))
+        except ValueError as error:
+            return (
+                jsonify(
+                    error=str(error),
+                    pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
+                ),
+                400,
+            )
+        config.set_mode("currency")
+        return jsonify(
+            pairs=[f"{b}/{q}" for b, q in pairs],
+            current_mode=config.current_mode(),
+        )
+
+    @app.post("/currency/remove")
+    def remove_currency_pair():  # type: ignore[no-untyped-def]
+        """Drop a pair from the currency list. Does not switch modes.
+
+        Mirrors ``/stocks/remove``: removing something is not a request to go
+        and look at the panel, only a request to stop showing it there.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("pair", request.form.get("pair", ""))
+        config = load_config()
+        try:
+            pairs = config.remove_currency_pair(str(requested))
+        except ValueError as error:
+            return (
+                jsonify(
+                    error=str(error),
+                    pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
+                ),
+                400,
+            )
+        return jsonify(pairs=[f"{b}/{q}" for b, q in pairs])
+
+    @app.post("/currency/show-change")
+    def set_currency_show_change():  # type: ignore[no-untyped-def]
+        """Toggle the 24-hour change column on the currency card.
+
+        Body: ``{"enabled": true|false}``. Does NOT switch to currency mode:
+        the setting affects what the card looks like when you open it, but
+        toggling the setting itself is not usually a "go look at it now"
+        gesture. Symmetric with ``/quakes/filter``, which does switch because
+        the intent there is to see the newly-filtered list.
+        """
+        payload = request.get_json(silent=True) or {}
+        enabled = bool(payload.get("enabled", True))
+        config = load_config()
+        value = config.set_currency_show_change(enabled)
+        return jsonify(currency_show_change=value)
 
     @app.post("/nametag")
     def set_nametag():  # type: ignore[no-untyped-def]
@@ -806,6 +873,8 @@ def create_app() -> Flask:
             flight_airport=config.current_flight_airport(),
             station=config.current_bart_station(),
             symbols=list(config.current_symbols()),
+            currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
+            currency_show_change=config.current_currency_show_change(),
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ticker.config import MAX_SYMBOLS, load_config
+from ticker.config import MAX_CURRENCY_PAIRS, MAX_SYMBOLS, load_config
 
 
 @pytest.fixture
@@ -220,3 +220,91 @@ def test_quake_filter_clearing_state_file_returns_to_defaults(quake_config) -> N
     quake_config.quake_filter_file.unlink()
     assert quake_config.current_quake_filter_min_mag() == pytest.approx(4.5)
     assert quake_config.current_quake_filter_region() == ""
+
+
+# ---- currency pairs + show-change toggle ---------------------------------
+
+
+@pytest.fixture
+def currency_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("ticker.config._first_writable_state_dir", lambda: tmp_path / "state")
+    env = tmp_path / ".env"
+    # Deliberately different from the code default so we can tell fallback
+    # from an accidental hard-coded three-pair list.
+    env.write_text(
+        "TICKER_WIDTH=128\nTICKER_HEIGHT=32\nCURRENCY_PAIRS=USD/GBP,EUR/JPY\n",
+        encoding="utf-8",
+    )
+    return load_config(env)
+
+
+def test_currency_defaults_come_from_env_when_no_state_file(currency_config) -> None:  # type: ignore[no-untyped-def]
+    assert currency_config.current_currency_pairs() == (("USD", "GBP"), ("EUR", "JPY"))
+
+
+def test_currency_add_and_remove_round_trip(currency_config) -> None:  # type: ignore[no-untyped-def]
+    currency_config.set_currency_pairs([("USD", "JPY")])
+    assert currency_config.current_currency_pairs() == (("USD", "JPY"),)
+    currency_config.add_currency_pair("USD/EUR")
+    assert currency_config.current_currency_pairs() == (("USD", "JPY"), ("USD", "EUR"))
+    currency_config.remove_currency_pair("USD/JPY")
+    assert currency_config.current_currency_pairs() == (("USD", "EUR"),)
+
+
+def test_currency_add_is_idempotent(currency_config) -> None:  # type: ignore[no-untyped-def]
+    currency_config.set_currency_pairs([("USD", "JPY")])
+    currency_config.add_currency_pair("USD/JPY")
+    currency_config.add_currency_pair("usd/jpy")  # case-insensitive
+    assert currency_config.current_currency_pairs() == (("USD", "JPY"),)
+
+
+def test_currency_remove_last_pair_is_refused(currency_config) -> None:  # type: ignore[no-untyped-def]
+    currency_config.set_currency_pairs([("USD", "JPY")])
+    with pytest.raises(ValueError):
+        currency_config.remove_currency_pair("USD/JPY")
+    # And the pair is still there afterwards so the state file didn't corrupt.
+    assert currency_config.current_currency_pairs() == (("USD", "JPY"),)
+
+
+def test_currency_rejects_bad_codes(currency_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        currency_config.set_currency_pairs([("US", "JPY")])  # too short
+    with pytest.raises(ValueError):
+        currency_config.set_currency_pairs([("USDD", "JPY")])  # too long
+    with pytest.raises(ValueError):
+        currency_config.set_currency_pairs([("US1", "JPY")])  # non-alpha
+    with pytest.raises(ValueError):
+        currency_config.set_currency_pairs(["USDJPY"])  # missing slash
+    with pytest.raises(ValueError):
+        currency_config.set_currency_pairs([("USD", "USD")])  # same both sides
+
+
+def test_currency_cap_is_enforced(currency_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        currency_config.set_currency_pairs(
+            [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP"), ("USD", "CNY")]
+        )
+    # Boundary: exactly MAX_CURRENCY_PAIRS is allowed.
+    currency_config.set_currency_pairs(
+        [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP")][:MAX_CURRENCY_PAIRS]
+    )
+    assert len(currency_config.current_currency_pairs()) == MAX_CURRENCY_PAIRS
+
+
+def test_currency_clearing_state_file_falls_back_to_env(currency_config) -> None:  # type: ignore[no-untyped-def]
+    currency_config.set_currency_pairs([("USD", "JPY")])
+    currency_config.currency_pairs_file.unlink()
+    assert currency_config.current_currency_pairs() == (("USD", "GBP"), ("EUR", "JPY"))
+
+
+def test_currency_show_change_defaults_on(currency_config) -> None:  # type: ignore[no-untyped-def]
+    # Missing file means "on" so the first upgrade after this toggle lands is
+    # invisible -- the panel looks like it did before.
+    assert currency_config.current_currency_show_change() is True
+
+
+def test_currency_show_change_round_trip(currency_config) -> None:  # type: ignore[no-untyped-def]
+    currency_config.set_currency_show_change(False)
+    assert currency_config.current_currency_show_change() is False
+    currency_config.set_currency_show_change(True)
+    assert currency_config.current_currency_show_change() is True

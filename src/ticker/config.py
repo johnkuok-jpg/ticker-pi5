@@ -78,6 +78,36 @@ DEFAULT_MODE = "weather"
 # first and a guard against a runaway state file second.
 MAX_SYMBOLS = 12
 
+# Currency mode shows at most three pairs (a fourth would overflow the panel at
+# SMALL font). The cap has to allow at least MAX_ROWS in the mode; keeping it at
+# three means the webapp will not let a user add a pair that would never render.
+MAX_CURRENCY_PAIRS = 3
+# ISO 4217 codes are always three letters. Widening this would let a typo slip
+# through as a mystery-lookup that the upstream endpoint would just reject.
+_CURRENCY_CODE_LEN = 3
+
+
+def _parse_currency_pairs(raw: str) -> tuple[tuple[str, str], ...]:
+    """Parse ``USD/JPY,USD/EUR`` into ``(("USD","JPY"),("USD","EUR"))``.
+
+    Silently drops malformed tokens the same way the .env loader does: an
+    obscure typo in a state file must not knock the whole card offline. The
+    caller falls back to a default list when the returned tuple is empty.
+    """
+    parsed: list[tuple[str, str]] = []
+    for token in raw.split(","):
+        token = token.strip().upper()
+        if "/" not in token:
+            continue
+        base, _, quote = token.partition("/")
+        base, quote = base.strip(), quote.strip()
+        # Accept 3-4 char codes here for parity with the .env loader; the
+        # setters below refuse anything but 3 so a webapp save is stricter
+        # than the env-var fallback (which reads legacy files).
+        if base.isalpha() and quote.isalpha() and 3 <= len(base) <= 4 and 3 <= len(quote) <= 4:
+            parsed.append((base, quote))
+    return tuple(parsed)
+
 _DAY_NUMBERS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _DAY_GROUPS = {
     "all": frozenset(range(7)),
@@ -317,6 +347,25 @@ class Config:
     @property
     def symbols_file(self) -> Path:
         return self.state_dir / "symbols"
+
+    @property
+    def currency_pairs_file(self) -> Path:
+        """Comma-separated BASE/QUOTE pairs (e.g. ``USD/JPY,USD/EUR,USD/CNY``).
+
+        Falls back to ``CURRENCY_PAIRS`` when the file is missing or empty --
+        same convention as the stocks watchlist. Kept alongside ``symbols``
+        because both are user-picked lists that the webapp rewrites live.
+        """
+        return self.state_dir / "currency_pairs"
+
+    @property
+    def currency_show_change_file(self) -> Path:
+        """Toggle for the 24-hour change column on the currency card.
+
+        Written as ``on`` or ``off``. Missing file = on (matches the historical
+        behavior before this toggle existed, so a first upgrade is invisible).
+        """
+        return self.state_dir / "currency_show_change"
 
     @property
     def youtube_playlist_file(self) -> Path:
@@ -914,6 +963,111 @@ class Config:
             self.set_stocks_lock_symbol("")
         return self.current_symbols()
 
+    # -- currency ------------------------------------------------------------
+
+    def current_currency_pairs(self) -> tuple[tuple[str, str], ...]:
+        """Pairs for the currency mode: state file wins, else ``CURRENCY_PAIRS``.
+
+        Same read-live-on-every-refresh convention as ``current_symbols`` so a
+        webapp edit lands on the panel at the next fetch cycle. An empty stored
+        list falls back to the env-var default: a currency card with no pairs
+        has nothing to draw.
+        """
+        try:
+            raw = self.currency_pairs_file.read_text(encoding="utf-8")
+        except OSError:
+            raw = ""
+        stored = _parse_currency_pairs(raw)
+        return stored or self.currency_pairs
+
+    def set_currency_pairs(self, pairs: Iterable[tuple[str, str] | str]) -> None:
+        """Persist the pair list, de-duplicated, in the order given.
+
+        Accepts either ``("USD", "JPY")`` tuples or ``"USD/JPY"`` strings; the
+        webapp uses strings, the tests use tuples. Both codes must be three
+        letters -- ISO 4217 is fixed-width and anything else would be a typo
+        that the upstream endpoint would just reject silently.
+        """
+        cleaned: list[tuple[str, str]] = []
+        for item in pairs:
+            if isinstance(item, str):
+                if "/" not in item:
+                    raise ValueError(f"Pair must look like BASE/QUOTE: {item!r}")
+                base, quote = item.split("/", 1)
+            else:
+                base, quote = item
+            base = "".join(str(base).split()).upper()
+            quote = "".join(str(quote).split()).upper()
+            if len(base) != _CURRENCY_CODE_LEN or not base.isalpha():
+                raise ValueError(f"Not a valid currency code: {base!r}")
+            if len(quote) != _CURRENCY_CODE_LEN or not quote.isalpha():
+                raise ValueError(f"Not a valid currency code: {quote!r}")
+            if base == quote:
+                raise ValueError(f"A pair needs two different codes: {base}/{quote}")
+            pair = (base, quote)
+            if pair not in cleaned:
+                cleaned.append(pair)
+        if len(cleaned) > MAX_CURRENCY_PAIRS:
+            raise ValueError(
+                f"Currency mode is limited to {MAX_CURRENCY_PAIRS} pairs"
+            )
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        text = ",".join(f"{base}/{quote}" for base, quote in cleaned)
+        self.currency_pairs_file.write_text(text + "\n", encoding="utf-8")
+
+    def add_currency_pair(self, pair: tuple[str, str] | str) -> tuple[tuple[str, str], ...]:
+        """Append one pair to the list and return the new list.
+
+        Adding a pair already on the list is a no-op -- the user's intent
+        ("show me this") is already satisfied, and an error on a duplicate tap
+        would be noise.
+        """
+        current = list(self.current_currency_pairs())
+        current.append(pair)  # type: ignore[arg-type]
+        self.set_currency_pairs(current)
+        return self.current_currency_pairs()
+
+    def remove_currency_pair(self, pair: tuple[str, str] | str) -> tuple[tuple[str, str], ...]:
+        """Drop one pair from the list and return the new list.
+
+        Removing the last pair is refused: an empty state file falls back to
+        the env-var default, so the delete button would appear to undo itself.
+        Mirrors the stocks watchlist's "keep at least one" rule.
+        """
+        if isinstance(pair, str):
+            if "/" not in pair:
+                raise ValueError(f"Pair must look like BASE/QUOTE: {pair!r}")
+            base, quote = pair.split("/", 1)
+        else:
+            base, quote = pair
+        target = (base.strip().upper(), quote.strip().upper())
+        remaining = [item for item in self.current_currency_pairs() if item != target]
+        if not remaining:
+            raise ValueError("Keep at least one currency pair")
+        self.set_currency_pairs(remaining)
+        return self.current_currency_pairs()
+
+    def current_currency_show_change(self) -> bool:
+        """Whether the currency card renders the 24-hour change column.
+
+        Missing file returns True so the first upgrade after this toggle lands
+        looks identical to today's panel. Only the exact string ``off`` (any
+        case, ignoring surrounding whitespace) turns it off.
+        """
+        try:
+            raw = self.currency_show_change_file.read_text(encoding="utf-8")
+        except OSError:
+            return True
+        return raw.strip().lower() != "off"
+
+    def set_currency_show_change(self, enabled: bool) -> bool:
+        """Persist the change-column toggle; returns the effective state."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.currency_show_change_file.write_text(
+            ("on" if enabled else "off") + "\n", encoding="utf-8"
+        )
+        return self.current_currency_show_change()
+
     def current_stocks_lock_symbol(self) -> str:
         """Symbol the stocks card is pinned to, or empty for the normal rotation."""
         try:
@@ -1374,16 +1528,7 @@ def load_config(env_file: Path | None = None) -> Config:
     # the panel offline, and the currency mode already handles an empty list
     # by falling back to its class defaults via the dataclass.
     _raw_pairs = os.getenv("CURRENCY_PAIRS", "USD/JPY,USD/EUR,USD/CNY")
-    _parsed_pairs: list[tuple[str, str]] = []
-    for _token in _raw_pairs.split(","):
-        _token = _token.strip().upper()
-        if "/" not in _token:
-            continue
-        _base, _, _quote = _token.partition("/")
-        _base, _quote = _base.strip(), _quote.strip()
-        if _base.isalpha() and _quote.isalpha() and 3 <= len(_base) <= 4 and 3 <= len(_quote) <= 4:
-            _parsed_pairs.append((_base, _quote))
-    currency_pairs = tuple(_parsed_pairs) or (
+    currency_pairs = _parse_currency_pairs(_raw_pairs) or (
         ("USD", "JPY"),
         ("USD", "EUR"),
         ("USD", "CNY"),

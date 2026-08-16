@@ -89,6 +89,61 @@
       <p id="symbol-note" class="schedule">Tap a ticker to lock the panel on it. Tap again to resume the 6-second rotation. Crypto works too: BTC-USD.</p>
       <p class="schedule" style="opacity:.65">Prices refresh every 60 s via Yahoo Finance. US equities are typically delayed 15-20 min; crypto is roughly live.</p>
     </section>
+    <section class="flight" data-for="currency">
+      <label for="currency-pair-select">Currency pairs</label>
+      {# Preset dropdown gets 90% of the taps; the free-text field is there for
+         the occasional NOK/SEK/AUD watcher. Presets are USD-based because the
+         upstream endpoint returns rates relative to a single base per request,
+         and USD is the base most users will already know. #}
+      <form id="currency-form" class="flight-row">
+        <select id="currency-pair-select" name="pair" aria-label="Currency pair preset">
+          {% set fx_presets = [
+            ("USD/JPY", "USD → JPY  (Japanese yen)"),
+            ("USD/EUR", "USD → EUR  (Euro)"),
+            ("USD/CNY", "USD → CNY  (Chinese yuan)"),
+            ("USD/GBP", "USD → GBP  (British pound)"),
+            ("USD/CAD", "USD → CAD  (Canadian dollar)"),
+            ("USD/AUD", "USD → AUD  (Australian dollar)"),
+            ("USD/CHF", "USD → CHF  (Swiss franc)"),
+            ("USD/HKD", "USD → HKD  (Hong Kong dollar)"),
+            ("USD/KRW", "USD → KRW  (Korean won)"),
+            ("USD/TWD", "USD → TWD  (Taiwan dollar)"),
+            ("USD/INR", "USD → INR  (Indian rupee)"),
+            ("USD/MXN", "USD → MXN  (Mexican peso)"),
+            ("EUR/USD", "EUR → USD"),
+            ("EUR/GBP", "EUR → GBP"),
+            ("GBP/USD", "GBP → USD"),
+            ("JPY/USD", "JPY → USD")
+          ] %}
+          {% for value, label in fx_presets %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+          <option value="custom">Custom…</option>
+        </select>
+        <button type="submit" class="flight-go">Add</button>
+      </form>
+      {# Hidden until the user picks Custom in the dropdown. Three-letter ISO
+         codes only — the config layer refuses anything else, and this input
+         mirrors that rule so the error path is quiet. #}
+      <div id="currency-custom" class="currency-custom hidden">
+        <input id="currency-custom-base" type="text" maxlength="3"
+               placeholder="USD" autocapitalize="characters" autocomplete="off"
+               spellcheck="false" aria-label="Base currency">
+        <span class="currency-slash">/</span>
+        <input id="currency-custom-quote" type="text" maxlength="3"
+               placeholder="JPY" autocapitalize="characters" autocomplete="off"
+               spellcheck="false" aria-label="Quote currency">
+      </div>
+      {# Server-rendered so the list is right before JS runs, then replaced
+         wholesale by renderCurrencyPairs() after every add or remove. #}
+      <div id="currency-list" class="symbol-list" aria-label="Currency pairs"></div>
+      <label class="currency-toggle">
+        <input id="currency-show-change" type="checkbox"
+               {% if currency_show_change %}checked{% endif %}>
+        <span>Show 24-hour change</span>
+      </label>
+      <p id="currency-note" class="schedule">Up to {{ max_currency_pairs }} pairs. Rates refresh every 10 minutes; the upstream feed itself updates hourly.</p>
+    </section>
     <section class="flight" data-for="flights">
       <label for="flight-input">Flight to track</label>
       <form id="flight-form" class="flight-row">
@@ -485,6 +540,9 @@
     let symbols = {{ symbols | list | tojson }};
     const maxSymbols = {{ max_symbols | tojson }};
     let stocksLock = {{ stocks_lock | tojson }};
+    let currencyPairs = {{ currency_pairs | list | tojson }};
+    const maxCurrencyPairs = {{ max_currency_pairs | tojson }};
+    let currencyShowChange = {{ currency_show_change | tojson }};
     const flightForm = document.getElementById('flight-form');
     const flightInput = document.getElementById('flight-input');
     const flightNote = document.getElementById('flight-note');
@@ -559,6 +617,18 @@
       if (Array.isArray(data.symbols) && data.symbols.join(',') !== symbols.join(',')) {
         symbols = data.symbols;
         renderSymbols();
+      }
+      /* Same guard for the currency card: another phone may have added a pair
+         or flipped the change-column toggle. Rebuild the chip list wholesale
+         and sync the checkbox without touching whatever the user is doing on
+         this device. */
+      if (Array.isArray(data.currency_pairs) && data.currency_pairs.join(',') !== currencyPairs.join(',')) {
+        currencyPairs = data.currency_pairs;
+        renderCurrencyPairs();
+      }
+      if (typeof data.currency_show_change === 'boolean' && data.currency_show_change !== currencyShowChange) {
+        currencyShowChange = data.currency_show_change;
+        if (currencyShowChangeToggle) currencyShowChangeToggle.checked = currencyShowChange;
       }
       if (!typingFlight && typeof data.flight === 'string' && data.flight !== flightInput.value) {
         flightInput.value = data.flight;
@@ -834,6 +904,121 @@
       }
     });
     renderSymbols();
+    /* Currency card: pair chips + change-column toggle. Mirrors the stocks
+       chip model rather than the crypto card because currency has an actual
+       user-facing add/remove flow -- crypto still runs env-var only. */
+    const currencyForm = document.getElementById('currency-form');
+    const currencyPresetSelect = document.getElementById('currency-pair-select');
+    const currencyCustomWrap = document.getElementById('currency-custom');
+    const currencyCustomBase = document.getElementById('currency-custom-base');
+    const currencyCustomQuote = document.getElementById('currency-custom-quote');
+    const currencyList = document.getElementById('currency-list');
+    const currencyNote = document.getElementById('currency-note');
+    const currencyShowChangeToggle = document.getElementById('currency-show-change');
+    function renderCurrencyPairs() {
+      currencyList.innerHTML = '';
+      currencyPairs.forEach(pair => {
+        const chip = document.createElement('span');
+        chip.className = 'symbol-chip';
+        const label = document.createElement('b');
+        label.className = 'symbol-toggle';
+        /* Not a lockable chip like stocks -- no per-pair pin makes sense for
+           FX -- so this is just a plain b tag styled like symbol-toggle for
+           visual parity. Wrapping in a button would imply an action. */
+        label.textContent = pair;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'symbol-remove';
+        remove.textContent = '\u00d7';
+        remove.setAttribute('aria-label', `Remove ${pair}`);
+        remove.addEventListener('click', () => removeCurrencyPair(pair));
+        chip.appendChild(label);
+        chip.appendChild(remove);
+        currencyList.appendChild(chip);
+      });
+      /* Hard cap the Add button when the list is full so the endpoint's 400
+         is never the way the user finds out. */
+      const atCap = currencyPairs.length >= maxCurrencyPairs;
+      const submitButton = currencyForm.querySelector('button[type="submit"]');
+      if (submitButton) submitButton.disabled = atCap;
+      if (atCap && currencyNote) {
+        currencyNote.textContent = `Currency mode fits ${maxCurrencyPairs} pairs. Remove one to add another.`;
+      }
+    }
+    async function postCurrency(path, pair) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pair})
+      });
+      const data = await response.json();
+      if (Array.isArray(data.pairs)) {
+        currencyPairs = data.pairs;
+        renderCurrencyPairs();
+      }
+      if (!response.ok) {
+        currencyNote.textContent = data.error || 'Could not update the currency list.';
+        return null;
+      }
+      return data;
+    }
+    async function removeCurrencyPair(pair) {
+      const data = await postCurrency('/currency/remove', pair);
+      if (data) currencyNote.textContent = `Removed ${pair}.`;
+    }
+    currencyPresetSelect.addEventListener('change', () => {
+      /* Show the two three-letter inputs only when the user picked "Custom…".
+         Autofocus the base field so a keyboard user can start typing right
+         away, matching how the flight card's Airport input behaves. */
+      const isCustom = currencyPresetSelect.value === 'custom';
+      currencyCustomWrap.classList.toggle('hidden', !isCustom);
+      if (isCustom) currencyCustomBase.focus();
+    });
+    currencyForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      let pair = currencyPresetSelect.value;
+      if (pair === 'custom') {
+        const base = currencyCustomBase.value.trim().toUpperCase();
+        const quote = currencyCustomQuote.value.trim().toUpperCase();
+        if (!base || !quote) {
+          currencyNote.textContent = 'Fill in both codes, e.g. USD and JPY.';
+          return;
+        }
+        pair = `${base}/${quote}`;
+      }
+      if (currencyPairs.includes(pair)) {
+        currencyNote.textContent = `${pair} is already on the list.`;
+        return;
+      }
+      currencyNote.textContent = `Adding ${pair}\u2026`;
+      const data = await postCurrency('/currency/add', pair);
+      if (data) {
+        currencyNote.textContent = `Added ${pair}. Rates refresh within a few seconds.`;
+        currencyCustomBase.value = '';
+        currencyCustomQuote.value = '';
+        refreshStatus();
+      }
+    });
+    currencyShowChangeToggle.addEventListener('change', async () => {
+      const wanted = currencyShowChangeToggle.checked;
+      const response = await fetch('/currency/show-change', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: wanted})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        currencyNote.textContent = 'Could not save the toggle.';
+        currencyShowChangeToggle.checked = currencyShowChange;
+        return;
+      }
+      currencyShowChange = !!data.currency_show_change;
+      currencyShowChangeToggle.checked = currencyShowChange;
+      currencyNote.textContent = currencyShowChange
+        ? '24-hour change column on.'
+        : 'Change column off. Rate gets the full row.';
+    });
+    renderCurrencyPairs();
     async function saveNametag(fields) {
       const response = await fetch('/nametag', {
         method: 'POST',
