@@ -67,16 +67,16 @@ _BOLT_ROWS = [
 
 # Pink bike sprite that lives under the Lyft wordmark. 20 wide x 10 tall,
 # facing LEFT: front wheel + handlebars on the left, rear wheel + seat on the
-# right. Two 5x5 hollow wheels with a clean top tube -- no lines crossing
-# through the wheel interiors, which is what makes it read as a bike from
-# across the room.
+# right. Two 5x5 hollow wheels + an A-frame between them, with the seat
+# post rising above the apex. Nothing crosses the wheel outlines so both
+# wheels stay readable as circles from across the room.
 _BIKE_ROWS = [
-    "....................",
-    "....................",
-    ".####........####...",  # handlebar (left) + seat (right)
-    "....############....",  # top tube
-    "...##..........##...",  # head tube + seat tube joints
-    "..###..........###..",  # wheel tops
+    "..........###.......",  # seat top
+    "..........#.........",  # seat post
+    ".........#.#........",  # apex of A-frame
+    "..##...##...#.......",  # handlebar + down tube climbing + seat tube dropping
+    "...#..#......#......",
+    "..####........####..",  # head tube + wheel tops (front, rear)
     ".#...#........#...#.",
     ".#...#........#...#.",
     ".#...#........#...#.",
