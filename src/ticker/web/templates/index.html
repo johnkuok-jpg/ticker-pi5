@@ -144,6 +144,48 @@
       </label>
       <p id="currency-note" class="schedule">Up to {{ max_currency_pairs }} pairs. Rates refresh every 10 minutes; the upstream feed itself updates hourly.</p>
     </section>
+    <section class="flight" data-for="costco">
+      <label for="costco-preset-select">Costco warehouses</label>
+      {# Preset dropdown covers Bay-Area warehouses I've confirmed sell gas.
+         The custom field is there because Costco's warehouse ID isn't
+         printed anywhere on the pump -- you have to open the warehouse
+         page on costco.com and read it out of the URL, so most people will
+         reach for a preset instead. #}
+      <form id="costco-form" class="flight-row">
+        <select id="costco-preset-select" name="warehouse" aria-label="Costco warehouse preset">
+          {% set costco_presets = [
+            ("475", "475 — South SF (El Camino)"),
+            ("422", "422 — South SF (S Airport Blvd)"),
+            ("118", "118 — San Leandro"),
+            ("157", "157 — Redwood City"),
+            ("149", "149 — Foster City"),
+            ("690", "690 — Mountain View"),
+            ("215", "215 — Sunnyvale"),
+            ("131", "131 — San Jose (Automall)"),
+            ("140", "140 — Hayward"),
+            ("143", "143 — Livermore"),
+            ("156", "156 — Danville"),
+            ("460", "460 — Concord"),
+            ("445", "445 — Novato"),
+            ("192", "192 — Rohnert Park")
+          ] %}
+          {% for value, label in costco_presets %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+          <option value="custom">Custom warehouse ID…</option>
+        </select>
+        <button type="submit" class="flight-go">Add</button>
+      </form>
+      {# Hidden until the user picks Custom. Digits only, 3-8 chars; the
+         config parser enforces the same rule so a bad ID never persists. #}
+      <div id="costco-custom" class="currency-custom hidden">
+        <input id="costco-custom-id" type="text" inputmode="numeric" pattern="[0-9]*"
+               maxlength="8" placeholder="475" autocomplete="off"
+               spellcheck="false" aria-label="Costco warehouse ID">
+      </div>
+      <div id="costco-list" class="symbol-list" aria-label="Costco warehouses"></div>
+      <p id="costco-note" class="schedule">Up to {{ max_costco_warehouses }} warehouses. Prices refresh hourly from Costco.com. Not every warehouse sells gas -- if a card shows no prices, that ID isn't a gas station.</p>
+    </section>
     <section class="flight" data-for="flights">
       <label for="flight-input">Flight to track</label>
       <form id="flight-form" class="flight-row">
@@ -543,6 +585,8 @@
     let currencyPairs = {{ currency_pairs | list | tojson }};
     const maxCurrencyPairs = {{ max_currency_pairs | tojson }};
     let currencyShowChange = {{ currency_show_change | tojson }};
+    let costcoWarehouses = {{ costco_warehouses | list | tojson }};
+    const maxCostcoWarehouses = {{ max_costco_warehouses | tojson }};
     const flightForm = document.getElementById('flight-form');
     const flightInput = document.getElementById('flight-input');
     const flightNote = document.getElementById('flight-note');
@@ -629,6 +673,12 @@
       if (typeof data.currency_show_change === 'boolean' && data.currency_show_change !== currencyShowChange) {
         currencyShowChange = data.currency_show_change;
         if (currencyShowChangeToggle) currencyShowChangeToggle.checked = currencyShowChange;
+      }
+      /* Same guard for the Costco card: keep the chip list in step with the
+         source of truth if another phone edited it. */
+      if (Array.isArray(data.costco_warehouses) && data.costco_warehouses.join(',') !== costcoWarehouses.join(',')) {
+        costcoWarehouses = data.costco_warehouses;
+        renderCostcoWarehouses();
       }
       if (!typingFlight && typeof data.flight === 'string' && data.flight !== flightInput.value) {
         flightInput.value = data.flight;
@@ -1019,6 +1069,99 @@
         : 'Change column off. Rate gets the full row.';
     });
     renderCurrencyPairs();
+    /* Costco card: warehouse chips + preset/custom form. Mirrors the
+       currency card almost 1:1 -- same chip model, same postX helper, same
+       cap-guard on the Add button -- so I'm keeping the two side by side
+       in the file rather than trying to factor them together prematurely.
+       If a third chip-list card lands, refactor then. */
+    const costcoForm = document.getElementById('costco-form');
+    const costcoPresetSelect = document.getElementById('costco-preset-select');
+    const costcoCustomWrap = document.getElementById('costco-custom');
+    const costcoCustomId = document.getElementById('costco-custom-id');
+    const costcoList = document.getElementById('costco-list');
+    const costcoNote = document.getElementById('costco-note');
+    function renderCostcoWarehouses() {
+      costcoList.innerHTML = '';
+      costcoWarehouses.forEach(id => {
+        const chip = document.createElement('span');
+        chip.className = 'symbol-chip';
+        const label = document.createElement('b');
+        label.className = 'symbol-toggle';
+        label.textContent = `#${id}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'symbol-remove';
+        remove.textContent = '\u00d7';
+        remove.setAttribute('aria-label', `Remove warehouse ${id}`);
+        remove.addEventListener('click', () => removeCostcoWarehouse(id));
+        chip.appendChild(label);
+        chip.appendChild(remove);
+        costcoList.appendChild(chip);
+      });
+      const atCap = costcoWarehouses.length >= maxCostcoWarehouses;
+      const submitButton = costcoForm.querySelector('button[type="submit"]');
+      if (submitButton) submitButton.disabled = atCap;
+      if (atCap && costcoNote) {
+        costcoNote.textContent = `Costco card fits ${maxCostcoWarehouses} warehouses. Remove one to add another.`;
+      }
+    }
+    async function postCostco(path, warehouse) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({warehouse})
+      });
+      const data = await response.json();
+      if (Array.isArray(data.warehouses)) {
+        costcoWarehouses = data.warehouses;
+        renderCostcoWarehouses();
+      }
+      if (!response.ok) {
+        costcoNote.textContent = data.error || 'Could not update the Costco list.';
+        return null;
+      }
+      return data;
+    }
+    async function removeCostcoWarehouse(id) {
+      /* Refuse the empty-list state on the client too so the user gets a
+         clear message instead of a red-400 blip. The config layer enforces
+         the same rule -- keeping at least one warehouse means the mode has
+         something to render if the user parks on it. */
+      if (costcoWarehouses.length <= 1) {
+        costcoNote.textContent = 'Keep at least one warehouse. Add another first, then remove this one.';
+        return;
+      }
+      const data = await postCostco('/costco/remove', id);
+      if (data) costcoNote.textContent = `Removed #${id}.`;
+    }
+    costcoPresetSelect.addEventListener('change', () => {
+      const isCustom = costcoPresetSelect.value === 'custom';
+      costcoCustomWrap.classList.toggle('hidden', !isCustom);
+      if (isCustom) costcoCustomId.focus();
+    });
+    costcoForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      let id = costcoPresetSelect.value;
+      if (id === 'custom') {
+        id = costcoCustomId.value.trim();
+        if (!id) {
+          costcoNote.textContent = 'Enter a Costco warehouse ID, e.g. 475.';
+          return;
+        }
+      }
+      if (costcoWarehouses.includes(id)) {
+        costcoNote.textContent = `#${id} is already on the list.`;
+        return;
+      }
+      costcoNote.textContent = `Adding #${id}\u2026`;
+      const data = await postCostco('/costco/add', id);
+      if (data) {
+        costcoNote.textContent = `Added #${id}. Prices refresh within a minute.`;
+        costcoCustomId.value = '';
+        refreshStatus();
+      }
+    });
+    renderCostcoWarehouses();
     async function saveNametag(fields) {
       const response = await fetch('/nametag', {
         method: 'POST',

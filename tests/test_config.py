@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from ticker.config import MAX_CURRENCY_PAIRS, MAX_SYMBOLS, load_config
+from ticker.config import (
+    MAX_COSTCO_WAREHOUSES,
+    MAX_CURRENCY_PAIRS,
+    MAX_SYMBOLS,
+    load_config,
+)
 
 
 @pytest.fixture
@@ -308,3 +313,76 @@ def test_currency_show_change_round_trip(currency_config) -> None:  # type: igno
     assert currency_config.current_currency_show_change() is False
     currency_config.set_currency_show_change(True)
     assert currency_config.current_currency_show_change() is True
+
+
+# ---- costco warehouses ---------------------------------------------------
+
+
+@pytest.fixture
+def costco_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("ticker.config._first_writable_state_dir", lambda: tmp_path / "state")
+    env = tmp_path / ".env"
+    # A pair of confirmed Bay Area IDs -- deliberately not the default
+    # ("475",) so a fallback path isn't confused with a hard-coded default.
+    env.write_text(
+        "TICKER_WIDTH=128\nTICKER_HEIGHT=32\nCOSTCO_WAREHOUSES=475,422\n",
+        encoding="utf-8",
+    )
+    return load_config(env)
+
+
+def test_costco_defaults_come_from_env_when_no_state_file(costco_config) -> None:  # type: ignore[no-untyped-def]
+    assert costco_config.current_costco_warehouses() == ("475", "422")
+
+
+def test_costco_add_and_remove_round_trip(costco_config) -> None:  # type: ignore[no-untyped-def]
+    costco_config.set_costco_warehouses(["475"])
+    assert costco_config.current_costco_warehouses() == ("475",)
+    costco_config.add_costco_warehouse("118")
+    assert costco_config.current_costco_warehouses() == ("475", "118")
+    costco_config.remove_costco_warehouse("475")
+    assert costco_config.current_costco_warehouses() == ("118",)
+
+
+def test_costco_add_is_idempotent(costco_config) -> None:  # type: ignore[no-untyped-def]
+    costco_config.set_costco_warehouses(["475"])
+    costco_config.add_costco_warehouse("475")
+    costco_config.add_costco_warehouse(" 475 ")  # whitespace is trimmed
+    assert costco_config.current_costco_warehouses() == ("475",)
+
+
+def test_costco_remove_last_warehouse_is_refused(costco_config) -> None:  # type: ignore[no-untyped-def]
+    costco_config.set_costco_warehouses(["475"])
+    with pytest.raises(ValueError):
+        costco_config.remove_costco_warehouse("475")
+    assert costco_config.current_costco_warehouses() == ("475",)
+
+
+def test_costco_rejects_bad_ids(costco_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        costco_config.set_costco_warehouses(["abc"])  # not digits
+    with pytest.raises(ValueError):
+        costco_config.set_costco_warehouses(["475a"])  # mixed
+    with pytest.raises(ValueError):
+        costco_config.set_costco_warehouses(["475123456789"])  # too long
+
+
+def test_costco_cap_is_enforced(costco_config) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        costco_config.set_costco_warehouses(["475", "422", "118", "157"])
+    # Boundary: exactly MAX_COSTCO_WAREHOUSES is fine.
+    costco_config.set_costco_warehouses(["475", "422", "118"])
+    assert len(costco_config.current_costco_warehouses()) == MAX_COSTCO_WAREHOUSES
+
+
+def test_costco_clearing_state_file_falls_back_to_env(costco_config) -> None:  # type: ignore[no-untyped-def]
+    costco_config.set_costco_warehouses(["118"])
+    costco_config.costco_warehouses_file.unlink()
+    assert costco_config.current_costco_warehouses() == ("475", "422")
+
+
+def test_costco_dedupes_preserves_first_occurrence(costco_config) -> None:  # type: ignore[no-untyped-def]
+    # "475" appears twice with whitespace jitter; only the first survives,
+    # and the fresh "118" tag lands after it so users can predict order.
+    costco_config.set_costco_warehouses(["475", "118", " 475"])
+    assert costco_config.current_costco_warehouses() == ("475", "118")

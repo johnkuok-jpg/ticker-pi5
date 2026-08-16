@@ -75,6 +75,11 @@ PREVIEW_SCREENS: dict[str, dict[str, object]] = {
     # Name tag: single static frame with a sample name so the simulator shows
     # what the coworker's desk plate will look like.
     "nametag": {"mode": "nametag", "seed_nametag": True, "frames": 1, "fps": 1, "stride": 15},
+    # Costco: Akamai blocks fetches from datacenter IPs (the preview builds
+    # in one), so the mode is pre-seeded with three plausible Bay Area
+    # warehouses. Walk one full slide rotation so the browser preview shows
+    # all three warehouses rather than freezing on the first card.
+    "costco": {"mode": "costco", "seed_costco": True, "frames": 18, "fps": 2, "stride": 15},
 }
 
 
@@ -150,6 +155,42 @@ def render_mode_frames(
         if mode.headlines:
             mode.headlines = mode.headlines[:3]
         mode._last_refresh = float("inf")  # noqa: SLF001 - freeze content while sampling
+
+    if name == "costco":
+        # Seed with a fake locator result so the preview never sees a 403.
+        from ticker.modes.costco import WarehousePrices  # noqa: WPS433
+
+        mode._prices = {  # noqa: SLF001 - preview seed
+            "475": WarehousePrices(
+                warehouse_id="475",
+                city="SOUTH SAN FRANCISCO",
+                location_name="El Camino",
+                regular="5.199",
+                premium="5.599",
+                diesel="",
+            ),
+            "422": WarehousePrices(
+                warehouse_id="422",
+                city="SOUTH SAN FRANCISCO",
+                location_name="S San Francisco",
+                regular="5.199",
+                premium="5.699",
+                diesel="",
+            ),
+            "118": WarehousePrices(
+                warehouse_id="118",
+                city="SAN LEANDRO",
+                location_name="San Leandro",
+                regular="5.059",
+                premium="5.399",
+                diesel="",
+            ),
+        }
+        mode._last_refresh = float("inf")  # noqa: SLF001 - preview freeze
+        mode._last_ids = ("475", "422", "118")
+        # Persist the three-warehouse list so ``current_costco_warehouses()``
+        # returns all three on render, not just the default single seed.
+        config.set_costco_warehouses(("475", "422", "118"))
 
     if name == "bikes" and pose == "__seed__":
         # Preview host may be offline from GBFS; hand the mode a plausible

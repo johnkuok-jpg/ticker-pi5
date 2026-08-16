@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube", "costco")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -85,6 +85,33 @@ MAX_CURRENCY_PAIRS = 3
 # ISO 4217 codes are always three letters. Widening this would let a typo slip
 # through as a mystery-lookup that the upstream endpoint would just reject.
 _CURRENCY_CODE_LEN = 3
+
+# Costco warehouses in the panel rotation. Each ~5s slide shows one warehouse's
+# gas prices, so three is a full ~15s trip round the list -- enough to compare
+# nearby stations without turning the panel into a scrolling menu. The cap is
+# also what the panel can fit above the fold on the webapp card.
+MAX_COSTCO_WAREHOUSES = 3
+# Warehouse IDs on the Costco locator API are integers rendered as strings
+# (e.g. "475", "1188"). They are opaque -- 3 digits today, could be 4 tomorrow
+# -- so this bound just guards against a runaway state file.
+_COSTCO_ID_MAX_LEN = 8
+
+
+def _parse_costco_warehouses(raw: str) -> tuple[str, ...]:
+    """Parse ``475,422,118`` into ``("475", "422", "118")``.
+
+    Silently drops non-numeric tokens the same way ``_parse_currency_pairs``
+    does: a typo in the state file must not knock the whole card offline. The
+    caller falls back to a default list when the returned tuple is empty.
+    """
+    parsed: list[str] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token or not token.isdigit() or len(token) > _COSTCO_ID_MAX_LEN:
+            continue
+        if token not in parsed:
+            parsed.append(token)
+    return tuple(parsed)
 
 
 def _parse_currency_pairs(raw: str) -> tuple[tuple[str, str], ...]:
@@ -244,6 +271,12 @@ class Config:
         ("USD", "EUR"),
         ("USD", "CNY"),
     )
+    # Costco warehouse rotation for the gas-prices mode. Each entry is a
+    # ``stlocID`` string from the Costco locator API. Default is the El Camino
+    # store (South San Francisco, warehouse 475) -- closest Costco with gas
+    # to John's SF apartment. Anything past MAX_COSTCO_WAREHOUSES is silently
+    # ignored by the renderer.
+    costco_warehouses: tuple[str, ...] = ("475",)
     # Quake-alert auto-switch. When enabled, the renderer polls USGS for a
     # small-region shake (California by default) and temporarily forces the
     # panel into quakes mode when one lands, then restores the user's chosen
@@ -366,6 +399,17 @@ class Config:
         behavior before this toggle existed, so a first upgrade is invisible).
         """
         return self.state_dir / "currency_show_change"
+
+    @property
+    def costco_warehouses_file(self) -> Path:
+        """Comma-separated Costco warehouse IDs (e.g. ``475,422,118``).
+
+        Falls back to ``costco_warehouses`` on the dataclass when the file is
+        missing or empty -- same convention as the stocks watchlist. Kept as a
+        list of opaque IDs rather than city names so the fetcher can hit the
+        Costco locator API directly without a name-to-ID lookup step.
+        """
+        return self.state_dir / "costco_warehouses"
 
     @property
     def youtube_playlist_file(self) -> Path:
@@ -1068,6 +1112,75 @@ class Config:
         )
         return self.current_currency_show_change()
 
+    # -- costco --------------------------------------------------------------
+
+    def current_costco_warehouses(self) -> tuple[str, ...]:
+        """Warehouse IDs the Costco card should rotate through.
+
+        State file wins, else the dataclass default. Read live on every
+        refresh (same convention as ``current_symbols``) so a webapp edit
+        lands on the panel at the next fetch cycle. An empty stored list
+        falls back to the default -- a Costco card with zero warehouses has
+        nothing to draw.
+        """
+        try:
+            raw = self.costco_warehouses_file.read_text(encoding="utf-8")
+        except OSError:
+            raw = ""
+        stored = _parse_costco_warehouses(raw)
+        return stored or self.costco_warehouses
+
+    def set_costco_warehouses(self, warehouses: Iterable[str]) -> None:
+        """Persist the warehouse list, de-duplicated, in the order given.
+
+        Each ID must be a positive integer written as a string. The universe
+        of real warehouse IDs isn't knowable offline (Costco keeps adding
+        stores), so this validates shape rather than a fixed list.
+        """
+        cleaned: list[str] = []
+        for warehouse in warehouses:
+            value = "".join(str(warehouse).split())
+            if not value:
+                continue
+            if not value.isdigit():
+                raise ValueError(f"Not a valid Costco warehouse id: {warehouse!r}")
+            if len(value) > _COSTCO_ID_MAX_LEN:
+                raise ValueError(f"Warehouse id is unreasonably long: {warehouse!r}")
+            if value not in cleaned:
+                cleaned.append(value)
+        if len(cleaned) > MAX_COSTCO_WAREHOUSES:
+            raise ValueError(
+                f"Costco mode is limited to {MAX_COSTCO_WAREHOUSES} warehouses"
+            )
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.costco_warehouses_file.write_text(",".join(cleaned) + "\n", encoding="utf-8")
+
+    def add_costco_warehouse(self, warehouse: str) -> tuple[str, ...]:
+        """Append one warehouse ID to the list and return the new list.
+
+        Adding a warehouse already on the list is a no-op -- the user's
+        intent ("show me this station") is already satisfied, and an error
+        on a duplicate tap would be noise.
+        """
+        current = list(self.current_costco_warehouses())
+        current.append(warehouse)
+        self.set_costco_warehouses(current)
+        return self.current_costco_warehouses()
+
+    def remove_costco_warehouse(self, warehouse: str) -> tuple[str, ...]:
+        """Drop one warehouse ID from the list and return the new list.
+
+        Removing the last warehouse is refused: an empty state file falls
+        back to the dataclass default, so the delete button would appear to
+        undo itself. Mirrors the stocks watchlist's "keep at least one" rule.
+        """
+        target = "".join(str(warehouse).split())
+        remaining = [item for item in self.current_costco_warehouses() if item != target]
+        if not remaining:
+            raise ValueError("Keep at least one Costco warehouse")
+        self.set_costco_warehouses(remaining)
+        return self.current_costco_warehouses()
+
     def current_stocks_lock_symbol(self) -> str:
         """Symbol the stocks card is pinned to, or empty for the normal rotation."""
         try:
@@ -1533,6 +1646,11 @@ def load_config(env_file: Path | None = None) -> Config:
         ("USD", "EUR"),
         ("USD", "CNY"),
     )
+    # Default seeds the El Camino warehouse (South San Francisco, id 475), the
+    # closest Costco with a gas station to John's SF apartment. A malformed
+    # env var falls back to the same default rather than an empty rotation.
+    _raw_costco = os.getenv("COSTCO_WAREHOUSES", "475")
+    costco_warehouses = _parse_costco_warehouses(_raw_costco) or ("475",)
     return Config(
         width=int(os.getenv("TICKER_WIDTH", "128")),
         height=int(os.getenv("TICKER_HEIGHT", "32")),
@@ -1549,6 +1667,7 @@ def load_config(env_file: Path | None = None) -> Config:
         flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,
         currency_pairs=currency_pairs,
+        costco_warehouses=costco_warehouses,
         quake_alert_enabled=os.getenv("QUAKE_ALERT_ENABLED", "true").strip().lower() in {"1", "true", "yes"},
         quake_alert_min_mag=_parse_float_env("QUAKE_ALERT_MIN_MAG", 3.5),
         quake_alert_region=os.getenv("QUAKE_ALERT_REGION", "California").strip(),

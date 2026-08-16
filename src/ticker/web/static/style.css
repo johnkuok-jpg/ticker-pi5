@@ -389,6 +389,7 @@ body[data-mode="focus"]   .flight[data-for~="focus"],
 body[data-mode="worldclock"] .flight[data-for~="worldclock"] { display: block; }
 body[data-mode="quakes"] .flight[data-for~="quakes"] { display: block; }
 body[data-mode="currency"] .flight[data-for~="currency"] { display: block; }
+body[data-mode="costco"] .flight[data-for~="costco"] { display: block; }
 /* Spotify card is a .card[data-for], mirror the same rule. */
 .card[data-for] { display: none; }
 body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
@@ -1005,6 +1006,9 @@ body[data-mode="spotify"] { --accent: #1ED760; --accent-soft: rgba(30, 215, 96, 
 body[data-mode="focus"]   { --accent: #4eb0ff; --accent-soft: rgba(78, 176, 255, 0.16); }
 body[data-mode="youtube"] { --accent: #ff0033; --accent-soft: rgba(255, 0, 51, 0.16); }
 body[data-mode="currency"]{ --accent: #f6d24a; --accent-soft: rgba(246, 210, 74, 0.16); }
+/* Costco red (PMS 185) -- the wordmark on the LED panel uses the same hex,
+   so the webapp accent lines up when you flip between screens. */
+body[data-mode="costco"]{ --accent: #e31837; --accent-soft: rgba(227, 24, 55, 0.16); }
 
 /* -- Focus timer card ------------------------------------------------------
  * Big countdown mirror + preset row + start/reset row + nudge row. The card

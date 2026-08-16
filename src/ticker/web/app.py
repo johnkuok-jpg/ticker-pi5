@@ -10,7 +10,13 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template, request
 
 from ticker import bart, baywheels, net, spotify as spotify_client
-from ticker.config import MAX_CURRENCY_PAIRS, MAX_SYMBOLS, VALID_MODES, load_config
+from ticker.config import (
+    MAX_COSTCO_WAREHOUSES,
+    MAX_CURRENCY_PAIRS,
+    MAX_SYMBOLS,
+    VALID_MODES,
+    load_config,
+)
 from ticker.modes.youtube import (
     CATEGORIES as YT_CATEGORIES,
     DEFAULT_CATEGORY as YT_DEFAULT_CATEGORY,
@@ -25,6 +31,7 @@ MODE_LABELS = {
     "aqi": "AQI",
     "bikes": "Bikes",
     "currency": "Currency",
+    "costco": "Costco Gas",
     "quakes": "Quakes",
     "nametag": "Name Tag",
     "spotify": "Spotify",
@@ -198,6 +205,8 @@ def create_app() -> Flask:
             currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
             max_currency_pairs=MAX_CURRENCY_PAIRS,
             currency_show_change=config.current_currency_show_change(),
+            costco_warehouses=list(config.current_costco_warehouses()),
+            max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
         )
 
     @app.route("/mode/<name>", methods=["GET", "POST"])
@@ -481,6 +490,50 @@ def create_app() -> Flask:
                 400,
             )
         return jsonify(pairs=[f"{b}/{q}" for b, q in pairs])
+
+    @app.post("/costco/add")
+    def add_costco_warehouse():  # type: ignore[no-untyped-def]
+        """Add a Costco warehouse ID to the gas-price rotation.
+
+        Same tap-follows pattern as ``/currency/add``: adding a warehouse is
+        a "show it to me" gesture, so we switch to costco mode on success.
+        """
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("warehouse", request.form.get("warehouse", ""))
+        config = load_config()
+        try:
+            warehouses = config.add_costco_warehouse(str(requested))
+        except ValueError as error:
+            return (
+                jsonify(
+                    error=str(error),
+                    warehouses=list(config.current_costco_warehouses()),
+                ),
+                400,
+            )
+        config.set_mode("costco")
+        return jsonify(
+            warehouses=list(warehouses),
+            current_mode=config.current_mode(),
+        )
+
+    @app.post("/costco/remove")
+    def remove_costco_warehouse():  # type: ignore[no-untyped-def]
+        """Drop a warehouse from the Costco rotation. Does not switch modes."""
+        payload = request.get_json(silent=True) or {}
+        requested = payload.get("warehouse", request.form.get("warehouse", ""))
+        config = load_config()
+        try:
+            warehouses = config.remove_costco_warehouse(str(requested))
+        except ValueError as error:
+            return (
+                jsonify(
+                    error=str(error),
+                    warehouses=list(config.current_costco_warehouses()),
+                ),
+                400,
+            )
+        return jsonify(warehouses=list(warehouses))
 
     @app.post("/currency/show-change")
     def set_currency_show_change():  # type: ignore[no-untyped-def]
@@ -875,6 +928,8 @@ def create_app() -> Flask:
             symbols=list(config.current_symbols()),
             currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
             currency_show_change=config.current_currency_show_change(),
+            costco_warehouses=list(config.current_costco_warehouses()),
+            max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),

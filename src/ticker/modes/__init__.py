@@ -6,6 +6,7 @@ from ticker.modes.airquality import AirQualityMode
 from ticker.modes.bart import BartMode
 from ticker.modes.base import Mode
 from ticker.modes.bikes import BikesMode
+from ticker.modes.costco import CostcoMode
 from ticker.modes.crypto import CryptoMode
 from ticker.modes.currency import CurrencyMode
 from ticker.modes.earthquakes import EarthquakesMode
@@ -28,6 +29,7 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "weather": WeatherMode,
     "flights": FlightsMode,
     "market": MarketMode,
+    "costco": CostcoMode,
     "crypto": CryptoMode,
     "currency": CurrencyMode,
     "quakes": EarthquakesMode,
