@@ -23,9 +23,11 @@ if [[ ! -d venv ]]; then
   # PioMatter needs the distro-provided GPIO bindings, so keep system packages visible.
   python3 -m venv --system-site-packages venv
 fi
-venv/bin/python -m pip install --upgrade pip
-venv/bin/python -m pip install -r requirements.txt
-venv/bin/python -m pip install --editable .
+venv/bin/python -m pip install --no-cache-dir --upgrade pip
+# --no-cache-dir: see comment in scripts/update.sh. Wheels aren't reused
+# across installs on this device, so the cache is pure SD wear + growth.
+venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+venv/bin/python -m pip install --no-cache-dir --editable .
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
@@ -34,6 +36,15 @@ fi
 
 # Root renderer and pi web server deliberately share this writable, file-backed state.
 sudo install -d -m 0775 -o pi -g pi /var/lib/ticker
+
+# SD-card hardening: cap the journal and stop apt from stockpiling .debs.
+# Both files are idempotent; re-running install.sh just refreshes them.
+sudo install -d -m 0755 /etc/systemd/journald.conf.d
+sudo install -m 0644 systemd/journald-ticker.conf /etc/systemd/journald.conf.d/ticker.conf
+sudo systemctl restart systemd-journald
+sudo install -m 0644 systemd/99-ticker-apt-clean.conf /etc/apt/apt.conf.d/99-ticker-apt-clean
+# One-shot: drop whatever's already cached from earlier installs.
+sudo apt-get clean
 sudo cp systemd/ticker.service systemd/ticker-web.service /etc/systemd/system/
 # Fleet auto-update units: installed on every Pi so a later
 # `systemctl enable --now ticker-updater.timer` needs no repo edits, but

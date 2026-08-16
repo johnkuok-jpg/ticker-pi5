@@ -9,8 +9,12 @@ cd /home/pi/ticker-pi5
 # unless it is whitelisted. Whitelist inline so we do not have to mutate
 # root's global git config on every Pi in the fleet.
 git -c safe.directory=/home/pi/ticker-pi5 pull --ff-only
-venv/bin/python -m pip install --upgrade -r requirements.txt
-venv/bin/python -m pip install --editable .
+# --no-cache-dir keeps pip from stockpiling every wheel it ever downloads
+# in ~/.cache/pip. yt-dlp releases weekly, so on an SD card that cache
+# would grow indefinitely; we never reinstall offline, so caching buys
+# nothing here.
+venv/bin/python -m pip install --no-cache-dir --upgrade -r requirements.txt
+venv/bin/python -m pip install --no-cache-dir --editable .
 # fonts-noto-cjk was added later than the first Pi installs, so an update
 # on an older box needs to backfill it. `apt install -y` is a no-op when
 # it's already present, so this is cheap.
@@ -21,6 +25,18 @@ sudo cp systemd/ticker.service systemd/ticker-web.service /etc/systemd/system/
 # The timer is only reloaded, not restarted: an in-flight update on this Pi
 # should finish cleanly rather than getting killed and half-applied.
 sudo cp systemd/ticker-updater.service systemd/ticker-updater.timer /etc/systemd/system/
+
+# SD-card hardening: backfill the journal cap and apt-clean drop-in on
+# older Pis that were installed before these existed. Idempotent — writing
+# the same file on every tick is fine, and journald is only restarted when
+# the file actually changed.
+sudo install -d -m 0755 /etc/systemd/journald.conf.d
+if ! sudo cmp -s systemd/journald-ticker.conf /etc/systemd/journald.conf.d/ticker.conf 2>/dev/null; then
+  sudo install -m 0644 systemd/journald-ticker.conf /etc/systemd/journald.conf.d/ticker.conf
+  sudo systemctl restart systemd-journald
+fi
+sudo install -m 0644 systemd/99-ticker-apt-clean.conf /etc/apt/apt.conf.d/99-ticker-apt-clean
+sudo apt-get clean
 
 # Wi-Fi fallback lifecycle: keep update in step with install.sh. Only touch
 # these files where NetworkManager is actually in charge; otherwise a
