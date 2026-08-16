@@ -38,42 +38,71 @@ import numpy as np
 from ticker.canvas import SMALL, Canvas
 from ticker.modes.base import Mode
 
-# Curated playlists that survive downscaling to 57×32. These are all
+# Curated playlists that survive downscaling to 57×32. Most of these are
 # channel-uploads playlists (a channel ID with the leading "UC" replaced by
 # "UU") because those don't require auth and are stable over time. Content
-# picked to look good at very low resolution — slow scenic footage, big
+# picked to look good at very low resolution -- slow scenic footage, big
 # recognisable subjects, wide colour, minimal fine detail or text.
+#
+# Two "trending" entries are best-effort: YouTube's canonical
+# /feed/trending page was removed in 2026, so we substitute the
+# YouTube-curated "Top Music Videos" auto-chart (verified live) and a
+# ``ytsearch:`` fallback that pulls the current top matches for a viral
+# query. Trending content tends to look worse than the scenic categories
+# at 57x32 (lots of overlaid graphics, small faces, hard cuts), so users
+# get honest labels rather than an oversold "real trending" claim.
+#
+# The ``source`` value is one of:
+#   * a bare playlist ID (starts with ``PL`` or ``UU``) -- gets wrapped
+#     into a full playlist URL
+#   * a full ``https://`` URL -- passed through untouched
+#   * a ``ytsearch<N>:query`` string -- passed through as a yt-dlp search
 #
 # The category key is what the webapp posts back and what lives on disk.
 CATEGORIES: dict[str, dict[str, str]] = {
-    "nature":     {"label": "Nature",     "desc": "Nature Relaxation Films", "list": "UU4lp9Emg1ci8eo2eDkB-Tag"},
-    "bbc_earth":  {"label": "BBC Earth",  "desc": "Wildlife, big landscapes",  "list": "UUwmZiChSryoWQCZMIQezgTg"},
-    "aquarium":   {"label": "Aquarium",   "desc": "Monterey Bay Aquarium",     "list": "UUnM5iMGiKsZg-iOlIO2ZkdQ"},
-    "animals":    {"label": "Animals",    "desc": "Animal Planet",             "list": "UUkEBDbzLyH-LbB2FgMoSMaQ"},
-    "space":      {"label": "Space",      "desc": "NASA",                      "list": "UULA_DiR1FfKNvjuUpBHmylQ"},
-    "jpl":        {"label": "JPL",        "desc": "NASA Jet Propulsion Lab",   "list": "UUryGec9PdUCLjpJW2mgCuLw"},
-    "earth":      {"label": "Earth",      "desc": "Aerials from above",        "list": "UUU1wj4omlek5tQ3GDJNZuWQ"},
-    "gopro":      {"label": "GoPro",      "desc": "Action + landscapes",       "list": "UUqhnX4jA0A5paNd1v-zEysw"},
-    "aviation":   {"label": "Aviation",   "desc": "Cargospotter: 747s, A380s",  "list": "UUA6aJAT9rH8vRwWGiGr2iqQ"},
-    "ambient":    {"label": "Ambient",    "desc": "4K screensavers",           "list": "UUg72Hd6UZAgPBAUZplnmPMQ"},
-    "lofi":       {"label": "Lofi",       "desc": "Lofi Girl music videos",    "list": "UUSJ4gkVC6NrvII8umztf0Ow"},
-    "veritasium": {"label": "Science",    "desc": "Veritasium",                "list": "UUHnyfMqiRRG1u-2MsSQLbXA"},
+    "trending_music": {"label": "Top Music", "desc": "YouTube's Top Music chart",    "source": "PL4fGSI1pDJn6puJdseH2Rt9sMvt9E2M4i"},
+    "trending_viral": {"label": "Viral",     "desc": "Fresh viral clips (best-effort)", "source": "ytsearch30:viral video 2026"},
+    "nature":     {"label": "Nature",     "desc": "Nature Relaxation Films", "source": "UU4lp9Emg1ci8eo2eDkB-Tag"},
+    "bbc_earth":  {"label": "BBC Earth",  "desc": "Wildlife, big landscapes",  "source": "UUwmZiChSryoWQCZMIQezgTg"},
+    "aquarium":   {"label": "Aquarium",   "desc": "Monterey Bay Aquarium",     "source": "UUnM5iMGiKsZg-iOlIO2ZkdQ"},
+    "animals":    {"label": "Animals",    "desc": "Animal Planet",             "source": "UUkEBDbzLyH-LbB2FgMoSMaQ"},
+    "space":      {"label": "Space",      "desc": "NASA",                      "source": "UULA_DiR1FfKNvjuUpBHmylQ"},
+    "jpl":        {"label": "JPL",        "desc": "NASA Jet Propulsion Lab",   "source": "UUryGec9PdUCLjpJW2mgCuLw"},
+    "earth":      {"label": "Earth",      "desc": "Aerials from above",        "source": "UUU1wj4omlek5tQ3GDJNZuWQ"},
+    "gopro":      {"label": "GoPro",      "desc": "Action + landscapes",       "source": "UUqhnX4jA0A5paNd1v-zEysw"},
+    "aviation":   {"label": "Aviation",   "desc": "Cargospotter: 747s, A380s",  "source": "UUA6aJAT9rH8vRwWGiGr2iqQ"},
+    "ambient":    {"label": "Ambient",    "desc": "4K screensavers",           "source": "UUg72Hd6UZAgPBAUZplnmPMQ"},
+    "lofi":       {"label": "Lofi",       "desc": "Lofi Girl music videos",    "source": "UUSJ4gkVC6NrvII8umztf0Ow"},
+    "veritasium": {"label": "Science",    "desc": "Veritasium",                "source": "UUHnyfMqiRRG1u-2MsSQLbXA"},
 }
 DEFAULT_CATEGORY = "nature"
 
 
+def _wrap_source(source: str) -> str:
+    """Turn a category ``source`` value into something yt-dlp can extract.
+
+    Playlist IDs (``PL...``/``UU...``) are wrapped into a full playlist URL.
+    Full URLs and ``ytsearch:`` queries pass through untouched.
+    """
+    s = source.strip()
+    if s.startswith("http") or s.startswith("ytsearch"):
+        return s
+    return f"https://www.youtube.com/playlist?list={s}"
+
+
 def resolve_playlist(value: str) -> str:
-    """Turn a stored value into a full playlist URL.
+    """Turn a stored value into a yt-dlp-extractable source.
 
     ``value`` may be a category key (e.g. ``"nature"``), a full URL (starts
-    with ``http``), or empty. Unknown keys and blanks fall back to the
-    default category so the mode is never stuck without a source.
+    with ``http``), a ``ytsearch:`` query, or empty. Unknown keys and blanks
+    fall back to the default category so the mode is never stuck without a
+    source.
     """
     v = (value or "").strip()
-    if v.startswith("http"):
+    if v.startswith("http") or v.startswith("ytsearch"):
         return v
     cat = CATEGORIES.get(v) or CATEGORIES[DEFAULT_CATEGORY]
-    return f"https://www.youtube.com/playlist?list={cat['list']}"
+    return _wrap_source(cat["source"])
 
 
 DEFAULT_PLAYLIST_URL = resolve_playlist(DEFAULT_CATEGORY)
