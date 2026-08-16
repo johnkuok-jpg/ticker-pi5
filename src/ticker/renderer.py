@@ -13,6 +13,7 @@ import numpy as np
 from ticker.canvas import Canvas
 from ticker.config import Config, load_config
 from ticker.modes import build_mode
+from ticker.quake_alert import QuakeAlertWatcher
 
 LOGGER = logging.getLogger(__name__)
 
@@ -86,8 +87,16 @@ def run() -> None:
     config = load_config()
     matrix, framebuffer = _open_matrix(config)
     canvas = Canvas(config.width, config.height)
+
+    # Long-lived watcher: polls USGS on its own cadence inside .tick(). The
+    # renderer just asks it, once a second, to consider polling. We expose
+    # .current_alert as a bound method so the quakes mode can read whatever
+    # state the watcher publishes without owning any polling logic itself.
+    quake_watcher = QuakeAlertWatcher(config)
+
     current_name = config.current_mode()
-    current_mode = build_mode(current_name, config)
+    last_user_mode = current_name
+    current_mode = build_mode(current_name, config, alert_source=quake_watcher.current_alert)
     _write_pid(config)
     tick = 0
     check_interval = max(1, config.fps)
@@ -121,10 +130,36 @@ def run() -> None:
                 # left untouched on disk, so the panel returns to whatever was
                 # chosen the moment a network comes back.
                 notice = config.network_notice()
-                requested_name = "net" if notice else config.current_mode()
+
+                # Poll the quake watcher on the same cadence. It only actually
+                # hits USGS every ~60s regardless of how often we call it, so
+                # this is cheap. Skipped while a Wi-Fi notice is up because
+                # there's no route to USGS anyway.
+                if not notice:
+                    quake_watcher.tick()
+
+                # Manual switch cancels an active alert. "Manual" is detected
+                # by observing that config.current_mode() -- the file the web
+                # app writes -- has changed since the previous check. Without
+                # this the alert would ignore the user tapping a different
+                # mode button while the dwell window is still active.
+                user_mode = config.current_mode()
+                if user_mode != last_user_mode:
+                    quake_watcher.clear()
+                    last_user_mode = user_mode
+                alert = None if notice else quake_watcher.current_alert()
+
+                if notice:
+                    requested_name = "net"
+                elif alert is not None:
+                    requested_name = "quakes"
+                else:
+                    requested_name = user_mode
                 if requested_name != current_name:
                     current_name = requested_name
-                    current_mode = build_mode(current_name, config)
+                    current_mode = build_mode(
+                        current_name, config, alert_source=quake_watcher.current_alert
+                    )
                 target_brightness = config.current_brightness()
                 # A brightness floor while the setup screen is up. The night
                 # schedule drops to 8%, at which point an eight-character

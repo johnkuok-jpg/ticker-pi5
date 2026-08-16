@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from ticker.canvas import MEDIUM, SMALL, Canvas
 from ticker.modes.base import Mode
+from ticker.quake_alert import QuakeAlert
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,11 +67,33 @@ class Quake:
     time_ms: int
 
     def color(self) -> tuple[int, int, int]:
-        if self.magnitude >= BIG_MAG:
-            return RED
-        if self.magnitude >= NOTABLE_MAG:
-            return ORANGE
-        return AMBER
+        return _color_for_magnitude(self.magnitude)
+
+
+def _color_for_magnitude(magnitude: float) -> tuple[int, int, int]:
+    """Severity band -> colour. Extracted so the alert path can reuse it
+    without dressing a scalar magnitude up as a Quake dataclass first."""
+    if magnitude >= BIG_MAG:
+        return RED
+    if magnitude >= NOTABLE_MAG:
+        return ORANGE
+    return AMBER
+
+
+def _short_region(region: str) -> str:
+    """Abbreviate the region label for the alert header.
+
+    California in particular has a well-known two-letter form; other US state
+    names are also two letters. For anything else we uppercase and clip so a
+    long string like ``"Pacific Northwest"`` still fits.
+    """
+    text = (region or "").strip()
+    if not text:
+        return "GLOBAL"
+    if text.lower() == "california":
+        return "CA"
+    upper = text.upper()
+    return upper if len(upper) <= 10 else upper[:10]
 
 
 def _clean_place(place: str) -> str:
@@ -136,13 +159,19 @@ class EarthquakesMode(Mode):
     # a future config option can override without touching the class.
     FEED_THRESHOLD = "4.5"
 
-    def __init__(self, config, opener=None) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, config, opener=None, alert_source=None) -> None:  # type: ignore[no-untyped-def]
         super().__init__(config)
         self.quakes: list[Quake] = []
         self._opener = opener or urllib.request.urlopen
         # Far enough back that the first render always fetches.
         self._last_refresh = -1e9
         self._failed = False
+        # A callable that returns the current QuakeAlert (or None). The
+        # renderer wires this to its long-lived QuakeAlertWatcher so the mode
+        # doesn't own the polling; the mode is a pure display of whatever
+        # alert state exists. Left as ``None`` in tests and manual selection
+        # so the passive rotation renders unchanged.
+        self._alert_source = alert_source
 
     # -- data ---------------------------------------------------------------
 
@@ -198,6 +227,62 @@ class EarthquakesMode(Mode):
         canvas.text(1, 1, canvas.fit("USGS 24H  M4.5+"), (95, 135, 195), SMALL)
         canvas.hline(11, (26, 36, 56))
 
+    def _draw_alert_header(self, canvas: Canvas, tick: int) -> None:
+        """Alerting header: draws attention without becoming a strobe.
+
+        The header background flashes for the first two seconds by inverting
+        (red text on the eyebrow line) and then settles to steady red. A
+        continuous flash would be maddening on a desk panel; a brief attract
+        beat and then a static bar is the tradeoff that reads as urgent
+        without training the user to look away.
+        """
+        flash_on = (tick // max(1, self.config.fps // 4)) % 2 == 0
+        flashing_window = tick < self.config.fps * 2
+        color = RED if not (flashing_window and flash_on) else (255, 200, 200)
+        # Header echoes the config: users who tune QUAKE_ALERT_MIN_MAG see
+        # the current threshold on the alert bar. Region substring gets
+        # abbreviated to the first eight chars so "California" -> "CALIFORN"
+        # only if we really need to fit -- for the default "California" we
+        # abbreviate manually to "CA" because that reads better.
+        region_label = _short_region(self.config.quake_alert_region)
+        threshold_label = f"M{self.config.quake_alert_min_mag:g}+"
+        canvas.text(1, 1, canvas.fit(f"ALERT  {region_label}  {threshold_label}"), color, SMALL)
+        canvas.hline(11, (90, 25, 25))
+
+    def _draw_alert(self, canvas: Canvas, alert: QuakeAlert, tick: int) -> None:
+        """Alerting card: magnitude MEDIUM + attract flash, place, ago.
+
+        We compute a live-updating "3s ago" from wall clock and the USGS
+        origin time so the panel reads as a real-time monitor while the
+        alert holds. The rotation is intentionally paused for alerts -- the
+        whole point is that this one card gets the panel to itself.
+        """
+        # First 3 seconds: magnitude flashes at 4 Hz to draw the eye. After
+        # that it stays steady in its severity colour so a glance across the
+        # room still reads the number.
+        attract_beat = (tick // max(1, self.config.fps // 4)) % 2 == 0
+        attract_window = tick < self.config.fps * 3
+        mag_color = _color_for_magnitude(alert.magnitude)
+        if attract_window and not attract_beat:
+            mag_color = (60, 20, 20)  # "off" half of the strobe -- dim, not black
+        mag_text = f"M{alert.magnitude:.1f}"
+        canvas.text(1, 14, mag_text, mag_color, MEDIUM)
+        mag_end = canvas.text_width(mag_text, MEDIUM) + 4
+
+        # Place beside the magnitude. Same trim logic as passive rotation.
+        place_budget = canvas.width - mag_end - 1
+        canvas.text(
+            mag_end,
+            15,
+            canvas.fit(_clean_place(alert.place), place_budget, SMALL),
+            WHITE,
+            SMALL,
+        )
+
+        rel = _relative_time(time.time(), alert.time_ms)
+        if rel:
+            canvas.text(1, 24, rel, DIM, SMALL)
+
     def _draw_quiet(self, canvas: Canvas) -> None:
         """When the feed is up but has nothing above threshold today."""
         canvas.text(1, 15, "No M4.5+ quakes", WHITE, SMALL)
@@ -233,11 +318,23 @@ class EarthquakesMode(Mode):
             canvas.text(1, 24, rel, DIM, SMALL)
 
     def render(self, canvas: Canvas, tick: int) -> None:
+        canvas.clear()
+
+        # Alert branch: when the watcher has flagged a fresh in-region shake,
+        # pin the card and don't rotate. Alerts short-circuit the passive
+        # feed entirely -- including the background fetch, because the M2.5+
+        # hourly feed the watcher polls already covers everything the M4.5+
+        # daily feed would show and then some.
+        alert = self._alert_source() if self._alert_source else None
+        if alert is not None:
+            self._draw_alert_header(canvas, tick)
+            self._draw_alert(canvas, alert, tick)
+            return
+
         age_limit = self.ERROR_BACKOFF_SECONDS if self._failed else self.CACHE_SECONDS
         if time.monotonic() - self._last_refresh >= age_limit:
             self._refresh()
 
-        canvas.clear()
         self._draw_header(canvas)
 
         if self._failed and not self.quakes:

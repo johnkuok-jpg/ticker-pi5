@@ -32,6 +32,28 @@ def _parse_hex_color(value: str) -> tuple[int, int, int]:
         return (255, 255, 255)
 
 
+def _parse_float_env(name: str, default: float) -> float:
+    """Read a float env var; malformed values fall back so a typo can't crash boot."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    """Read an int env var; malformed values fall back so a typo can't crash boot."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def _canonical_hex_color(value: str) -> str:
     """Validate + normalize a color to '#RRGGBB'. Raises ValueError on garbage."""
     if not isinstance(value, str):
@@ -192,6 +214,20 @@ class Config:
         ("USD", "EUR"),
         ("USD", "CNY"),
     )
+    # Quake-alert auto-switch. When enabled, the renderer polls USGS for a
+    # small-region shake (California by default) and temporarily forces the
+    # panel into quakes mode when one lands, then restores the user's chosen
+    # mode after the dwell window. M3.0 in California is roughly once every
+    # few days -- alerts land but do not spam. M3.5 is more like once every
+    # week or two and is the current default. The region string is a
+    # case-insensitive substring against the USGS ``place`` field; empty
+    # means worldwide. The alerter also cross-checks longitude/latitude
+    # against a California bounding box so the occasional feature USGS
+    # publishes without "California" in the place still fires.
+    quake_alert_enabled: bool = True
+    quake_alert_min_mag: float = 3.5
+    quake_alert_region: str = "California"
+    quake_alert_dwell_seconds: int = 120
     bart_station: str = "EMBR"
     bike_station_id: str = ""
     nametag_name: str = ""
@@ -1183,6 +1219,10 @@ def load_config(env_file: Path | None = None) -> Config:
         flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,
         currency_pairs=currency_pairs,
+        quake_alert_enabled=os.getenv("QUAKE_ALERT_ENABLED", "true").strip().lower() in {"1", "true", "yes"},
+        quake_alert_min_mag=_parse_float_env("QUAKE_ALERT_MIN_MAG", 3.5),
+        quake_alert_region=os.getenv("QUAKE_ALERT_REGION", "California").strip(),
+        quake_alert_dwell_seconds=max(15, _parse_int_env("QUAKE_ALERT_DWELL_SECONDS", 120)),
         bart_station=os.getenv("BART_STATION", "EMBR").strip().upper() or "EMBR",
         bike_station_id=os.getenv("BIKE_STATION_ID", "").strip(),
         nametag_name=os.getenv("NAMETAG_NAME", "").strip(),
