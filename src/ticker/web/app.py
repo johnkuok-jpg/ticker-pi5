@@ -208,6 +208,7 @@ def create_app() -> Flask:
             max_currency_pairs=MAX_CURRENCY_PAIRS,
             currency_show_change=config.current_currency_show_change(),
             currency_flag_mode=config.current_currency_flag_mode(),
+            currency_flag_grid=config.current_currency_flag_grid(),
             costco_warehouses=list(config.current_costco_warehouses()),
             max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
         )
@@ -641,6 +642,22 @@ def create_app() -> Flask:
         value = config.set_currency_flag_mode(enabled)
         return jsonify(currency_flag_mode=value)
 
+    @app.post("/currency/flag-grid")
+    def set_currency_flag_grid():  # type: ignore[no-untyped-def]
+        """Toggle the 2x2 arrangement of the flag layout.
+
+        Body: ``{"enabled": true|false}``. Only takes effect on the panel
+        when flag mode is on, there are 3-4 pairs, and show-change is off
+        -- the mode enforces those preconditions at render time and
+        silently falls back to the stacked layout otherwise. Same
+        non-switching philosophy as the sister toggles.
+        """
+        payload = request.get_json(silent=True) or {}
+        enabled = bool(payload.get("enabled", True))
+        config = load_config()
+        value = config.set_currency_flag_grid(enabled)
+        return jsonify(currency_flag_grid=value)
+
     @app.post("/nametag")
     def set_nametag():  # type: ignore[no-untyped-def]
         """Update the desk-plate name and/or color, and switch to nametag mode.
@@ -1020,6 +1037,7 @@ def create_app() -> Flask:
             currency_pairs=[f"{b}/{q}" for b, q in config.current_currency_pairs()],
             currency_show_change=config.current_currency_show_change(),
             currency_flag_mode=config.current_currency_flag_mode(),
+            currency_flag_grid=config.current_currency_flag_grid(),
             costco_warehouses=list(config.current_costco_warehouses()),
             max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
             nametag_name=config.current_nametag_name(),

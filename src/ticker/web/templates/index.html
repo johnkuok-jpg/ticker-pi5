@@ -123,6 +123,11 @@
                {% if currency_flag_mode %}checked{% endif %}>
         <span>Flag layout (2-4 rows)</span>
       </label>
+      <label class="currency-toggle" id="currency-flag-grid-label">
+        <input id="currency-flag-grid" type="checkbox"
+               {% if currency_flag_grid %}checked{% endif %}>
+        <span>2×2 grid (needs 3-4 pairs, flag layout, and 24-hour change off)</span>
+      </label>
       <p id="currency-note" class="schedule">Rates refresh every 10 minutes; the upstream feed updates hourly.</p>
     </section>
     <section class="flight" data-for="costco">
@@ -605,6 +610,7 @@
     const maxCurrencyPairs = {{ max_currency_pairs | tojson }};
     let currencyShowChange = {{ currency_show_change | tojson }};
     let currencyFlagMode = {{ currency_flag_mode | tojson }};
+    let currencyFlagGrid = {{ currency_flag_grid | tojson }};
     let costcoWarehouses = {{ costco_warehouses | list | tojson }};
     const maxCostcoWarehouses = {{ max_costco_warehouses | tojson }};
     const flightForm = document.getElementById('flight-form');
@@ -703,6 +709,10 @@
       if (typeof data.currency_flag_mode === 'boolean' && data.currency_flag_mode !== currencyFlagMode) {
         currencyFlagMode = data.currency_flag_mode;
         if (currencyFlagModeToggle) currencyFlagModeToggle.checked = currencyFlagMode;
+      }
+      if (typeof data.currency_flag_grid === 'boolean' && data.currency_flag_grid !== currencyFlagGrid) {
+        currencyFlagGrid = data.currency_flag_grid;
+        if (currencyFlagGridToggle) currencyFlagGridToggle.checked = currencyFlagGrid;
       }
       /* Same guard for the Costco card: keep the chip list in step with the
          source of truth if another phone edited it. */
@@ -1074,6 +1084,7 @@
     const currencyNote = document.getElementById('currency-note');
     const currencyShowChangeToggle = document.getElementById('currency-show-change');
     const currencyFlagModeToggle = document.getElementById('currency-flag-mode');
+    const currencyFlagGridToggle = document.getElementById('currency-flag-grid');
     /* Tile catalog: the 12 currencies that get 90% of the taps. The base
        defaults to USD unless the tile itself is USD (then base flips to
        EUR so USD/USD never happens). "Custom…" is a details expando below. */
@@ -1272,6 +1283,27 @@
         ? 'Flag layout on. Two rows big, or four rows small when change is off.'
         : 'Classic layout: up to three rows with the full pair label.';
     });
+    if (currencyFlagGridToggle) {
+      currencyFlagGridToggle.addEventListener('change', async () => {
+        const wanted = currencyFlagGridToggle.checked;
+        const response = await fetch('/currency/flag-grid', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled: wanted})
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          currencyNote.textContent = 'Could not save the grid setting.';
+          currencyFlagGridToggle.checked = currencyFlagGrid;
+          return;
+        }
+        currencyFlagGrid = !!data.currency_flag_grid;
+        currencyFlagGridToggle.checked = currencyFlagGrid;
+        currencyNote.textContent = currencyFlagGrid
+          ? '2×2 grid on. Needs 3-4 pairs, flag layout, and change column off.'
+          : 'Grid off. Flag layout falls back to stacked rows.';
+      });
+    }
     renderCurrencyPairs();
     /* Costco card: warehouse chips + preset/custom form. Mirrors the
        currency card almost 1:1 -- same chip model, same postX helper, same

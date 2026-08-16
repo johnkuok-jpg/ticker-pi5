@@ -29,26 +29,29 @@ values; costcogasprices.com routes by street-address slug instead. The
 slug (harvested once from the site's California listing). Adding a new
 region == extending the table; nothing else changes.
 
-Layout is a two-warehouse rotation (well, up to three) at ~5 s per slide:
+Layout is a two-warehouse rotation (well, up to three) at ~5 s per slide.
+The hand-drawn Costco Gasoline wordmark takes the left half of the card,
+vertically centred; the right half stacks the location and prices::
 
     ┌────────────────────────────────────────────────────────────┐
-    │ COSTCO       ●○○  El Camino                                │  rows 0-4   red
-    │ GASOLINE                                                   │  rows 5-9   blue
+    │                     ●○○  El Camino                         │  rows 0-7   SMALL
     │                                                            │
-    │ REG                                                  $5.30 │  rows 11-22 MEDIUM
-    │ PREM                                                 $5.74 │  rows 24-31 SMALL
+    │ COSTCO              REG                              $5.30 │  rows 9-16  MEDIUM
+    │ ==== GASOLINE                                              │
+    │                     PREM                             $5.74 │  rows 24-31 SMALL
     └────────────────────────────────────────────────────────────┘
 
 Diesel, when the API returns it, replaces PREM as the third row and pushes
 PREM up -- most Costco warehouses only publish regular + premium, so a
 three-row layout would leave a dead row 90% of the time.
 
-The header is a hand-drawn stacked bitmap of the Costco Gasoline sign --
-red ``COSTCO`` directly above blue ``GASOLINE``, both in the same 5-row
+The left column carries a hand-drawn stacked bitmap of the Costco Gasoline
+sign -- red ``COSTCO`` in a 6x8 face over blue ``GASOLINE`` in the 5-row
 tagline face -- because setting it in the panel font produced something
-that read as a filename rather than a logo. The older 14-row mark with
-blue speed stripes has been retired in favour of a compact 10-row block
-so the REG price row can go up to MEDIUM. See the glyph tables below.
+that read as a filename rather than a logo. The compact 5-over-5 version
+lost the visual weight the sign is known for, so we brought the bigger
+6x8 ``COSTCO`` back and moved it to the left so the wider wordmark stops
+competing with the price row for the same horizontal band.
 """
 
 from __future__ import annotations
@@ -158,48 +161,56 @@ SLIDE_SECONDS = 5.0
 # filling the space under the left. None of that survives a font
 # substitution, so the mark is hand-drawn.
 #
-# COSTCO used to be a 6x8 hand-drawn mark stacked over GASOLINE with blue
-# speed stripes filling the left shoulder. That version dominated the card
-# and left only two 8px price rows at the bottom. The user asked for a
-# smaller wordmark and larger prices, so both marks now live in the same
-# 5-row tagline face: COSTCO in red on top, GASOLINE in blue directly
-# under it, no stripes, freeing 12 rows below the header for a MEDIUM
-# (12-tall) REG price row. PREM stays SMALL because a second 12-row block
-# would run off the panel.
+# ``COSTCO`` uses a 6-wide, 8-tall hand-drawn face -- heavy strokes and
+# rounded corners that read as the real sign at a glance. The earlier
+# attempt at a compact 5x5 wordmark stacked over GASOLINE freed rows for
+# the price block but lost the visual weight the sign is known for; the
+# 6x8 letters are back, and the price block moved to the right column
+# instead of stealing rows from the wordmark.
 #
-# ``1`` lights a pixel, ``0`` leaves it black. Glyphs are 5 rows tall to
-# match ``GASOLINE`` and 4-5 columns wide with 1px kerning so the whole
-# ``COSTCO`` word ends up roughly the same width as ``GASOLINE`` -- a
-# little narrower on purpose so the red wordmark reads as ``sits inside``
-# GASOLINE rather than stretching past it.
-_LOGO_GLYPHS_5x5: dict[str, tuple[str, ...]] = {
+# ``1`` lights a pixel, ``0`` leaves it black. The strokes are 2px so the
+# glyph body has real presence at panel scale -- a 1px stroke at this
+# size looks like any other label on the panel.
+_LOGO_GLYPHS_6x8: dict[str, tuple[str, ...]] = {
     "C": (
-        "0111",
-        "1000",
-        "1000",
-        "1000",
-        "0111",
+        "011110",
+        "111111",
+        "110000",
+        "110000",
+        "110000",
+        "110000",
+        "111111",
+        "011110",
     ),
     "O": (
-        "0110",
-        "1001",
-        "1001",
-        "1001",
-        "0110",
+        "011110",
+        "111111",
+        "110011",
+        "110011",
+        "110011",
+        "110011",
+        "111111",
+        "011110",
     ),
     "S": (
-        "0111",
-        "1000",
-        "0110",
-        "0001",
-        "1110",
+        "011111",
+        "111111",
+        "110000",
+        "111110",
+        "011111",
+        "000011",
+        "111111",
+        "111110",
     ),
     "T": (
-        "1111",
-        "0110",
-        "0110",
-        "0110",
-        "0110",
+        "111111",
+        "111111",
+        "001100",
+        "001100",
+        "001100",
+        "001100",
+        "001100",
+        "001100",
     ),
 }
 
@@ -231,19 +242,28 @@ _LOGO_TEXT = "COSTCO"
 _TAG_TEXT = "GASOLINE"
 _LOGO_KERN = 1             # 1px gap between ``COSTCO`` letters
 _LOGO_WIDTH = (
-    sum(len(_LOGO_GLYPHS_5x5[c][0]) for c in _LOGO_TEXT)
+    sum(len(_LOGO_GLYPHS_6x8[c][0]) for c in _LOGO_TEXT)
     + _LOGO_KERN * (len(_LOGO_TEXT) - 1)
-)                                                            # 29px
+)                                                            # 41px
 _TAG_KERN = 1              # 1px gap between tagline letters
 _TAG_WIDTH = (
     sum(len(_LOGO_GLYPHS_TAG[c][0]) for c in _TAG_TEXT)
     + _TAG_KERN * (len(_TAG_TEXT) - 1)
 )                                                            # 32px
-# COSTCO occupies rows 0-4; GASOLINE sits directly under it at row 5. No
-# stripes any more -- there is no shoulder to fill now that COSTCO is the
-# same tagline face and roughly the same width as GASOLINE.
-_TAG_TOP = 5               # ``GASOLINE`` band: rows 5-9
-_LOGO_HEIGHT = _TAG_TOP + 5                                  # 10 rows total
+# COSTCO occupies rows 0-7 in its local frame; GASOLINE sits below at
+# row 9 (a 1-row gap keeps the two words optically separate rather than
+# fusing into a single block on an LED panel). No stripes -- when the
+# wordmark held the whole top of the card the stripes filled the shoulder
+# gap under ``COSTCO``, but now that the mark sits in a left column with
+# breathing room around it the stripes read as clutter.
+_TAG_TOP = 9               # ``GASOLINE`` band: rows 9-13 (in local frame)
+_LOGO_HEIGHT = _TAG_TOP + 5                                  # 14 rows total
+
+# Horizontal gap between the wordmark's right edge and the right-column
+# content. A single pixel would let the price row's "$" sign visually
+# fuse with the ``GASOLINE`` tail; 3px is the smallest gap that reads
+# as two separate columns on the panel.
+_RIGHT_GUTTER = 3
 
 
 @dataclass(frozen=True)
@@ -465,11 +485,14 @@ class CostcoMode(Mode):
         # for the first successful fetch. Falling back to a generic text
         # placeholder would let the panel look "broken" on a slow network
         # even though the card itself is fine.
-        self._draw_wordmark(canvas, 0, 0, dim=True)
-        # Single line on the last row: the dim mark already says COSTCO
-        # GASOLINE, so repeating it in the copy wastes the only line we
-        # have left under a 14-row wordmark.
-        canvas.text(0, _LOGO_HEIGHT + 2, "FETCHING PRICES", DIM, SMALL)
+        logo_y = (canvas.height - _LOGO_HEIGHT) // 2
+        self._draw_wordmark(canvas, 0, logo_y, dim=True)
+        # A single "fetching" line lives on the right-column baseline the
+        # loaded card uses for its PREM row so the layout stays stable
+        # when the first fetch lands.
+        right_x = _LOGO_WIDTH + _RIGHT_GUTTER
+        canvas.text(right_x, 3, "FETCHING", DIM, SMALL)
+        canvas.text(right_x, canvas.height - SMALL, "PRICES", DIM, SMALL)
 
     def _render_warehouse(
         self,
@@ -478,17 +501,27 @@ class CostcoMode(Mode):
         index: int,
         total: int,
     ) -> None:
-        # -- header row --------------------------------------------------
-        self._draw_wordmark(canvas, 0, 0)
-        # The mark is _LOGO_WIDTH wide. Leave a 2px gutter, then draw the
-        # position dots (if more than one warehouse) and the city label.
-        cursor_x = _LOGO_WIDTH + 2
+        # -- left column: wordmark -----------------------------------------
+        # 14-row mark vertically centred in a 32-row panel: leaves 9 rows
+        # of gutter top and bottom (rows 9-22 hold the mark itself), which
+        # is the amount of dark space needed for the red COSTCO block to
+        # read as a floating sign instead of a header bar.
+        logo_y = (canvas.height - _LOGO_HEIGHT) // 2
+        self._draw_wordmark(canvas, 0, logo_y)
 
+        # -- right column: city + prices -----------------------------------
+        # Everything after the mark shares a common left edge so the city
+        # label and the price labels line up in one vertical column, which
+        # keeps the right half from reading as "three unrelated snippets".
+        right_x = _LOGO_WIDTH + _RIGHT_GUTTER
+        cursor_x = right_x
+
+        # Position dots first when there is more than one warehouse. We
+        # keep them on the same top row as the city so they stay glued to
+        # the label they annotate, and we avoid drawing them from the
+        # font (Spleen's bullet is a chunky rectangle that fights the
+        # wordmark for attention at this size).
         if total > 1:
-            # Draw the position dots pixel-by-pixel instead of as text --
-            # Spleen's bullet glyphs render as chunky rectangles that fight
-            # the wordmark for attention. A 2×2 filled square (current) plus
-            # a 2×2 outline square (rest) reads clean at this scale.
             dot_size = 2
             dot_gap = 2
             dot_y = 1
@@ -497,22 +530,22 @@ class CostcoMode(Mode):
                 if i == index:
                     canvas.fill_rect(dx, dot_y, dot_size, dot_size, WHITE)
                 else:
-                    # Outline: draw a single pixel in the top-left of the
-                    # 2×2 slot so unlit slots read as "less than half" of
-                    # the current slot without vanishing on the panel.
                     canvas.fill_rect(dx, dot_y + dot_size - 1, dot_size, 1, DIM)
             cursor_x += total * (dot_size + dot_gap) + 2
 
-        # City name in white, SMALL. The wordmark spans rows 0-13, so its
-        # optical centre is row 6-7; an 8px-tall SMALL line started at row
-        # 3 lands rows 3-10 and centres against it. Starting at row 0
-        # instead reads as clipped, because the glyph tops sit flush with
-        # the panel edge and compete with the COSTCO crown.
+        # City on the top row, SMALL. Sits at y=0 so it hugs the top
+        # bezel and the whole right column has visible top-to-bottom
+        # travel from label -> REG -> PREM.
         available = canvas.width - cursor_x
         if available > 0:
-            canvas.text(cursor_x, 3, canvas.fit(warehouse.display_city, available, SMALL), WHITE, SMALL)
+            canvas.text(
+                cursor_x,
+                0,
+                canvas.fit(warehouse.display_city, available, SMALL),
+                WHITE,
+                SMALL,
+            )
 
-        # -- price rows --------------------------------------------------
         # Diesel replaces PREM as the second row when present, and PREM
         # slides up to the first row so the highest-volume grade (REG)
         # always shows and the "next up" grade fills the second slot.
@@ -524,42 +557,39 @@ class CostcoMode(Mode):
         if warehouse.diesel:
             rows_to_render.append(("DIES", _format_price(warehouse.diesel), AMBER))
 
-        # Header now ends at row 9 (``_LOGO_HEIGHT`` = 10), so the price
-        # block starts at 11 -- 1px gutter, then a 12-tall MEDIUM REG row
-        # at rows 11-22, then an 8-tall SMALL PREM/DIES row at rows 24-31.
-        # Two MEDIUM rows would need 24 rows and don't fit alongside the
-        # header, so the highest-volume grade gets the bigger face and the
-        # secondary grade stays SMALL. Labels stay SMALL on both rows so
-        # the price -- what the user actually reads at a glance -- gets
-        # the emphasis in each row.
+        # REG sits in a MEDIUM band (rows 10-21) so it visually pairs with
+        # the wordmark's centre line -- the mark spans rows 9-22, so a
+        # 12-row price row that lands rows 10-21 has the same optical
+        # centre. PREM/DIES stays SMALL on the bottom row (rows 24-31)
+        # both because a second MEDIUM row would overlap the mark and
+        # because the primary grade should carry the biggest number.
         row_layouts: tuple[tuple[int, int], ...] = (
-            (_LOGO_HEIGHT + 1, MEDIUM),   # REG:   rows 11-22, MEDIUM (6x12)
-            (_LOGO_HEIGHT + 14, SMALL),   # PREM:  rows 24-31, SMALL  (5x8)
+            (10, MEDIUM),  # REG: rows 10-21
+            (24, SMALL),   # PREM/DIES: rows 24-31
         )
         for slot, (label, price, color) in enumerate(rows_to_render[:2]):
             top, font_size = row_layouts[slot]
             # Label baseline lines up with the price glyphs by dropping the
             # SMALL label down inside the MEDIUM row so ascenders align.
             label_top = top + (font_size - SMALL)
-            canvas.text(0, label_top, label, DIM, SMALL)
+            canvas.text(right_x, label_top, label, DIM, SMALL)
             # Right-flush price so decimal columns line up between rows.
             price_x = canvas.width - 1 - canvas.text_width(price, font_size)
             canvas.text(price_x, top, price, color, font_size)
 
     def _draw_wordmark(self, canvas: Canvas, x: int, y: int, dim: bool = False) -> None:
-        """Draw the compact stacked Costco Gasoline mark.
+        """Draw the stacked Costco Gasoline mark.
 
         Layout, relative to ``(x, y)``::
 
-            rows 0-4    COSTCO      red,  4-5px glyphs, 1px kern (29px)
-            rows 5-9    GASOLINE    blue, 3-4px glyphs, 1px kern (32px)
+            rows 0-7    COSTCO      red,  6px glyphs, 1px kern  (41px)
+            row  8      (gap)
+            rows 9-13   GASOLINE    blue, 3-4px glyphs, 1px kern (32px)
 
-        Both words are left-aligned and share the same 5-row tagline face,
-        so the block reads as a single stacked wordmark whose total
-        footprint is ``max(_LOGO_WIDTH, _TAG_WIDTH)`` x ``_LOGO_HEIGHT``
-        (32 x 10). The blue speed stripes from the old 14-row mark are
-        gone -- there is no shoulder gap to fill now that COSTCO has been
-        shrunk into the tagline face.
+        Total footprint is ``_LOGO_WIDTH`` x ``_LOGO_HEIGHT`` (41 x 14).
+        No speed stripes -- the mark now sits in the left column with
+        room around it, so the shoulder-fill they used to provide reads
+        as clutter instead of as reinforcement.
 
         When ``dim`` is set both inks drop to roughly half luminance so the
         loading frame reads as "not ready yet" rather than as a live card
@@ -569,7 +599,7 @@ class CostcoMode(Mode):
         blue = (26, 52, 116) if dim else LOGO_BLUE
 
         self._draw_glyphs(
-            canvas, x, y, _LOGO_TEXT, _LOGO_GLYPHS_5x5, red, kern=_LOGO_KERN
+            canvas, x, y, _LOGO_TEXT, _LOGO_GLYPHS_6x8, red, kern=_LOGO_KERN
         )
         self._draw_glyphs(
             canvas, x, y + _TAG_TOP, _TAG_TEXT, _LOGO_GLYPHS_TAG, blue, kern=_TAG_KERN

@@ -1152,6 +1152,38 @@ class Config:
         )
         return self.current_currency_flag_mode()
 
+    @property
+    def currency_flag_grid_file(self) -> Path:
+        """State file for the flag-layout arrangement toggle.
+
+        Content is either ``stack`` (four rows top to bottom, the default) or
+        ``grid`` (2x2 quadrants). This only takes effect when flag mode is on
+        and there are three or four pairs -- one and two pair configs render
+        identically in both arrangements.
+        """
+        return self.state_dir / "currency_flag_grid"
+
+    def current_currency_flag_grid(self) -> bool:
+        """Whether the flag layout uses the 2x2 grid arrangement.
+
+        Missing file returns False so an upgrade lands on the existing
+        stacked layout; only the exact string ``on`` (any case, ignoring
+        surrounding whitespace) opts in.
+        """
+        try:
+            raw = self.currency_flag_grid_file.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return raw.strip().lower() == "on"
+
+    def set_currency_flag_grid(self, enabled: bool) -> bool:
+        """Persist the flag-grid toggle; returns the effective state."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.currency_flag_grid_file.write_text(
+            ("on" if enabled else "off") + "\n", encoding="utf-8"
+        )
+        return self.current_currency_flag_grid()
+
     # -- costco --------------------------------------------------------------
 
     def current_costco_warehouses(self) -> tuple[str, ...]:

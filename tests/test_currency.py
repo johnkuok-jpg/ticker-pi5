@@ -307,3 +307,142 @@ def test_flag_mode_falls_back_to_pair_label_when_flag_missing(currency_config) -
     # No flag was drawn, so the amber pair label starts at x=0.
     amber_xs = {x for x, y in lit if canvas.image_buffer.getpixel((x, y)) == AMBER}
     assert min(amber_xs) == 0
+
+
+# ---- 2x2 grid arrangement -----------------------------------------------
+
+
+def _four_pair_grid_mode(currency_config) -> CurrencyMode:
+    currency_config.set_currency_pairs(
+        [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP"), ("USD", "CNY")]
+    )
+    currency_config.set_currency_flag_mode(True)
+    currency_config.set_currency_flag_grid(True)
+    currency_config.set_currency_show_change(False)
+    return _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.35, 149.00),
+            ForexQuote("USD", "EUR", 0.923, 0.920),
+            ForexQuote("USD", "GBP", 0.791, 0.795),
+            ForexQuote("USD", "CNY", 7.245, 7.250),
+        ],
+    )
+
+
+def test_flag_grid_places_all_four_pairs_in_four_quadrants(currency_config) -> None:
+    """With grid on and 4 pairs, each quadrant must contain at least one flag pixel.
+
+    Grid quadrants are 64w x 16h at (0,0), (64,0), (0,16), (64,16). The flag
+    is drawn in the leftmost 12 columns of each quadrant, so we look for lit
+    pixels in the 12x8 flag zone of each quadrant.
+    """
+    mode = _four_pair_grid_mode(currency_config)
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    quadrants = [
+        (0, 0),   # top-left (JPY)
+        (64, 0),  # top-right (EUR)
+        (0, 16),  # bottom-left (GBP)
+        (64, 16), # bottom-right (CNY)
+    ]
+    for x0, y0 in quadrants:
+        lit = [
+            (x, y)
+            for x in range(x0, x0 + flags.FLAG_WIDTH)
+            for y in range(y0 + 4, y0 + 4 + flags.FLAG_HEIGHT)
+            if pixels[x, y] != (0, 0, 0)
+        ]
+        assert lit, f"quadrant at ({x0},{y0}) had no flag pixels"
+
+
+def test_flag_grid_three_pairs_leaves_bottom_right_empty(currency_config) -> None:
+    """Three pairs in grid mode: bottom-right quadrant stays dark.
+
+    Preferable to shifting the layout or falling back mid-run. The fourth
+    slot is expected to be empty (dark) rather than repeat one of the
+    other three.
+    """
+    currency_config.set_currency_pairs(
+        [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP")]
+    )
+    currency_config.set_currency_flag_mode(True)
+    currency_config.set_currency_flag_grid(True)
+    currency_config.set_currency_show_change(False)
+    mode = _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.35, 149.00),
+            ForexQuote("USD", "EUR", 0.923, 0.920),
+            ForexQuote("USD", "GBP", 0.791, 0.795),
+        ],
+    )
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    # Bottom-right quadrant (64..127, 16..31) must be entirely dark.
+    for y in range(16, 32):
+        for x in range(64, 128):
+            assert pixels[x, y] == (0, 0, 0), (x, y)
+
+
+def test_flag_grid_falls_back_to_stack_when_show_change_on(currency_config) -> None:
+    """show_change forces stacked layout because the % column can't share the halved width.
+
+    The four rows must still all render (four bands lit) but they will be
+    single-column, not 2x2 -- so the top-right quadrant's flag zone stays dark.
+    """
+    currency_config.set_currency_pairs(
+        [("USD", "JPY"), ("USD", "EUR"), ("USD", "GBP"), ("USD", "CNY")]
+    )
+    currency_config.set_currency_flag_mode(True)
+    currency_config.set_currency_flag_grid(True)
+    currency_config.set_currency_show_change(True)
+    mode = _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.35, 149.00),
+            ForexQuote("USD", "EUR", 0.923, 0.920),
+            ForexQuote("USD", "GBP", 0.791, 0.795),
+            ForexQuote("USD", "CNY", 7.245, 7.250),
+        ],
+    )
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    # Grid would put a flag at (64..75, 4..11) for EUR. Stacked won't.
+    # Since we're forcing stack, that zone must be dark.
+    dark = all(
+        pixels[x, y] == (0, 0, 0)
+        for y in range(4, 12)
+        for x in range(64, 64 + flags.FLAG_WIDTH)
+    )
+    assert dark, "grid layout was used even though show_change forces stack"
+
+
+def test_flag_grid_falls_back_to_stack_with_only_two_pairs(currency_config) -> None:
+    """With only two pairs, grid mode should still render the taller MEDIUM stacked layout."""
+    currency_config.set_currency_pairs([("USD", "JPY"), ("USD", "EUR")])
+    currency_config.set_currency_flag_mode(True)
+    currency_config.set_currency_flag_grid(True)
+    currency_config.set_currency_show_change(False)
+    mode = _prep_mode(
+        currency_config,
+        [
+            ForexQuote("USD", "JPY", 149.35, 149.00),
+            ForexQuote("USD", "EUR", 0.923, 0.920),
+        ],
+    )
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    pixels = canvas.image_buffer.load()
+    # In the stacked MEDIUM layout there is a dead-band gap at y=14..17 in
+    # the flag column. If grid was used instead, EUR would live at (64..,4..11)
+    # instead of (0,18) and the top-right flag zone would light up.
+    top_right_dark = all(
+        pixels[x, y] == (0, 0, 0)
+        for y in range(4, 12)
+        for x in range(64, 64 + flags.FLAG_WIDTH)
+    )
+    assert top_right_dark, "grid layout was used with only two pairs"

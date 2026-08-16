@@ -383,6 +383,7 @@ input[type=range]::-moz-range-thumb {
 body[data-mode="stocks"]  .flight[data-for~="stocks"],
 body[data-mode="flights"] .flight[data-for~="flights"],
 body[data-mode="bart"]    .flight[data-for~="bart"],
+body[data-mode="muni"]    .flight[data-for~="muni"],
 body[data-mode="bikes"]   .flight[data-for~="bikes"],
 body[data-mode="nametag"] .flight[data-for~="nametag"],
 body[data-mode="focus"]   .flight[data-for~="focus"],

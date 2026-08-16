@@ -68,11 +68,37 @@ _TRANSLITERATE = str.maketrans(
 )
 
 
+def _is_cjk(ch: str) -> bool:
+    """True for characters we should draw with a CJK fallback font.
+
+    Covers the CJK Unified Ideographs block plus the two most common CJK
+    punctuation ranges. Kana and Hangul come along because the same CJK
+    fonts cover them and treating them as "unrenderable Latin-1" is what
+    used to blank Chinese track titles out entirely.
+    """
+    code = ord(ch)
+    return (
+        0x3000 <= code <= 0x303F  # CJK symbols and punctuation
+        or 0x3040 <= code <= 0x30FF  # Hiragana + Katakana
+        or 0x3400 <= code <= 0x4DBF  # CJK Unified Ideographs Extension A
+        or 0x4E00 <= code <= 0x9FFF  # CJK Unified Ideographs
+        or 0xAC00 <= code <= 0xD7AF  # Hangul syllables
+        or 0xF900 <= code <= 0xFAFF  # CJK compatibility ideographs
+        or 0xFF00 <= code <= 0xFFEF  # Halfwidth and fullwidth forms
+    )
+
+
 def sanitize(text: str) -> str:
-    """Make *text* safe for a Latin-1 bitmap font, losing as little as possible."""
+    """Make *text* safe for a Latin-1 bitmap font, losing as little as possible.
+
+    CJK characters are preserved through this pass and rendered by the CJK
+    fallback font at draw time. Anything else outside Latin-1 becomes a
+    space rather than raising a UnicodeEncodeError deep inside PIL.
+    """
     folded = str(text).translate(_TRANSLITERATE)
-    # Anything still outside Latin-1 becomes a space rather than an exception.
-    return "".join(char if ord(char) < 256 else " " for char in folded)
+    return "".join(
+        char if (ord(char) < 256 or _is_cjk(char)) else " " for char in folded
+    )
 
 
 def char_width(font_size: int = SMALL) -> int:
@@ -104,6 +130,73 @@ def load_font(font_size: int = SMALL) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+# Well-known system paths for CJK fonts, in preference order. Noto CJK is the
+# richest coverage and ships on Debian/Raspbian via ``fonts-noto-cjk``; WenQuanYi
+# ZenHei / Microhei are the fallback packages an older Pi image will already
+# have. This list is scanned lazily so a Pi with none of them still boots -- it
+# just renders CJK as spaces the way the old code did.
+_CJK_FONT_PATHS: tuple[str, ...] = (
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+)
+
+
+@lru_cache(maxsize=8)
+def _load_cjk_font(font_size: int) -> ImageFont.ImageFont | None:
+    """Return an outline CJK font sized to match a Spleen row, or None.
+
+    CJK glyphs are drawn one character at a time in the same row that the
+    Latin-1 Spleen text uses, so the outline size is picked to hug the
+    Spleen cell height (line_height - 2 leaves a 1px breathing gap top and
+    bottom that keeps stacked lines from touching). Rendering falls back
+    to ``fontmode='1'`` at the Canvas level, so the antialiasing an outline
+    font would normally introduce becomes hard on/off pixels.
+    """
+    cell_height = _FONTS.get(font_size, _FONTS[SMALL])[2]
+    # The outline hinter aims for the em box, which is usually taller than the
+    # visible cap height. Trimming 2px gives the glyph body room without the
+    # descenders clipping against the row below.
+    pixel_size = max(6, cell_height - 2)
+    for candidate in _CJK_FONT_PATHS:
+        try:
+            return ImageFont.truetype(candidate, pixel_size)
+        except OSError:
+            continue
+    return None
+
+
+def _script_runs(text: str):
+    """Yield ``(is_cjk, run)`` pairs so mixed-script strings can be drawn
+    with the correct font per segment without repeatedly re-classifying
+    every character in :meth:`Canvas.text_width`.
+    """
+    if not text:
+        return
+    current_is_cjk = _is_cjk(text[0])
+    start = 0
+    for index in range(1, len(text)):
+        is_cjk = _is_cjk(text[index])
+        if is_cjk != current_is_cjk:
+            yield current_is_cjk, text[start:index]
+            start = index
+            current_is_cjk = is_cjk
+    yield current_is_cjk, text[start:]
+
+
+def _cjk_char_width(font_size: int) -> int:
+    """Fixed advance width used for one CJK glyph on the grid.
+
+    CJK is drawn as full-width -- twice the Latin cell width -- so that a
+    ``你`` and ``AA`` occupy the same horizontal footprint on the panel.
+    Full-width keeps the layout math a caller does (``max_chars_in``,
+    right-flush columns) predictable when a title mixes scripts.
+    """
+    return char_width(font_size) * 2
+
+
 class Canvas:
     """An RGB PIL image plus display-oriented drawing conveniences."""
 
@@ -119,11 +212,53 @@ class Canvas:
         self._draw.rectangle((0, 0, self.width, self.height), fill=color)
 
     def text(self, x: int, y: int, text: str, color: Color, font_size: int = SMALL) -> None:
-        """Draw *text* with its top-left cell corner at (x, y)."""
-        self._draw.text((x, y), sanitize(text), font=load_font(font_size), fill=color)
+        """Draw *text* with its top-left cell corner at (x, y).
+
+        Latin-1 runs are drawn with the bundled Spleen bitmap font; CJK
+        runs are drawn one character at a time with the CJK fallback
+        found by :func:`_load_cjk_font`. When no CJK fallback is
+        available, CJK characters occupy full-width space so the layout
+        math a caller does still reflects what would have been drawn.
+        """
+        cleaned = sanitize(text)
+        if not cleaned:
+            return
+        latin_font = load_font(font_size)
+        cjk_font = _load_cjk_font(font_size)
+        latin_advance = char_width(font_size)
+        cjk_advance = _cjk_char_width(font_size)
+        cell_height = line_height(font_size)
+        cx = x
+        for run_is_cjk, run in _script_runs(cleaned):
+            if not run_is_cjk:
+                self._draw.text((cx, y), run, font=latin_font, fill=color)
+                cx += latin_advance * len(run)
+                continue
+            if cjk_font is None:
+                cx += cjk_advance * len(run)
+                continue
+            for char in run:
+                # Nudge the outline glyph up so its baseline sits inside the
+                # Spleen cell. Noto CJK's default baseline is designed for a
+                # taller box than a Spleen row and would otherwise clip.
+                self._draw.text(
+                    (cx, y - max(0, (cjk_advance // 2) - cell_height + 2)),
+                    char,
+                    font=cjk_font,
+                    fill=color,
+                )
+                cx += cjk_advance
 
     def text_width(self, text: str, font_size: int = SMALL) -> int:
-        return int(self._draw.textlength(sanitize(text), font=load_font(font_size)))
+        cleaned = sanitize(text)
+        if not cleaned:
+            return 0
+        latin_advance = char_width(font_size)
+        cjk_advance = _cjk_char_width(font_size)
+        total = 0
+        for run_is_cjk, run in _script_runs(cleaned):
+            total += (cjk_advance if run_is_cjk else latin_advance) * len(run)
+        return total
 
     def text_bold(
         self,
@@ -145,18 +280,49 @@ class Canvas:
         tracking. Smearing a whole string in place would push each glyph into
         its neighbour and close up the gaps between digits, turning "105" into
         one solid block.
+
+        CJK characters are stamped through the fallback font instead, at
+        double the Latin advance (full-width) so a mixed-script title
+        ("So Sick 你好") stays on the same grid as a Latin-only one. The
+        stamped-offset bolding still applies -- Noto CJK ships no bitmap
+        cut, so the doubled stroke is what makes it read as bold on the
+        panel.
         """
         cleaned = sanitize(text)
-        font = load_font(font_size)
-        advance = char_width(font_size) + weight
-        for index, character in enumerate(cleaned):
-            cx = x + index * advance
+        latin_font = load_font(font_size)
+        cjk_font = _load_cjk_font(font_size)
+        latin_advance = char_width(font_size) + weight
+        cjk_advance = _cjk_char_width(font_size) + weight
+        cell_height = line_height(font_size)
+        cx = x
+        for character in cleaned:
+            if _is_cjk(character):
+                if cjk_font is not None:
+                    for dx in range(weight + 1):
+                        self._draw.text(
+                            (
+                                cx + dx,
+                                y - max(0, (cjk_advance // 2) - cell_height + 2),
+                            ),
+                            character,
+                            font=cjk_font,
+                            fill=color,
+                        )
+                cx += cjk_advance
+                continue
             for dx in range(weight + 1):
-                self._draw.text((cx + dx, y), character, font=font, fill=color)
+                self._draw.text((cx + dx, y), character, font=latin_font, fill=color)
+            cx += latin_advance
 
     def text_bold_width(self, text: str, font_size: int = SMALL, weight: int = 1) -> int:
         """Width of :meth:`text_bold`, matching its per-character advance."""
-        return len(sanitize(text)) * (char_width(font_size) + weight)
+        cleaned = sanitize(text)
+        latin_advance = char_width(font_size) + weight
+        cjk_advance = _cjk_char_width(font_size) + weight
+        total = 0
+        for character in cleaned:
+            total += cjk_advance if _is_cjk(character) else latin_advance
+        return total
 
     def text_centered(self, y: int, text: str, color: Color, font_size: int = SMALL) -> None:
         """Draw *text* horizontally centred on the panel."""
@@ -168,10 +334,26 @@ class Canvas:
         return max_chars(width, font_size)
 
     def fit(self, text: str, width: int | None = None, font_size: int = SMALL) -> str:
-        """Truncate *text* to what actually fits, so nothing is half-drawn."""
+        """Truncate *text* to what actually fits, so nothing is half-drawn.
+
+        Walks pixel-width so a CJK-heavy string is cut at the last glyph
+        that fully fits: character-count truncation would either drop
+        legible Latin tail characters (CJK counted as 1) or over-truncate
+        (CJK counted as 2 uniformly).
+        """
         cleaned = sanitize(text)
-        limit = max_chars(self.width if width is None else width, font_size)
-        return cleaned if len(cleaned) <= limit else cleaned[:limit]
+        limit_px = self.width if width is None else width
+        latin_advance = char_width(font_size)
+        cjk_advance = _cjk_char_width(font_size)
+        used = 0
+        out: list[str] = []
+        for ch in cleaned:
+            step = cjk_advance if _is_cjk(ch) else latin_advance
+            if used + step > limit_px:
+                break
+            out.append(ch)
+            used += step
+        return "".join(out)
 
     def scroll_text(
         self,

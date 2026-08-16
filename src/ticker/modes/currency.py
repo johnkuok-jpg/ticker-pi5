@@ -130,6 +130,14 @@ class CurrencyMode(Mode):
     # Column layout for the SMALL four-row flag layout. Flags are 8px tall
     # so a 32-row panel packs four bands flush at 0, 8, 16, 24.
     FLAG_ROW_TOPS_SMALL = (0, 8, 16, 24)
+    # 2x2 grid arrangement: same font (SMALL), same flag height, but two
+    # 64-wide columns of two 16-tall bands each. Halving the horizontal
+    # budget means the % change column will not fit, so the grid path
+    # renders flag+code+rate only. Bands centred vertically in each 16-tall
+    # half so the SMALL glyph baseline lines up with the flag.
+    FLAG_GRID_COL_XS = (0, 64)
+    FLAG_GRID_ROW_TOPS = (4, 20)
+    FLAG_GRID_CELL_WIDTH = 64
     # Flag is 12 wide; give it 3 pixels of breathing room before the text
     # column so the flag's edge does not blur into a currency letter.
     FLAG_TEXT_X = flags.FLAG_WIDTH + 3
@@ -252,7 +260,20 @@ class CurrencyMode(Mode):
             return
 
         if flag_mode:
-            self._render_flag_mode(canvas, show_change)
+            # The 2x2 arrangement only kicks in when there are enough pairs
+            # to fill a second column and when there is horizontal budget to
+            # spare. 1-2 pairs use the stacked MEDIUM layout regardless, and
+            # show_change forces the stacked layout back on because the
+            # halved width cannot fit rate + % change side by side.
+            use_grid = (
+                self.config.current_currency_flag_grid()
+                and len(self.quotes) >= 3
+                and not show_change
+            )
+            if use_grid:
+                self._render_flag_grid(canvas)
+            else:
+                self._render_flag_mode(canvas, show_change)
         else:
             self._render_classic(canvas, show_change)
 
@@ -353,3 +374,51 @@ class CurrencyMode(Mode):
                     text = _format_rate(quote.rate, budget)
                     x = canvas.width - 1 - canvas.text_width(text, font)
                     canvas.text(x, top, text, WHITE, font)
+
+    def _render_flag_grid(self, canvas: Canvas) -> None:
+        """2x2 arrangement of four flag rows: two columns of two rows each.
+
+        Each cell is 64 wide x 16 tall and packs a 12x8 flag on the left,
+        the SMALL-font quote code (AMBER), and the rate right-flushed to the
+        cell edge. There is no % change column in the grid -- halving the
+        horizontal budget doesn't leave room, and the caller only routes to
+        this path when show_change is off anyway. Three-pair configs land
+        here too; the empty fourth cell is preferable to mixing arrangements
+        or dropping back to the stacked layout mid-run.
+
+        Flag position lines up with the SMALL glyph top edge (y = top),
+        not the MEDIUM offset used by the two-row layout, because SMALL
+        glyphs cap at row+7 the same as an 8-tall flag sprite.
+        """
+        rows = self.quotes[: self.FLAG_MAX_ROWS]
+        font = SMALL
+        for index, quote in enumerate(rows):
+            col = index % 2
+            row = index // 2
+            x0 = self.FLAG_GRID_COL_XS[col]
+            top = self.FLAG_GRID_ROW_TOPS[row]
+
+            flag = flags.flag_for(quote.quote)
+            if flag is not None:
+                flag_rows, palette = flag
+                canvas.sprite(x0, top, flag_rows, palette)
+                text_x = x0 + self.FLAG_TEXT_X
+                label = quote.quote
+            else:
+                text_x = x0
+                label = quote.pair_label
+
+            canvas.text(text_x, top, label, AMBER, font)
+            label_end = text_x + canvas.text_width(label + " ", font)
+
+            # Rate right-flushed to this cell's right edge (1px bezel inset
+            # only on the panel's right column; the internal column edge
+            # sits at x=63 with no bezel).
+            cell_right = x0 + self.FLAG_GRID_CELL_WIDTH
+            right_edge = (cell_right - 1) if col == 1 else (cell_right - 2)
+            available = right_edge - label_end
+            budget = canvas.max_chars_in(available, font)
+            if budget >= 3:
+                text = _format_rate(quote.rate, budget)
+                x = right_edge - canvas.text_width(text, font)
+                canvas.text(x, top, text, WHITE, font)
