@@ -162,28 +162,22 @@ def render_mode_frames(
 
         mode._prices = {  # noqa: SLF001 - preview seed
             "475": WarehousePrices(
-                warehouse_id="475",
-                city="SOUTH SAN FRANCISCO",
-                location_name="El Camino",
-                regular="5.199",
-                premium="5.599",
-                diesel="",
+                warehouse_id="475", city="SOUTH SAN Francisco",
+                location_name="1600 El Camino Real",
+                regular="5.30", premium="5.74", diesel="",
+                short_name="El Camino",
             ),
             "422": WarehousePrices(
-                warehouse_id="422",
-                city="SOUTH SAN FRANCISCO",
-                location_name="S San Francisco",
-                regular="5.199",
-                premium="5.699",
-                diesel="",
+                warehouse_id="422", city="SOUTH SAN Francisco",
+                location_name="451 S Airport Blvd",
+                regular="5.30", premium="5.85", diesel="",
+                short_name="S Airport",
             ),
             "118": WarehousePrices(
-                warehouse_id="118",
-                city="SAN LEANDRO",
-                location_name="San Leandro",
-                regular="5.059",
-                premium="5.399",
-                diesel="",
+                warehouse_id="118", city="SAN LEANDRO",
+                location_name="1900 Davis St",
+                regular="5.20", premium="5.65", diesel="",
+                short_name="San Leandro",
             ),
         }
         mode._last_refresh = float("inf")  # noqa: SLF001 - preview freeze

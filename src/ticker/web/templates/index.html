@@ -146,28 +146,44 @@
     </section>
     <section class="flight" data-for="costco">
       <label for="costco-preset-select">Costco warehouses</label>
-      {# Preset dropdown covers Bay-Area warehouses I've confirmed sell gas.
-         The custom field is there because Costco's warehouse ID isn't
-         printed anywhere on the pump -- you have to open the warehouse
-         page on costco.com and read it out of the URL, so most people will
-         reach for a preset instead. #}
+      {# Preset dropdown lists every Bay-Area Costco with gas that
+         costcogasprices.com indexes. IDs are Costco's own ``stlocID`` --
+         the same number that appears at the end of every warehouse URL
+         on costco.com -- so a preset the user picks is the same ID the
+         fetcher's slug table keys off. Adding a preset means also
+         adding its slug to ``WAREHOUSE_SLUGS`` in modes/costco.py. #}
       <form id="costco-form" class="flight-row">
         <select id="costco-preset-select" name="warehouse" aria-label="Costco warehouse preset">
           {% set costco_presets = [
             ("475", "475 — South SF (El Camino)"),
-            ("422", "422 — South SF (S Airport Blvd)"),
+            ("422", "422 — South SF (S Airport)"),
+            ("1042", "1042 — Redwood City"),
+            ("423", "423 — Sunnyvale"),
+            ("129", "129 — Santa Clara"),
+            ("1004", "1004 — San Jose (Automation)"),
+            ("148", "148 — San Jose (Senter)"),
+            ("848", "848 — San Jose (Evergreen)"),
+            ("1267", "1267 — San Jose (Raleigh)"),
+            ("760", "760 — Gilroy"),
+            ("778", "778 — Fremont"),
+            ("1660", "1660 — Newark"),
+            ("823", "823 — Hayward (Hathaway)"),
+            ("1061", "1061 — Hayward (Hesperian)"),
             ("118", "118 — San Leandro"),
-            ("157", "157 — Redwood City"),
-            ("149", "149 — Foster City"),
-            ("690", "690 — Mountain View"),
-            ("215", "215 — Sunnyvale"),
-            ("131", "131 — San Jose (Automall)"),
-            ("140", "140 — Hayward"),
-            ("143", "143 — Livermore"),
-            ("156", "156 — Danville"),
-            ("460", "460 — Concord"),
-            ("445", "445 — Novato"),
-            ("192", "192 — Rohnert Park")
+            ("1341", "1341 — Pleasanton"),
+            ("146", "146 — Livermore"),
+            ("21", "21 — Danville"),
+            ("663", "663 — Concord"),
+            ("482", "482 — Richmond"),
+            ("1002", "1002 — Antioch"),
+            ("1662", "1662 — Brentwood"),
+            ("132", "132 — Vallejo"),
+            ("453", "453 — Fairfield"),
+            ("694", "694 — Vacaville"),
+            ("1679", "1679 — Napa"),
+            ("41", "41 — Santa Rosa"),
+            ("659", "659 — Rohnert Park"),
+            ("149", "149 — Santa Cruz")
           ] %}
           {% for value, label in costco_presets %}
           <option value="{{ value }}">{{ label }}</option>

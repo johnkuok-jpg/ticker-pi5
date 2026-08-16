@@ -1,19 +1,33 @@
 # MIT License — Copyright (c) 2026 John Kuok
 """Costco gas-station prices.
 
-Costco publishes gas prices as part of the warehouse-locator payload at
-``www.costco.com/AjaxWarehouseBrowseLookupView``. It's an undocumented
-endpoint but the whole tracker ecosystem (aruljohn.com/gas, gastrak,
-costcogaspricelive.com) leans on it, and one hit returns every nearby
-warehouse's regular/premium/(diesel) prices in a single blob. That is
-exactly the shape a ticker wants: one poll every hour or so, no key, no
-per-warehouse fanout.
+**Why we don't call costco.com directly.** Costco's own warehouse-locator
+endpoint (``www.costco.com/AjaxWarehouseBrowseLookupView``) sits behind
+Akamai bot defense and returns HTTP 403/429 from every non-browser client
+the author has tried, including a home Pi. Every gas tracker in the wild
+(gastrak, costcogaspricelive.com, costcogasprices.com) has moved to their
+own crawler + cache; we just piggyback on the biggest one.
 
-The endpoint sits behind Akamai bot defense, so a bare ``curl`` from a
-random datacenter IP gets a 403. From a residential Pi it works fine as
-long as you send realistic browser headers -- the same ``User-Agent`` +
-``Accept`` combo that every tracker in this space uses. See
-``_build_request`` for the exact header set.
+**What we hit.** ``www.costcogasprices.com`` is a Next.js SSR site whose
+per-station pages already contain the current prices in the initial
+HTML -- no JS required -- inside a single ``og:description`` meta tag
+that reads::
+
+    Current Costco gas prices at 1600 El Camino Real, SOUTH SAN
+    Francisco. Regular: $5.30, Premium: $5.74, Diesel: N/A.
+    Updated 8/14/2026, 7:28:22 AM.
+
+One regex against that string gives us the address, city, regular,
+premium, and diesel prices for a warehouse. We fetch one URL per
+configured warehouse; three warehouses at a one-hour cache means three
+requests per hour -- well below any polite-poll threshold.
+
+**How warehouse IDs work.** The user's warehouse IDs (``475`` = SSF El
+Camino, ``422`` = SSF S Airport, ...) are Costco's internal ``stlocID``
+values; costcogasprices.com routes by street-address slug instead. The
+``WAREHOUSE_SLUGS`` table below maps every Bay Area warehouse ID to its
+slug (harvested once from the site's California listing). Adding a new
+region == extending the table; nothing else changes.
 
 Layout is a two-warehouse rotation (well, up to three) at ~5 s per slide:
 
@@ -33,8 +47,8 @@ logo, but at 128×32 the letterforms carry the identity just fine.
 
 from __future__ import annotations
 
-import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -45,27 +59,62 @@ from ticker.modes.base import Mode
 
 LOGGER = logging.getLogger(__name__)
 
-# The locator endpoint returns nearby warehouses ordered by great-circle
-# distance from a seed lat/lng. We use a Bay Area seed and ask for a wide
-# net (30 warehouses) so a single call picks up whichever IDs the user
-# has in their rotation -- typical John-in-SF setup is 1-3 nearby stations
-# and 30 is enough to cover most of the peninsula. Anything further away
-# and we'd have to shard the poll by seed lat/lng.
-LOOKUP_URL = "https://www.costco.com/AjaxWarehouseBrowseLookupView"
-DEFAULT_LATITUDE = 37.6547
-DEFAULT_LONGITUDE = -122.4077
-DEFAULT_LOOKUP_RADIUS = 30
+# CostcoGasPrices.com serves plain SSR HTML at ``/station/us/{slug}``.
+STATION_URL_TEMPLATE = "https://www.costcogasprices.com/station/us/{slug}"
 
 REQUEST_TIMEOUT = 10.0
-# A realistic desktop Chrome UA + Accept combo. Costco's Akamai policy
-# doesn't inspect the tail end (client-hints, sec-fetch-*), but it does
-# reject User-Agents that look like scripts. The tracker projects that
-# ship in production all use this same shape.
+# A realistic desktop Chrome UA. costcogasprices.com is not aggressive
+# about UA policing, but keeping the shape realistic reduces the odds a
+# future CDN change locks us out.
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/128.0.0.0 Safari/537.36"
 )
+
+# Costco warehouse ID -> (station-slug, short-name).
+#
+# The slug is the last path segment on costcogasprices.com. Short-names
+# are hand-picked to fit the ~12-char panel window at SMALL 6x8 -- the
+# source's city field is often ``SOUTH SAN Francisco``, which title-cases
+# to a 19-char string that clips ugly. Where two warehouses share a
+# city, we disambiguate by neighborhood/street rather than by ID number
+# so the label still reads as a place.
+#
+# Harvested from the site's California listing. Adding a warehouse is a
+# one-line edit here plus (optionally) a matching preset in
+# templates/index.html.
+WAREHOUSE_SLUGS: dict[str, tuple[str, str]] = {
+    "1002": ("2201-verne-roberts-cir", "Antioch"),
+    "1662": ("5151-heidorn-ranch-rd", "Brentwood"),
+    "663": ("2400-monument-blvd", "Concord"),
+    "21": ("3150-fostoria-way", "Danville"),
+    "453": ("5101-business-center-dr", "Fairfield"),
+    "778": ("43621-pacific-commons-blvd", "Fremont"),
+    "760": ("7251-camino-arroyo", "Gilroy"),
+    "823": ("22330-hathaway-ave", "Hayward"),         # Hathaway
+    "1061": ("28505-hesperian-blvd", "Hesperian"),    # Hayward (Hesperian)
+    "146": ("2800-independence-dr", "Livermore"),
+    "1679": ("280-riversound-way", "Napa"),
+    "1660": ("350-newpark-mall", "Newark"),
+    "1341": ("7200-johnson-drive", "Pleasanton"),
+    "1042": ("2300-middlefield-rd", "Redwood City"),
+    "482": ("4801-central-avenue", "Richmond"),
+    "659": ("5901-redwood-dr", "Rohnert Park"),
+    "1004": ("1709-automation-pkwy", "SJ Automation"),
+    "148": ("2201-senter-rd", "SJ Senter"),
+    "848": ("2376-s-evergreen-loop", "SJ Evergreen"),
+    "1267": ("6898-raleigh-road", "SJ Raleigh"),
+    "118": ("1900-davis-st", "San Leandro"),
+    "129": ("1601-coleman-ave", "Santa Clara"),
+    "149": ("220-sylvania-ave", "Santa Cruz"),
+    "41": ("1900-santa-rosa-ave", "Santa Rosa"),
+    "475": ("1600-el-camino-real", "El Camino"),      # South SF
+    "422": ("451-s-airport-blvd", "S Airport"),       # South SF
+    "423": ("150-lawrence-station-rd", "Sunnyvale"),
+    "694": ("1051-hume-way", "Vacaville"),
+    "132": ("198-plaza-dr", "Vallejo"),
+}
 
 # Panel colors. Costco red is the exact PMS 185 hex the brand book uses;
 # on an LED panel it comes out slightly hot but reads as red. The other
@@ -89,12 +138,14 @@ SLIDE_SECONDS = 5.0
 
 @dataclass(frozen=True)
 class WarehousePrices:
-    """One warehouse's snapshot from the locator endpoint.
+    """One warehouse's snapshot.
 
-    Prices are stored as strings because the upstream sends them that way
-    (three-decimal cash format) and re-formatting to float would drop the
-    trailing ``9`` on ``$5.199`` -- the same trailing 9 every US gas station
-    posts. Missing grades just come through empty.
+    Prices are stored as strings because the upstream renders them as
+    ``$5.30`` and re-formatting to float would risk dropping meaningful
+    digits. Missing grades come through empty. ``short_name`` is the
+    panel-optimised label from ``WAREHOUSE_SLUGS`` (e.g. ``El Camino``,
+    ``S Airport``) -- falls back to the title-cased upstream city when
+    the warehouse isn't in the table.
     """
 
     warehouse_id: str
@@ -103,71 +154,69 @@ class WarehousePrices:
     regular: str
     premium: str
     diesel: str
+    short_name: str = ""
 
     @property
     def display_city(self) -> str:
-        # Prefer the friendly ``locationName`` (e.g. ``El Camino``) when
-        # Costco provides it; the raw ``city`` is uppercase and often
-        # duplicates the next-door warehouse (``SOUTH SAN FRANCISCO``
-        # applies to both the airport and the El Camino store).
-        raw = self.location_name.strip() or self.city.strip()
-        # The locator sometimes prefixes with ``S ``, ``N `` etc for compass
-        # directions -- keep those but normalise to Title Case.
-        return raw.title() if raw.isupper() else raw
+        if self.short_name:
+            return self.short_name
+        # ``city`` comes through in the source's shouty case (``SOUTH SAN
+        # Francisco``); title-case so the panel doesn't yell.
+        return self.city.strip().title() or self.location_name.strip()
 
     @property
     def has_prices(self) -> bool:
         return bool(self.regular or self.premium or self.diesel)
 
 
-def _build_request(latitude: float, longitude: float, count: int) -> urllib.request.Request:
-    """Compose the locator GET with the headers that get through Akamai."""
-    query = (
-        f"?langId=-1&storeId=10301&numOfWarehouses={count}"
-        f"&hasGas=true&populateWarehouseDetails=true"
-        f"&latitude={latitude}&longitude={longitude}&countryCode=US"
-    )
+def _build_station_request(slug: str) -> urllib.request.Request:
+    """Build the SSR-page GET for one warehouse."""
     return urllib.request.Request(
-        LOOKUP_URL + query,
+        STATION_URL_TEMPLATE.format(slug=slug),
         headers={
             "User-Agent": USER_AGENT,
-            "Accept": "application/json, text/plain, */*",
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.costco.com/warehouse-locations",
         },
     )
 
 
-def _parse_locator(payload: list) -> dict[str, WarehousePrices]:
-    """Turn the raw locator response into a ``{id: WarehousePrices}`` dict.
+# One regex against the ``og:description`` meta tag pulls address, city,
+# and all three prices at once. Diesel comes through as ``$5.29`` when
+# available or literal ``N/A`` when the station doesn't sell diesel.
+_OG_PATTERN = re.compile(
+    r'<meta\s+property="og:description"\s+content="'
+    r'Current Costco gas prices at ([^,]+),\s*([^\.]+?)\.\s*'
+    r'Regular:\s*(\$[\d.]+|N/A),\s*'
+    r'Premium:\s*(\$[\d.]+|N/A),\s*'
+    r'Diesel:\s*(\$[\d.]+|N/A)\.',
+    re.IGNORECASE,
+)
 
-    The response is a JSON array whose first element is ``True`` (a status
-    flag) and every subsequent element is a warehouse dict. Warehouses may
-    or may not include ``gasPrices`` -- non-fuel warehouses are silently
-    dropped. Malformed entries are skipped rather than raised: a locator
-    quirk on one warehouse must not knock the whole card offline.
+
+def _parse_station_page(warehouse_id: str, html: str) -> WarehousePrices | None:
+    """Extract a ``WarehousePrices`` from one station-page HTML.
+
+    Returns ``None`` when the og:description tag doesn't match -- the
+    site has never rendered a station page without one but a schema
+    change would show up here and we'd rather skip that warehouse than
+    render garbage.
     """
-    prices: dict[str, WarehousePrices] = {}
-    # The status prefix is always the first element; guard against upstream
-    # changes by iterating everything and filtering by shape.
-    for entry in payload:
-        if not isinstance(entry, dict):
-            continue
-        warehouse_id = str(entry.get("stlocID") or entry.get("identifier") or "").strip()
-        if not warehouse_id:
-            continue
-        gas = entry.get("gasPrices")
-        if not isinstance(gas, dict):
-            continue
-        prices[warehouse_id] = WarehousePrices(
-            warehouse_id=warehouse_id,
-            city=str(entry.get("city") or ""),
-            location_name=str(entry.get("locationName") or ""),
-            regular=str(gas.get("regular") or "").strip(),
-            premium=str(gas.get("premium") or "").strip(),
-            diesel=str(gas.get("diesel") or "").strip(),
-        )
-    return prices
+    match = _OG_PATTERN.search(html)
+    if not match:
+        return None
+    address, city, regular, premium, diesel = (part.strip() for part in match.groups())
+    entry = WAREHOUSE_SLUGS.get(warehouse_id)
+    short_name = entry[1] if entry else ""
+    return WarehousePrices(
+        warehouse_id=warehouse_id,
+        city=city,
+        location_name=address,
+        regular="" if regular.upper() == "N/A" else regular.lstrip("$"),
+        premium="" if premium.upper() == "N/A" else premium.lstrip("$"),
+        diesel="" if diesel.upper() == "N/A" else diesel.lstrip("$"),
+        short_name=short_name,
+    )
 
 
 def _format_price(value: str) -> str:
@@ -213,37 +262,55 @@ class CostcoMode(Mode):
 
     # -- data ---------------------------------------------------------------
 
-    def _fetch(self) -> dict[str, WarehousePrices] | None:
-        request = _build_request(
-            DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_LOOKUP_RADIUS
-        )
+    def _fetch_one(self, warehouse_id: str) -> WarehousePrices | None:
+        """Fetch one warehouse's snapshot from costcogasprices.com.
+
+        Returns ``None`` on any failure (unknown ID, network error, HTTP
+        error, missing og:description). The caller records the outcome
+        per-warehouse so one warehouse having stale prices doesn't
+        force us to retry every warehouse on the next tick.
+        """
+        entry = WAREHOUSE_SLUGS.get(warehouse_id)
+        if entry is None:
+            LOGGER.debug("costco: no slug mapping for warehouse %s", warehouse_id)
+            return None
+        slug, _ = entry
+        request = _build_station_request(slug)
         try:
             with self._opener(request, timeout=REQUEST_TIMEOUT) as response:
-                body = response.read().decode("utf-8")
+                body = response.read().decode("utf-8", errors="replace")
         except (urllib.error.URLError, OSError, TimeoutError) as error:
-            LOGGER.warning("costco locator request failed: %s", error)
+            LOGGER.warning(
+                "costco: station %s (%s) fetch failed: %s", warehouse_id, slug, error
+            )
             return None
-        try:
-            payload = json.loads(body)
-        except ValueError as error:
-            LOGGER.warning("costco locator returned non-JSON: %s", error)
-            return None
-        if not isinstance(payload, list):
-            LOGGER.warning("costco locator returned unexpected shape: %s", type(payload).__name__)
-            return None
-        parsed = _parse_locator(payload)
-        return parsed or None
+        snapshot = _parse_station_page(warehouse_id, body)
+        if snapshot is None:
+            LOGGER.warning(
+                "costco: station %s (%s) had no parseable og:description",
+                warehouse_id, slug,
+            )
+        return snapshot
 
     def _refresh(self, ids: tuple[str, ...]) -> None:
-        result = self._fetch()
-        if result is None:
-            self._failed = True
-            self._last_refresh = time.monotonic()
-            return
-        self._prices = result
-        self._failed = False
-        self._last_refresh = time.monotonic()
+        # Record ``_last_ids`` and ``_last_refresh`` up front so we do not
+        # retry the whole set on every render if one warehouse errors --
+        # the old locator path shared this bug and buried the logs in a
+        # 30-request-per-second retry storm.
         self._last_ids = ids
+        self._last_refresh = time.monotonic()
+        collected: dict[str, WarehousePrices] = {}
+        for warehouse_id in ids:
+            snapshot = self._fetch_one(warehouse_id)
+            if snapshot is not None:
+                collected[warehouse_id] = snapshot
+        if collected:
+            self._prices = collected
+            self._failed = False
+        else:
+            # Keep any prior successful snapshots so the panel keeps
+            # rendering yesterday's price rather than an empty card.
+            self._failed = True
 
     # -- render -------------------------------------------------------------
 
