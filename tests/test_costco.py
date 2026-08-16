@@ -86,23 +86,27 @@ def test_costco_row_is_red_and_gasoline_row_is_blue() -> None:
     assert bottom == {LOGO_BLUE}
 
 
-def test_no_speed_stripes_in_the_shoulder() -> None:
-    """The old 14-row mark filled the shoulder under COSTCO with blue
-    stripes that ran from the bottom of COSTCO to the top of GASOLINE.
+def test_speed_stripes_fill_the_left_shoulder() -> None:
+    """Two blue stripes at rows 10 and 12 fill the shoulder gap left of
+    the right-aligned GASOLINE. Without them the mark loses the visual
+    tie to the real Costco Gasoline sign.
 
-    That's the exact row band this test locks empty: rows between the
-    bottom of the COSTCO glyphs (row 7) and the top of GASOLINE (row 9)
-    -- i.e. row 8 -- must carry no lit pixels. Otherwise, a resurrected
-    stripe drawing would slip past without a visible failure.
+    Lock the stripes down by checking that rows 10 and 12 carry a run of
+    lit blue pixels on the left side of the mark, and that the row just
+    outside the stripe band (row 11) is dark on the shoulder -- so the
+    stripes stay as two separated lines rather than merging into a bar.
     """
     canvas = Canvas(128, 32)
     CostcoMode._draw_wordmark(CostcoMode, canvas, 0, 0)  # type: ignore[arg-type]
-    lit = _lit(canvas)
-    shoulder_pixels = {(x, y) for x, y in lit if y == _TAG_TOP - 1}
-    assert not shoulder_pixels, shoulder_pixels
-    # And every blue pixel must live inside the GASOLINE row band.
-    blue_ys = {y for x, y in lit if y >= _TAG_TOP}
-    assert blue_ys <= set(range(_TAG_TOP, _TAG_TOP + 5))
+    pixels = canvas.image_buffer.load()
+    stripe_rows = (_TAG_TOP + 1, _TAG_TOP + 3)
+    for row in stripe_rows:
+        left_run = [pixels[x, row] for x in range(0, 4)]
+        assert all(px == LOGO_BLUE for px in left_run), (row, left_run)
+    # The row between the two stripes must be dark on the shoulder --
+    # otherwise the two stripes fuse into one solid bar.
+    between = [pixels[x, _TAG_TOP + 2] for x in range(0, 4)]
+    assert set(between) == {(0, 0, 0)}, between
 
 
 def _seeded_mode() -> CostcoMode:
