@@ -224,7 +224,7 @@
          drift, and it re-computes as long as the page is open. #}
       <div id="commute-last" class="schedule" aria-live="polite">Last fetch: —</div>
       {% if not commute_api_key_present %}
-      <p id="commute-key-note" class="schedule" style="color:#f39;">GOOGLE_MAPS_API_KEY is not set. Add it to /home/pi/.ticker/.env and restart the ticker service, then Route now will work.</p>
+      <p id="commute-key-note" class="schedule" style="color:#f39;">GOOGLE_MAPS_API_KEY is not set. Add it to ~/ticker-pi5/.env (the repo root, not ~/.ticker/, which only holds mode state) and restart the ticker service, then Route now will work.</p>
       {% endif %}
       <p id="commute-note" class="schedule">One tap = one Google Directions call. Nothing refreshes on its own.</p>
     </section>

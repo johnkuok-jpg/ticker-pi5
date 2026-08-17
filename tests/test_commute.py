@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ticker.canvas import Canvas
+from ticker.canvas import SMALL, Canvas
 from ticker.config import Config, load_config
 from ticker.modes.commute import (
     _GREEN_MAX,
@@ -357,3 +357,34 @@ def test_travel_modes_are_the_google_directions_set():
     """These four are what the Directions API supports for the ``mode`` param.
     Adding a fifth here without upstream support would produce a silent 400."""
     assert TRAVEL_MODES == ("transit", "driving", "walking", "bicycling")
+
+
+def test_placeholder_labels_fit_the_panel():
+    """Every placeholder string must fit the panel's content column.
+
+    These labels are hand-edited copy (the idle one was reworded once already,
+    from "TAP TO ROUTE" to something that names the web app instead of implying
+    the panel is a touchscreen). The content column starts at x=20, so a long
+    edit would run off the right edge -- and because the renderer draws to a
+    fixed-size canvas, the overflow is silently clipped rather than raising.
+    """
+    canvas = Canvas(128, 32)
+    available = canvas.width - 20
+    for state, (label, detail, _color) in CommuteMode._PLACEHOLDER_LABELS.items():
+        for text in (label, detail):
+            width = canvas.text_width(text, SMALL)
+            assert width <= available, (
+                f"{state!r} placeholder text {text!r} is {width}px, "
+                f"which exceeds the {available}px content column"
+            )
+
+
+def test_idle_placeholder_does_not_imply_a_touchscreen():
+    """The panel has no touch input. The idle label must point at the web app.
+
+    Regression guard: the first version read "TAP TO ROUTE", which was read as
+    an instruction to tap the LED matrix itself.
+    """
+    _label, detail, _color = CommuteMode._PLACEHOLDER_LABELS["idle"]
+    assert "WEB" in detail.upper()
+    assert detail.upper() != "TAP TO ROUTE"

@@ -337,7 +337,9 @@ class CommuteMode(Mode):
     # -- render helpers ------------------------------------------------------
 
     _PLACEHOLDER_LABELS: dict[str, tuple[str, str, tuple[int, int, int]]] = {
-        "idle":     ("COMMUTE",  "TAP TO ROUTE",   DIM),
+        # "TAP TO ROUTE" read as an instruction to tap the panel, which has no
+        # touchscreen. Name the surface that actually has the button instead.
+        "idle":     ("COMMUTE",  "WEB: ROUTE NOW", DIM),
         "no_key":   ("COMMUTE",  "API KEY?",       AMBER),
         "no_route": ("COMMUTE",  "NO ROUTE",       AMBER),
         "network":  ("COMMUTE",  "NO NETWORK",     RED),
@@ -358,8 +360,18 @@ class CommuteMode(Mode):
             self._error_state, self._PLACEHOLDER_LABELS["idle"]
         )
         right_x = 20
-        canvas.text(right_x, 3, label, WHITE, SMALL)
-        canvas.text(right_x, canvas.height - SMALL - 2, detail, detail_color, SMALL)
+        # fit() both rows for the same reason the loaded card does it: these
+        # strings are edited by hand, and an over-long one would otherwise run
+        # off the right edge of the panel with no visible failure.
+        available = canvas.width - right_x
+        canvas.text(right_x, 3, canvas.fit(label, available, SMALL), WHITE, SMALL)
+        canvas.text(
+            right_x,
+            canvas.height - SMALL - 2,
+            canvas.fit(detail, available, SMALL),
+            detail_color,
+            SMALL,
+        )
 
     def _render_result(self, canvas: Canvas, result: CommuteResult) -> None:
         """Loaded card: icon left, minutes-big + two SMALL context lines right."""
