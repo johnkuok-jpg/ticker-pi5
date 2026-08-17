@@ -751,7 +751,9 @@
         syncSliderFill();
       }
       /* Keep the visual mode class in step with what the panel is actually
-         showing, in case another phone switched modes mid-session. */
+         showing, in case another phone switched modes mid-session.
+         syncModeSections() runs off a MutationObserver on this attribute, so
+         the settings cards follow without an explicit call here. */
       if (typeof data.current_mode === 'string' && document.body.dataset.mode !== data.current_mode) {
         document.body.dataset.mode = data.current_mode;
       }
@@ -801,6 +803,28 @@
       renderer.className = `renderer ${data.renderer_alive ? 'online' : 'offline'}`;
       document.querySelectorAll('.mode-button').forEach(button => button.classList.toggle('active', button.dataset.mode === data.current_mode));
     }
+    /* Show the settings card(s) belonging to the current mode and hide the
+       rest. A section opts in with data-for="MODE", or data-for="MODE OTHER"
+       when one card serves several modes (weather + aqi share a ZIP card).
+
+       This replaces a hand-maintained allowlist in style.css that needed one
+       selector per mode; commute's card was invisible because that line was
+       never added. Deriving it here means a new mode needs no CSS at all. */
+    function syncModeSections() {
+      const current = document.body.dataset.mode || '';
+      document.querySelectorAll('[data-for]').forEach(section => {
+        const owners = (section.getAttribute('data-for') || '').split(/\s+/).filter(Boolean);
+        section.classList.toggle('mode-visible', owners.includes(current));
+      });
+    }
+    syncModeSections();
+    /* Observe the attribute rather than calling sync at every mutation site, so
+       any present or future code path that sets body[data-mode] -- the mode
+       buttons, the status poll, a rollback -- updates the cards for free. */
+    new MutationObserver(syncModeSections).observe(document.body, {
+      attributes: true,
+      attributeFilter: ['data-mode'],
+    });
     document.querySelectorAll('.mode-button').forEach(button => button.addEventListener('click', async () => {
       /* Flip the body-level data-mode and the active class immediately so the
          settings section swap feels instant, then roll back on a rejected /

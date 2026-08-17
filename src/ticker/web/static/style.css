@@ -379,26 +379,23 @@ input[type=range]::-moz-range-thumb {
   color: var(--accent);
   font-weight: 600;
 }
-.flight[data-for] { display: none; }
-body[data-mode="stocks"]  .flight[data-for~="stocks"],
-body[data-mode="flights"] .flight[data-for~="flights"],
-body[data-mode="bart"]    .flight[data-for~="bart"],
-body[data-mode="muni"]    .flight[data-for~="muni"],
-body[data-mode="bikes"]   .flight[data-for~="bikes"],
-body[data-mode="nametag"] .flight[data-for~="nametag"],
-body[data-mode="focus"]   .flight[data-for~="focus"],
-body[data-mode="worldclock"] .flight[data-for~="worldclock"] { display: block; }
-body[data-mode="quakes"] .flight[data-for~="quakes"] { display: block; }
-body[data-mode="currency"] .flight[data-for~="currency"] { display: block; }
-body[data-mode="costco"] .flight[data-for~="costco"] { display: block; }
-/* Weather and air quality share one coordinate pair, so one ZIP card is
-   tagged for both modes and shows under either. */
-body[data-mode="weather"] .flight[data-for~="weather"] { display: block; }
-body[data-mode="aqi"] .flight[data-for~="aqi"] { display: block; }
-/* Spotify card is a .card[data-for], mirror the same rule. */
+/* Visibility is driven by the `mode-visible` class, which syncModeSections()
+   in index.html toggles from body[data-mode].
+
+   This used to be a hardcoded allowlist of `body[data-mode="x"]
+   .flight[data-for~="x"]` selectors, one line per mode. CSS cannot compare an
+   attribute on one element against an attribute on an ancestor, so every new
+   mode had to remember to add its own line here -- and `commute` shipped
+   without one, leaving its settings card in the DOM but permanently
+   display:none with no error anywhere. Matching in JS instead makes the rule
+   generic, so a new mode's card works as soon as the section exists.
+
+   A section may list several modes (`data-for="weather aqi"`), which is how
+   weather and air quality share one ZIP card. */
+.flight[data-for],
 .card[data-for] { display: none; }
-body[data-mode="spotify"] .card[data-for~="spotify"] { display: block; }
-body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
+.flight[data-for].mode-visible,
+.card[data-for].mode-visible { display: block; }
 
 /* Form rows: label above, input + button share a single dotted underline. */
 .flight-row {
