@@ -4,17 +4,40 @@
 set -euo pipefail
 
 cd /home/pi/ticker-pi5
-# The repo is owned by pi, but this script runs as root. Modern git refuses
-# to touch a repo owned by a different user ("detected dubious ownership")
-# unless it is whitelisted. Whitelist inline so we do not have to mutate
-# root's global git config on every Pi in the fleet.
-git -c safe.directory=/home/pi/ticker-pi5 pull --ff-only
+
+# Run git and pip as `pi`, not as root.
+#
+# This script runs under sudo (and as root from ticker-updater.service), but
+# the checkout and the venv are owned by pi. Earlier versions ran `git pull`
+# as root with a `safe.directory` whitelist, which silenced git's ownership
+# *warning* without changing who owns the objects it writes. The result: root
+# wrote root-owned files into .git/objects and into venv/lib/.../site-packages
+# on every single update, and the next plain `git pull` as pi died with
+#   error: insufficient permission for adding an object to repository database
+# Dropping to pi for these two steps means nothing root-owned is created in
+# the first place, and safe.directory is no longer needed because pi owns the
+# repo it is being asked to touch.
+if [[ "$(id -un)" == "pi" ]]; then
+  as_pi=()
+else
+  as_pi=(sudo -u pi)
+fi
+
+# Self-heal boxes already poisoned by the old root-owned-writes behaviour.
+# Guarded by a cheap probe so the common case does not pay for a recursive
+# chown across the whole venv on every update tick.
+if find /home/pi/ticker-pi5 -uid 0 -print -quit | grep -q .; then
+  echo "Repairing root-owned files left by a previous update..."
+  chown -R pi:pi /home/pi/ticker-pi5
+fi
+
+"${as_pi[@]}" git pull --ff-only
 # --no-cache-dir keeps pip from stockpiling every wheel it ever downloads
 # in ~/.cache/pip. yt-dlp releases weekly, so on an SD card that cache
 # would grow indefinitely; we never reinstall offline, so caching buys
 # nothing here.
-venv/bin/python -m pip install --no-cache-dir --upgrade -r requirements.txt
-venv/bin/python -m pip install --no-cache-dir --editable .
+"${as_pi[@]}" venv/bin/python -m pip install --no-cache-dir --upgrade -r requirements.txt
+"${as_pi[@]}" venv/bin/python -m pip install --no-cache-dir --editable .
 # fonts-noto-cjk was added later than the first Pi installs, so an update
 # on an older box needs to backfill it. `apt install -y` is a no-op when
 # it's already present, so this is cheap.
