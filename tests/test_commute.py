@@ -31,6 +31,7 @@ from ticker.modes.commute import (
     RED,
     TRAVEL_MODES,
     _extract_result,
+    _format_duration,
     _minutes_color,
 )
 
@@ -329,6 +330,51 @@ def test_loaded_card_shows_minutes(config):
     canvas = Canvas(128, 32)
     mode.render(canvas, tick=0)
     assert _lit(canvas)
+
+
+def test_format_duration_switches_to_hours_at_sixty():
+    """``72 min`` on transit reads worse than ``1H12``; phones' commute
+    widgets label the same way. Boundaries checked:
+
+    - Under 60 keeps the trailing ``M`` (compact and consistent with the
+      panel-wide use of terse suffixes elsewhere).
+    - Exactly 60 flips to ``1H`` -- ``1H0`` looks like a placeholder.
+    - Past the top of the hour zero-pads: ``1H05`` not ``1H5``, so the
+      right-flushed label doesn't jitter one character every 5 minutes.
+    - Multi-hour still works.
+    - Negative minutes never render as ``-1H`` -- if a bad upstream payload
+      sneaks in, we clamp to zero rather than draw a minus sign the LED
+      panel would misrender anyway.
+    """
+    assert _format_duration(0) == "0M"
+    assert _format_duration(9) == "9M"
+    assert _format_duration(59) == "59M"
+    assert _format_duration(60) == "1H"
+    assert _format_duration(61) == "1H01"
+    assert _format_duration(72) == "1H12"
+    assert _format_duration(119) == "1H59"
+    assert _format_duration(120) == "2H"
+    assert _format_duration(150) == "2H30"
+    assert _format_duration(-5) == "0M"
+
+
+def test_format_duration_never_exceeds_the_minutes_column():
+    """The label is right-flushed against the panel edge, with the ``HOME ->
+    WORK`` route text on its left. The wide-value budget is set by the
+    pre-hour formatter's worst case (``59M``, 18px in MEDIUM) plus one
+    character for the ``H`` in ``NHmm``. 4-character labels like ``1H12``
+    and ``9H59`` are 24px, which leaves >=40px of gap against the route
+    text at every realistic Directions duration.
+    """
+    from ticker.canvas import Canvas, MEDIUM
+
+    canvas = Canvas(128, 32)
+    # 24px covers every 4-character ``NHmm`` label; a hard cap here catches
+    # a future format change (e.g. adding a trailing ``M``, spaces, or a
+    # 5-character variant) before it lands on the panel and clips WORK.
+    for minutes in (60, 61, 72, 119, 120, 599):
+        label = _format_duration(minutes)
+        assert canvas.text_width(label, MEDIUM) <= 24, (minutes, label)
 
 
 def test_color_thresholds():

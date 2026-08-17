@@ -126,6 +126,25 @@ class CommuteResult:
     fetched_epoch: float
 
 
+def _format_duration(minutes: int) -> str:
+    """Human-readable label for the big number on the commute card.
+
+    Under an hour is ``NNM``. At or past 60 minutes it flips to ``HhMM``
+    without the trailing ``M`` -- ``72 min`` on transit reads worse than
+    ``1H12``, and phones' commute widgets label the same way. Exact hours
+    drop the minutes entirely: ``1H`` beats ``1H0`` which looks like a
+    placeholder. Minutes are clamped to a non-negative int so a bad
+    upstream payload cannot render ``-1H59``.
+    """
+    minutes = max(0, int(minutes))
+    if minutes < 60:
+        return f"{minutes}M"
+    hours, rem = divmod(minutes, 60)
+    if rem == 0:
+        return f"{hours}H"
+    return f"{hours}H{rem:02d}"
+
+
 def _minutes_color(minutes: int) -> tuple[int, int, int]:
     """Green under 20, amber under 45, red beyond."""
     if minutes < _GREEN_MAX:
@@ -410,7 +429,7 @@ class CommuteMode(Mode):
         # Top line: "HOME → WORK" on the left, big minutes on the right.
         # Right-flush the minutes so the tens/ones column stays put across
         # 4-min and 44-min values.
-        minutes_text = f"{result.minutes}M"
+        minutes_text = _format_duration(result.minutes)
         minutes_color = _minutes_color(result.minutes)
         minutes_width = canvas.text_width(minutes_text, MEDIUM)
         minutes_x = canvas.width - 1 - minutes_width
