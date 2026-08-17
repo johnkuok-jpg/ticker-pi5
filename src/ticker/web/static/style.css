@@ -449,6 +449,21 @@ body[data-mode="youtube"] .card[data-for~="youtube"] { display: block; }
   white-space: nowrap;
 }
 .flight-go:active { opacity: .7; }
+.flight-go[disabled] { opacity: .55; cursor: progress; }
+
+/* Inline spinner used inside .flight-go while an async action is pending.
+   Sized to the button's 11px text so it reads like the label it replaces. */
+.spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: spinner-rot 0.7s linear infinite;
+}
+@keyframes spinner-rot { to { transform: rotate(360deg); } }
 
 /* ----- Stocks watchlist chips ------------------------------------------- */
 

@@ -1458,38 +1458,56 @@
     const weatherZipInput = document.getElementById('weather-zip');
     const weatherZipNote = document.getElementById('weather-zip-note');
     if (weatherZipForm) {
+      /* The zippopotam.us backend can take 2-5s on cold ZIPs, so the button
+         both disables and swaps its label for a spinner while the request is
+         in flight. Note text keeps giving the plain-language status. */
+      const weatherZipButton = weatherZipForm.querySelector('button[type="submit"]');
       weatherZipForm.addEventListener('submit', async event => {
         event.preventDefault();
         const zip = weatherZipInput.value.trim();
         weatherZipNote.textContent = zip ? 'Looking up ZIP…' : 'Clearing…';
+        const originalLabel = weatherZipButton ? weatherZipButton.innerHTML : null;
+        if (weatherZipButton) {
+          weatherZipButton.disabled = true;
+          weatherZipButton.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+          weatherZipButton.setAttribute('aria-label', 'Looking up ZIP');
+        }
         let data;
         try {
-          const response = await fetch('/weather/zip', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({zip}),
-          });
-          data = await response.json();
-          if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-        } catch (err) {
-          /* Server messages read as lowercase fragments (they double as Python
-             exception text); sentence-case them so the note line matches the
-             other cards. Leave the field as typed so a transposed digit can be
-             corrected in place instead of retyping the whole ZIP. */
-          const raw = err.message || 'Could not set the ZIP';
-          const shown = raw.charAt(0).toUpperCase() + raw.slice(1);
-          weatherZipNote.textContent = /[.!?]$/.test(shown) ? shown : `${shown}.`;
-          return;
+          try {
+            const response = await fetch('/weather/zip', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({zip}),
+            });
+            data = await response.json();
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+          } catch (err) {
+            /* Server messages read as lowercase fragments (they double as Python
+               exception text); sentence-case them so the note line matches the
+               other cards. Leave the field as typed so a transposed digit can be
+               corrected in place instead of retyping the whole ZIP. */
+            const raw = err.message || 'Could not set the ZIP';
+            const shown = raw.charAt(0).toUpperCase() + raw.slice(1);
+            weatherZipNote.textContent = /[.!?]$/.test(shown) ? shown : `${shown}.`;
+            return;
+          }
+          if (data.weather_label) {
+            const suffix = data.weather_zip ? ` (${data.weather_zip})` : '';
+            weatherZipNote.textContent = `Showing ${data.weather_label}${suffix}.`;
+          } else if (data.weather_lat && data.weather_lon) {
+            weatherZipNote.textContent = `Aimed at ${data.weather_lat}, ${data.weather_lon} from .env. Enter a ZIP to override.`;
+          } else {
+            weatherZipNote.textContent = 'Enter a 5-digit US ZIP to set the forecast and air-quality location.';
+          }
+          if (typeof data.weather_zip === 'string') weatherZipInput.value = data.weather_zip;
+        } finally {
+          if (weatherZipButton) {
+            weatherZipButton.disabled = false;
+            weatherZipButton.innerHTML = originalLabel;
+            weatherZipButton.removeAttribute('aria-label');
+          }
         }
-        if (data.weather_label) {
-          const suffix = data.weather_zip ? ` (${data.weather_zip})` : '';
-          weatherZipNote.textContent = `Showing ${data.weather_label}${suffix}.`;
-        } else if (data.weather_lat && data.weather_lon) {
-          weatherZipNote.textContent = `Aimed at ${data.weather_lat}, ${data.weather_lon} from .env. Enter a ZIP to override.`;
-        } else {
-          weatherZipNote.textContent = 'Enter a 5-digit US ZIP to set the forecast and air-quality location.';
-        }
-        if (typeof data.weather_zip === 'string') weatherZipInput.value = data.weather_zip;
       });
     }
     nametagSwatches.forEach(el => {
