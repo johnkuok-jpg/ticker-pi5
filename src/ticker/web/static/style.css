@@ -448,6 +448,52 @@ input[type=range]::-moz-range-thumb {
 .flight-go:active { opacity: .7; }
 .flight-go[disabled] { opacity: .55; cursor: progress; }
 
+/* ----- Commute card ------------------------------------------------------ */
+
+/* Travel-mode radios. A fieldset defaults to a border and its own padding,
+   neither of which belongs in this layout, so both are cleared. */
+#commute-mode-picker {
+  border: 0;
+  padding: 0;
+  margin-top: 10px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+#commute-mode-picker legend { margin-bottom: 6px; }
+/* Scoped under .flight on purpose: `.flight label` (class + type) outranks a
+   bare `.commute-mode-option` class, so the unscoped version of this rule lost
+   the cascade and left these reading as accent-colored field labels rather
+   than selectable options. Two classes beat class + type. */
+.flight .commute-mode-option {
+  display: inline-flex;
+  align-items: center;
+  /* Zeroing the radio's default margin below removes the browser's built-in
+     breathing room, so the gap has to carry it. */
+  gap: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: .12em;
+  /* Options are values, not field labels -- the radio's accent-color carries
+     which one is selected. */
+  color: var(--text);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+.commute-mode-option input[type=radio] {
+  accent-color: var(--accent);
+  margin: 0;
+  cursor: pointer;
+}
+/* Push the Route now button to the right edge of the shared row so the card
+   reads status-left / action-right like the other mode cards. */
+.commute-last { flex: 1; min-width: 0; }
+/* .flight-row stretches its children, which left the button's text sitting
+   above the status text on the same row. These are two runs of text, so align
+   their baselines. Scoped to this form so other cards' input+button rows keep
+   the stretch behaviour they were built against. */
+#commute-form { align-items: baseline; }
+
 /* Inline spinner used inside .flight-go while an async action is pending.
    Sized to the button's 11px text so it reads like the label it replaces. */
 .spinner {

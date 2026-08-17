@@ -195,34 +195,44 @@
          one on demand. This keeps API spend gated on user intent, and
          lets the card sit quietly on a stale-but-labelled number rather
          than pretending to be live. #}
+      {# Each text input has to sit inside a .flight-row: the dark-theme input
+         styling (transparent background, shared dotted underline) is scoped to
+         `.flight-row input[type=text]`. Bare inputs fall back to the browser
+         default white box, which is how these first shipped. #}
       <label for="commute-origin">Home address</label>
-      <input id="commute-origin" type="text" value="{{ commute_origin }}"
-             placeholder="221 Clara St, San Francisco CA 94107"
-             autocomplete="street-address" spellcheck="false"
-             maxlength="200" aria-label="Home address">
+      <div class="flight-row">
+        <input id="commute-origin" type="text" value="{{ commute_origin }}"
+               placeholder="221 Clara St, San Francisco CA 94107"
+               autocomplete="street-address" spellcheck="false"
+               maxlength="200" aria-label="Home address">
+      </div>
       <label for="commute-destination">Work address</label>
-      <input id="commute-destination" type="text" value="{{ commute_destination }}"
-             placeholder="181 Fremont St, San Francisco"
-             autocomplete="street-address" spellcheck="false"
-             maxlength="200" aria-label="Work address">
-      <fieldset id="commute-mode-picker" class="flight-row" style="border:0;padding:0;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-        <legend class="schedule" style="margin-bottom:4px;">Travel mode</legend>
+      <div class="flight-row">
+        <input id="commute-destination" type="text" value="{{ commute_destination }}"
+               placeholder="181 Fremont St, San Francisco"
+               autocomplete="street-address" spellcheck="false"
+               maxlength="200" aria-label="Work address">
+      </div>
+      <fieldset id="commute-mode-picker">
+        <legend class="schedule">Travel mode</legend>
         {% for travel in commute_travel_modes %}
-        <label class="commute-mode-option" style="display:inline-flex;align-items:center;gap:4px;">
+        <label class="commute-mode-option">
           <input type="radio" name="commute-mode" value="{{ travel }}"
                  {% if travel == commute_mode %}checked{% endif %}>
           <span>{{ {'transit':'Transit','driving':'Drive','walking':'Walk','bicycling':'Bike'}[travel] }}</span>
         </label>
         {% endfor %}
       </fieldset>
-      <form id="commute-form" class="flight-row" style="margin-top:8px;">
+      {# Status left, action right on one underlined row -- the same shape as
+         the BART station row (control + SHOW). The last-fetch echo is filled
+         in by /api/commute on first load and after every Route-now tap. The
+         freshness stamp is a client-side relative time so it doesn't lie when
+         the browser and Pi clocks drift, and it re-computes while the page is
+         open. #}
+      <form id="commute-form" class="flight-row">
+        <div id="commute-last" class="schedule commute-last" aria-live="polite">Last fetch: —</div>
         <button type="submit" id="commute-go" class="flight-go">Route now</button>
       </form>
-      {# Echo of the last fetch. Filled in by /api/commute on first load and
-         after every Route-now tap. The freshness stamp is a client-side
-         relative time so it doesn't lie when the browser and Pi clocks
-         drift, and it re-computes as long as the page is open. #}
-      <div id="commute-last" class="schedule" aria-live="polite">Last fetch: —</div>
       {% if not commute_api_key_present %}
       <p id="commute-key-note" class="schedule" style="color:#f39;">GOOGLE_MAPS_API_KEY is not set. Add it to ~/ticker-pi5/.env (the repo root, not ~/.ticker/, which only holds mode state) and restart the ticker service, then Route now will work.</p>
       {% endif %}
