@@ -406,3 +406,68 @@ def test_costco_dedupes_preserves_first_occurrence(costco_config) -> None:  # ty
     # and the fresh "118" tag lands after it so users can predict order.
     costco_config.set_costco_warehouses(["475", "118", " 475"])
     assert costco_config.current_costco_warehouses() == ("475", "118")
+
+
+# --- Mode-file atomicity ---------------------------------------------------
+#
+# Regression: set_mode() used Path.write_text(), which truncates first then
+# writes. The renderer polls current_mode() once a second, and the web app
+# reads it on every /api/state poll. A read that landed between the truncate
+# and the write got an empty file, current_mode() fell back to DEFAULT_MODE
+# ("weather"), and /api/state told every phone the panel was in weather --
+# which the settings page uses to switch the visible card. From the user's
+# seat: they were editing commute settings, and the whole page snapped to
+# weather for one poll interval, then snapped back.
+#
+# The fix is tmp+rename, the same pattern set_hidden_modes / set_focus_state /
+# set_worldclock_view already use.
+
+
+def test_set_mode_never_writes_bytes_directly_to_the_mode_file(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """set_mode() MUST NOT call write_text/open('w') on the mode file itself.
+
+    Writing bytes straight to mode_file truncates it first, and any reader
+    (the renderer polling every second, the web app on every /api/state)
+    that lands in that window sees empty -> DEFAULT_MODE ("weather") ->
+    every phone snaps its settings card to weather while the user is editing
+    a different mode. The safe path is tmp+rename so mode_file is only ever
+    swapped as a whole inode.
+
+    This test enforces the invariant structurally: spy on write_text and
+    open() and assert that neither ever targets mode_file itself. If a
+    future edit reintroduces the truncation write this test fails, not the
+    user.
+    """
+    from dataclasses import replace
+    from pathlib import Path
+    from ticker import config as config_module
+
+    cfg = replace(config_module.load_config(), state_dir=tmp_path)
+    target = cfg.mode_file
+
+    offenders: list[str] = []
+    real_write_text = Path.write_text
+    real_open = Path.open
+
+    def guarded_write_text(self, data, *args, **kwargs):  # noqa: ANN001, ANN202
+        if self == target:
+            offenders.append(f"Path.write_text -> {self}")
+        return real_write_text(self, data, *args, **kwargs)
+
+    def guarded_open(self, mode="r", *args, **kwargs):  # noqa: ANN001, ANN202
+        if self == target and any(m in mode for m in ("w", "a", "x", "+")):
+            offenders.append(f"Path.open({mode!r}) -> {self}")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", guarded_write_text)
+    monkeypatch.setattr(Path, "open", guarded_open)
+
+    cfg.set_mode("commute")
+    cfg.set_mode("weather")
+
+    assert offenders == [], (
+        "set_mode() wrote bytes directly to mode_file, which creates a "
+        "truncation race window every reader can hit. Use tmp+rename.\n"
+        + "\n".join(offenders)
+    )
+    assert cfg.current_mode() == "weather"

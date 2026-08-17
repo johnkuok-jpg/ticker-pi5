@@ -603,12 +603,25 @@ class Config:
         return value
 
     def set_mode(self, mode: str) -> None:
-        """Persist a validated mode atomically enough for this single-file protocol."""
+        """Persist a validated mode atomically.
+
+        ``Path.write_text`` truncates first and then writes -- if the renderer
+        (which polls this file once a second) or the web app itself (which
+        reads it on every /api/state poll) hits the file mid-write, it sees
+        empty bytes and current_mode() falls back to weather. That looked to
+        the user like the panel randomly switching to weather while they were
+        editing commute settings, because every polling phone snapped its
+        settings card to whatever /api/state returned. tmp+rename makes the
+        mode-file swap a single atomic inode swap the way the other state
+        writers (set_hidden_modes, set_focus_state, set_worldclock_view) already do.
+        """
         mode = mode.lower()
         if mode not in VALID_MODES:
             raise ValueError(f"Unknown mode: {mode}")
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.mode_file.write_text(f"{mode}\n", encoding="utf-8")
+        tmp = self.mode_file.with_suffix(".tmp")
+        tmp.write_text(f"{mode}\n", encoding="utf-8")
+        os.replace(tmp, self.mode_file)
 
     def scheduled_brightness(self, now=None):  # noqa: ANN001, ANN201 - datetime kept loose
         """Active scheduled level and the moment it took effect, or None if unscheduled.
