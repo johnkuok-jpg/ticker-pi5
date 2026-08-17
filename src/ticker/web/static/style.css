@@ -487,6 +487,20 @@ input[type=range]::-moz-range-thumb {
 }
 /* Push the Route now button to the right edge of the shared row so the card
    reads status-left / action-right like the other mode cards. */
+/* Addresses are the longest values any card holds. The shared .flight-row
+   input style is 18px uppercase, tuned for short values like tickers and
+   station names, at which "221 Clara St, San Francisco CA 94107" needs 435px
+   inside a 328px field on a 360px-wide phone -- the ZIP was clipped out of
+   sight. 14px in normal case fits the full address at both 360px and 430px.
+   Dropping the uppercase follows the nametag input, which opts out for the
+   same reason: it is a proper noun, not a symbol. */
+#commute-origin,
+#commute-destination {
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: .02em;
+}
+
 .commute-last { flex: 1; min-width: 0; }
 /* .flight-row stretches its children, which left the button's text sitting
    above the status text on the same row. These are two runs of text, so align
