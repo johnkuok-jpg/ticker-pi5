@@ -1044,6 +1044,53 @@ def create_app() -> Flask:
         config = load_config()
         return jsonify(commute=_commute_snapshot(config))
 
+    #: Human-readable reasons for a failed autocomplete. The form must stay
+    #: usable when this is down, so these are shown as a hint under the input
+    #: rather than as an error -- typing the full address by hand still works.
+    _PLACES_REASONS = {
+        "no_key": "No Google Maps API key set.",
+        "not_enabled": (
+            "Enable \u201cPlaces API (New)\u201d on the Google Cloud project "
+            "and add it to the API key\u2019s restrictions."
+        ),
+        "network": "No network.",
+        "api": "Places API error.",
+    }
+
+    @app.get("/api/commute/places")
+    def commute_places_api():  # type: ignore[no-untyped-def]
+        """Address suggestions for the commute form.
+
+        Proxied through the Pi rather than called from the browser so the
+        Google API key stays server-side. A key shipped to the page is a key
+        anyone on the LAN (or anyone past Cloudflare Access) can read from view
+        source and spend, and this one is billable.
+
+        Always returns 200. A failure here is a degraded input, not a broken
+        page: the JSON carries an empty list plus a reason, and the form falls
+        back to plain typing.
+        """
+        from ticker.modes.commute import (
+            AUTOCOMPLETE_MIN_CHARS,
+            AutocompleteUnavailable,
+            autocomplete_addresses,
+        )
+
+        query = (request.args.get("q") or "").strip()
+        if len(query) < AUTOCOMPLETE_MIN_CHARS:
+            return jsonify(suggestions=[], query=query)
+        config = load_config()
+        try:
+            suggestions = autocomplete_addresses(query, config.google_maps_api_key)
+        except AutocompleteUnavailable as err:
+            return jsonify(
+                suggestions=[],
+                query=query,
+                reason=err.reason,
+                message=_PLACES_REASONS.get(err.reason, "Autocomplete unavailable."),
+            )
+        return jsonify(suggestions=suggestions, query=query)
+
     @app.post("/worldclock")
     def set_worldclock():  # type: ignore[no-untyped-def]
         """Update the world-clock city list and switch to that mode.

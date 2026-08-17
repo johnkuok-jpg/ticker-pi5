@@ -56,7 +56,33 @@ from ticker.modes.base import Mode
 LOGGER = logging.getLogger(__name__)
 
 DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
+
+#: Places Autocomplete (New). Note this is a POST with a JSON body on
+#: ``places.googleapis.com``, not a query-string GET on ``maps.googleapis.com``
+#: like Directions -- they are separate APIs that must each be enabled on the
+#: Cloud project, and the key's API restrictions must list both.
+PLACES_AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete"
+
 REQUEST_TIMEOUT = 10.0
+
+#: Autocomplete runs while the user types, so it gets a tighter deadline than a
+#: deliberate Route tap: a suggestion that lands after the next keystroke is
+#: worthless, and the caller falls back to plain typing.
+AUTOCOMPLETE_TIMEOUT = 4.0
+
+#: Most suggestions the panel's tiny form can usefully show.
+AUTOCOMPLETE_LIMIT = 5
+
+#: Shortest query worth spending a request on. One or two characters match
+#: half the planet and burn quota for a list nobody wants.
+AUTOCOMPLETE_MIN_CHARS = 3
+
+#: Results are biased, not restricted, to a 20km circle around San Francisco.
+#: Bias rather than restrict so an out-of-area address still resolves -- it
+#: just ranks below local matches.
+AUTOCOMPLETE_BIAS_LAT = 37.7749
+AUTOCOMPLETE_BIAS_LNG = -122.4194
+AUTOCOMPLETE_BIAS_RADIUS_M = 20000.0
 
 # Google Directions accepts these four ``mode`` values. The webapp is
 # constrained to the same set so a malformed persisted value can't sneak
@@ -330,9 +356,9 @@ class CommuteMode(Mode):
         canvas.clear()
         result = self._read_result()
         if result is None:
-            self._render_placeholder(canvas)
+            self._render_placeholder(canvas, tick)
             return
-        self._render_result(canvas, result)
+        self._render_result(canvas, result, tick)
 
     # -- render helpers ------------------------------------------------------
 
@@ -346,7 +372,7 @@ class CommuteMode(Mode):
         "api":      ("COMMUTE",  "API ERROR",      RED),
     }
 
-    def _render_placeholder(self, canvas: Canvas) -> None:
+    def _render_placeholder(self, canvas: Canvas, tick: int = 0) -> None:
         """Idle / error card. Icon on the left, two SMALL lines on the right.
 
         Matches the layout the loaded card uses so the transition on the
@@ -354,12 +380,12 @@ class CommuteMode(Mode):
         """
         mode = self.config.current_commute_mode()
         icon_color = DIM
-        self._draw_icon(canvas, 0, (canvas.height - 16) // 2, mode, icon_color)
+        self._draw_icon(canvas, 0, (canvas.height - 16) // 2, mode, icon_color, tick)
 
         label, detail, detail_color = self._PLACEHOLDER_LABELS.get(
             self._error_state, self._PLACEHOLDER_LABELS["idle"]
         )
-        right_x = 20
+        right_x = _CONTENT_X
         # fit() both rows for the same reason the loaded card does it: these
         # strings are edited by hand, and an over-long one would otherwise run
         # off the right edge of the panel with no visible failure.
@@ -373,13 +399,13 @@ class CommuteMode(Mode):
             SMALL,
         )
 
-    def _render_result(self, canvas: Canvas, result: CommuteResult) -> None:
+    def _render_result(self, canvas: Canvas, result: CommuteResult, tick: int = 0) -> None:
         """Loaded card: icon left, minutes-big + two SMALL context lines right."""
         mode = result.mode
         icon_color = _mode_icon_color(mode)
-        self._draw_icon(canvas, 0, (canvas.height - 16) // 2, mode, icon_color)
+        self._draw_icon(canvas, 0, (canvas.height - 16) // 2, mode, icon_color, tick)
 
-        right_x = 20
+        right_x = _CONTENT_X
 
         # Top line: "HOME → WORK" on the left, big minutes on the right.
         # Right-flush the minutes so the tens/ones column stays put across
@@ -409,28 +435,66 @@ class CommuteMode(Mode):
         # rows on the market card.
         age_seconds = max(0.0, time.time() - result.fetched_epoch)
         fetched_when = time.strftime("%-I:%M", time.localtime(result.fetched_epoch))
-        stamp = f"FETCHED {fetched_when}"
+        # "FETCHED 11:59 AND STALE" does not fit: the content column is 100px
+        # wide now that the icon column grew, and SMALL text spends ~5px a
+        # character. Both variants below are 60px. The verb is what changes --
+        # in the stale case "STALE" already implies the number is a past
+        # reading, so "FETCHED" adds nothing.
+        #
+        # Panel strings stay ASCII. A middot here rendered as a 5px blank: the
+        # Spleen bitmap fonts advance the cursor for a missing glyph and draw
+        # nothing, so it looked like a stray double space rather than an error.
+        # test_panel_text_is_ascii guards this.
         if age_seconds >= self.STALE_SECONDS:
-            stamp = f"{stamp} · STALE"
+            stamp = f"STALE {fetched_when}"
+        else:
+            stamp = f"FETCHED {fetched_when}"
         canvas.text(
             right_x, canvas.height - SMALL - 1, canvas.fit(stamp, canvas.width - right_x, SMALL), DIM, SMALL
         )
 
     def _draw_icon(
-        self, canvas: Canvas, x: int, y: int, mode: str, color: tuple[int, int, int]
+        self,
+        canvas: Canvas,
+        x: int,
+        y: int,
+        mode: str,
+        color: tuple[int, int, int],
+        tick: int = 0,
     ) -> None:
-        """Blit a 16x16 mode icon at ``(x, y)`` in ``color``.
+        """Blit a 24x16 mode icon at ``(x, y)`` in ``color``.
 
-        Icons are hand-drawn bitmaps rather than fonts so they read as
-        pictograms at panel scale (a Unicode 🚉 in Spleen renders as an
-        unrecognisable smear at 8-12px). Each glyph is a tuple of 16
-        16-char strings; ``1`` lights a pixel.
+        Icons are bitmaps rather than font glyphs so they read as pictograms at
+        panel scale (a Unicode 🚉 in Spleen renders as an unrecognisable smear
+        at 8-12px). ``#`` lights a pixel.
+
+        ``walking`` animates: the frame is chosen from *tick* rather than the
+        wall clock, matching clock_text() and the earthquake flash, so the
+        preview renderer can capture a loop and tests can assert on a specific
+        frame. A dropped frame shifts the phase imperceptibly.
         """
-        glyph = _ICONS.get(mode, _ICONS["transit"])
+        if mode == "walking":
+            glyph = _walk_frame(tick, self.config.fps)
+        else:
+            glyph = _ICONS.get(mode, _ICONS["transit"])
         for row_index, row in enumerate(glyph):
             for col_index, pixel in enumerate(row):
-                if pixel == "1":
+                if pixel == "#":
                     canvas.fill_rect(x + col_index, y + row_index, 1, 1, color)
+
+
+#: Left edge of the content column: icon width plus a 4px gutter.
+_CONTENT_X = 28
+
+
+def _walk_frame(tick: int, fps: int = 30) -> tuple[str, ...]:
+    """Pick the walk pose for *tick*.
+
+    Frame-based rather than clock-based so a captured loop is reproducible.
+    """
+    ticks_per_step = max(1, fps // _WALK_STEPS_PER_SECOND)
+    step = (tick // ticks_per_step) % len(_WALK_SEQUENCE)
+    return _WALK_FRAMES[_WALK_SEQUENCE[step]]
 
 
 def _mode_icon_color(mode: str) -> tuple[int, int, int]:
@@ -443,82 +507,282 @@ def _mode_icon_color(mode: str) -> tuple[int, int, int]:
     }.get(mode, WHITE)
 
 
-# 16x16 mode icons. Kept intentionally simple -- a single stroke silhouette
-# reads as the object at panel scale better than a detailed rendering
-# does. The transit icon is a BART-style train because that's the anchor
-# leg for John's actual commute; a bus would be the alternative but reads
-# nearly identical at 16x16.
+# Mode icons, 24 wide x 16 tall in a 28px left column.
+#
+# These are generated geometry, not hand-typed pixels: drawn as circles,
+# polygons and thick strokes at 8x and downsampled. Hand-typing at this size
+# produced blobs -- solid fills lose their silhouette, and the first pass at a
+# car read as an insect. Stroke outlines with punched-out windows survive the
+# downsample; solid masses do not.
+#
+# The column was 16px wide and grew to 24 because vehicles are ~2:1 objects: a
+# bike needs two wheels side by side and a train needs a window band, and
+# neither fits in 16. The pedestrian is the opposite shape and only uses ~10 of
+# the 24, centred -- an icon set with one tall glyph among wide ones is normal,
+# and a fixed column is what keeps the text to its right from shifting between
+# modes.
+_ICON_WIDTH = 24
+
+# The walking figure animates. Three unique poses, cycled wide -> mid ->
+# narrow -> mid, which is why the sequence indexes frame 1 twice.
+#
+# The poses are sampled away from the stride's zero crossings on purpose. A
+# plain sine through zero puts the limbs flat against the torso, and at this
+# size that frame reads as a vertical bar rather than a person -- the animation
+# looked like a blinking stick. Clamping the angles away from zero keeps every
+# frame legible as a walker.
+_WALK_FRAMES: tuple[tuple[str, ...], ...] = (
+    (
+        "........................",
+        "..........####..........",
+        "..........####..........",
+        "..........####..........",
+        "...........##...........",
+        "...........##...........",
+        "..........####..........",
+        ".........######.........",
+        ".........#######........",
+        ".........######.........",
+        ".........##.##..........",
+        "........##...##.........",
+        ".......##....##.........",
+        "......##.....##.........",
+        "..............#.........",
+        "........................",
+    ),
+    (
+        "........................",
+        "..........####..........",
+        "..........####..........",
+        "..........####..........",
+        "...........##...........",
+        "...........##...........",
+        "..........####..........",
+        "..........####..........",
+        ".........######.........",
+        ".........######.........",
+        ".........#####..........",
+        ".........##.##..........",
+        "........##...#..........",
+        ".......###...##.........",
+        "........#....##.........",
+        "........................",
+    ),
+    (
+        "........................",
+        "..........####..........",
+        "..........####..........",
+        "..........####..........",
+        "...........##...........",
+        "...........##...........",
+        "..........###...........",
+        "..........####..........",
+        "..........####..........",
+        ".........######.........",
+        "..........####..........",
+        ".........#####..........",
+        ".........##.##..........",
+        "........##..##..........",
+        "........##..##..........",
+        "........................",
+    ),
+)
+
+#: Which frame to show at each step of the cycle.
+_WALK_SEQUENCE = (0, 1, 2, 1)
+
+#: Steps per second for the walk cycle. 5 gives a ~1.25 stride/sec pace at the
+#: default 30fps, which is a walk; 10 looked like a panic.
+_WALK_STEPS_PER_SECOND = 5
+
 _ICONS: dict[str, tuple[str, ...]] = {
     "transit": (
-        "0000000000000000",
-        "0000111111110000",
-        "0001111111111000",
-        "0011111111111100",
-        "0111111111111110",
-        "0110011001100110",
-        "0110011001100110",
-        "0111111111111110",
-        "0111111111111110",
-        "0111100000011110",
-        "0111100110011110",
-        "0111100110011110",
-        "0011111001111100",
-        "0000110000110000",
-        "0001100000011000",
-        "0000000000000000",
+        "........................",
+        "........................",
+        "...###################..",
+        ".######################.",
+        ".######################.",
+        ".##....#...##...#...###.",
+        ".##....#...##...#...###.",
+        ".###..##...##..###..###.",
+        ".######################.",
+        ".######################.",
+        "..####################..",
+        "..#####################.",
+        "...####........####.....",
+        "...####........##.#.....",
+        "...####.........###.....",
+        "........................",
     ),
     "driving": (
-        "0000000000000000",
-        "0000000000000000",
-        "0000011111100000",
-        "0000111111110000",
-        "0000100000010000",
-        "0111111111111110",
-        "0111111111111110",
-        "0100000000000010",
-        "0100000000000010",
-        "0111111111111110",
-        "0011100000011100",
-        "0011100000011100",
-        "0011100000011100",
-        "0001100000011000",
-        "0000000000000000",
-        "0000000000000000",
-    ),
-    "walking": (
-        "0000001110000000",
-        "0000001110000000",
-        "0000000000000000",
-        "0000011111100000",
-        "0000011011000000",
-        "0000001110000000",
-        "0000011110000000",
-        "0000111111000000",
-        "0001110110000000",
-        "0011000110000000",
-        "0000000110000000",
-        "0000000110000000",
-        "0000001100000000",
-        "0000011000000000",
-        "0000110000000000",
-        "0000000000000000",
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        ".........######.........",
+        "........########........",
+        ".......####...#.........",
+        ".......###....#.........",
+        "..#################.....",
+        ".######################.",
+        ".######################.",
+        "...##..##......##..##...",
+        "...######......######...",
+        "....####........####....",
+        "........................",
+        "........................",
     ),
     "bicycling": (
-        "0000000000000000",
-        "0000000000110000",
-        "0000000001100000",
-        "0000011111000000",
-        "0000000110000000",
-        "0000001100000000",
-        "0000011000000000",
-        "0000110001100000",
-        "0001100011110000",
-        "0111011111011100",
-        "1101111011111110",
-        "1100110000110110",
-        "1100000000000110",
-        "0110000000001100",
-        "0011000000011000",
-        "0000111111100000",
+        "........................",
+        "........................",
+        "........................",
+        "..............###.......",
+        "........####..####......",
+        "........###....##.......",
+        "........###...###.......",
+        "...########..##.#####...",
+        "..#######.##.#..######..",
+        ".##...###.####.####..##.",
+        ".##..##.##.##..#..#..##.",
+        ".#...########.##..#...#.",
+        ".##.....##.....#.....##.",
+        ".##....##......##....##.",
+        "..######........######..",
+        "....###..........###....",
     ),
+    # walking is drawn from _WALK_FRAMES; this is the pose used when a still
+    # frame is needed (and keeps every mode present in this map).
+    "walking": _WALK_FRAMES[0],
 }
+
+
+class AutocompleteUnavailable(RuntimeError):
+    """Autocomplete could not run. Carries a short reason for the UI.
+
+    Separate from the mode's file-backed error states: this is a per-keystroke
+    transient that must never block typing, so the caller shows the reason and
+    lets the user finish the address by hand.
+    """
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(detail or reason)
+        self.reason = reason
+        self.detail = detail
+
+
+#: Country suffixes Google appends that are dead weight here. Every suggestion
+#: is biased to San Francisco and the panel is a commute clock, so ", USA" is
+#: never the distinguishing part of an address -- but it is ~5 characters that
+#: pushed each row in the dropdown onto a second line.
+_COUNTRY_SUFFIXES = (", USA", ", United States")
+
+
+def _trim_country(address: str) -> str:
+    """Drop a trailing country from a formatted address.
+
+    Safe for routing: Directions geocodes "181 Fremont Street, San Francisco,
+    CA 94105" identically, because the state and ZIP already pin it.
+    """
+    for suffix in _COUNTRY_SUFFIXES:
+        if address.endswith(suffix):
+            return address[: -len(suffix)]
+    return address
+
+
+def autocomplete_addresses(
+    query: str,
+    api_key: str,
+    opener=None,  # type: ignore[no-untyped-def]
+    limit: int = AUTOCOMPLETE_LIMIT,
+) -> list[str]:
+    """Return up to *limit* address completions for *query*.
+
+    Wraps Places Autocomplete (New). Returns the full formatted address text of
+    each suggestion, which is what Directions wants -- no Place Details call and
+    no session token.
+
+    That is a deliberate cost decision. Session tokens only pay off when a
+    session terminates in a Place Details request, which bundles the whole
+    session into one billable unit. We never call Place Details: Directions
+    geocodes the address string perfectly well, and a place ID would buy nothing
+    but an extra billable request. Without that terminating call, a session
+    bills per request either way, so the token would add complexity for no
+    saving. Autocomplete requests bill per request under the Essentials tier
+    with a monthly free allowance, and the field mask below keeps every request
+    inside that tier -- asking for a field outside it silently upgrades the
+    whole request to a more expensive SKU.
+
+    Raises :class:`AutocompleteUnavailable` for anything the caller should
+    surface as "type it yourself" rather than as a broken form.
+    """
+    text = query.strip()
+    if len(text) < AUTOCOMPLETE_MIN_CHARS:
+        return []
+    key = api_key.strip()
+    if not key:
+        raise AutocompleteUnavailable("no_key", "no Google Maps API key configured")
+
+    body = json.dumps(
+        {
+            "input": text,
+            # Bias, not restrict -- see AUTOCOMPLETE_BIAS_* above.
+            "locationBias": {
+                "circle": {
+                    "center": {
+                        "latitude": AUTOCOMPLETE_BIAS_LAT,
+                        "longitude": AUTOCOMPLETE_BIAS_LNG,
+                    },
+                    "radius": AUTOCOMPLETE_BIAS_RADIUS_M,
+                }
+            },
+            "regionCode": "US",
+        }
+    ).encode("utf-8")
+
+    request = urllib.request.Request(
+        PLACES_AUTOCOMPLETE_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": key,
+            # Request exactly the one field we render. The field mask is not
+            # just a bandwidth trim: it selects the billing SKU.
+            "X-Goog-FieldMask": "suggestions.placePrediction.text.text",
+        },
+    )
+    send = opener or urllib.request.urlopen
+    try:
+        with send(request, timeout=AUTOCOMPLETE_TIMEOUT) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as error:
+        detail = ""
+        try:
+            detail = error.read().decode("utf-8", errors="replace")[:400]
+        except Exception:  # pragma: no cover - best-effort diagnostics only
+            pass
+        # 403 here almost always means Places API (New) is not enabled on the
+        # project, or the API key's restriction list covers Directions only.
+        # Both are one-time Cloud console fixes, so say which it is instead of
+        # reporting a generic failure.
+        reason = "not_enabled" if error.code in (403, 401) else "api"
+        LOGGER.warning("commute: places autocomplete HTTP %s: %s", error.code, detail)
+        raise AutocompleteUnavailable(reason, detail) from error
+    except (urllib.error.URLError, OSError, TimeoutError) as error:
+        LOGGER.warning("commute: places autocomplete failed: %s", error)
+        raise AutocompleteUnavailable("network", str(error)) from error
+    except json.JSONDecodeError as error:
+        LOGGER.warning("commute: places autocomplete payload not JSON: %s", error)
+        raise AutocompleteUnavailable("api", str(error)) from error
+
+    suggestions: list[str] = []
+    for entry in payload.get("suggestions") or []:
+        prediction = (entry or {}).get("placePrediction") or {}
+        value = _trim_country(((prediction.get("text") or {}).get("text") or "").strip())
+        # Dedupe: distinct place IDs can share a formatted address (a building
+        # and a business inside it), and two identical rows look like a bug.
+        if value and value not in suggestions:
+            suggestions.append(value)
+        if len(suggestions) >= limit:
+            break
+    return suggestions

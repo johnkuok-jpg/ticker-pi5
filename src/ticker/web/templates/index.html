@@ -203,19 +203,38 @@
          styling (transparent background, shared dotted underline) is scoped to
          `.flight-row input[type=text]`. Bare inputs fall back to the browser
          default white box, which is how these first shipped. #}
+      {# Each address gets a .addr-field wrapper so the suggestion list can be
+         absolutely positioned against the input rather than pushing the rest of
+         the card down as it opens and closes.
+
+         autocomplete="off" here, not "street-address": the browser's own
+         saved-address dropdown and ours would otherwise stack on top of each
+         other over the same input. #}
       <label for="commute-origin">Home address</label>
-      <div class="flight-row">
-        <input id="commute-origin" type="text" value="{{ commute_origin }}"
-               placeholder="221 Clara St, San Francisco CA 94107"
-               autocomplete="street-address" spellcheck="false"
-               maxlength="200" aria-label="Home address">
+      <div class="addr-field">
+        <div class="flight-row">
+          <input id="commute-origin" type="text" value="{{ commute_origin }}"
+                 placeholder="221 Clara St, San Francisco CA 94107"
+                 autocomplete="off" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="commute-origin-suggest"
+                 maxlength="200" aria-label="Home address">
+        </div>
+        <ul class="addr-suggest" id="commute-origin-suggest" role="listbox" hidden></ul>
+        <p class="addr-note" id="commute-origin-note" hidden></p>
       </div>
       <label for="commute-destination">Work address</label>
-      <div class="flight-row">
-        <input id="commute-destination" type="text" value="{{ commute_destination }}"
-               placeholder="181 Fremont St, San Francisco"
-               autocomplete="street-address" spellcheck="false"
-               maxlength="200" aria-label="Work address">
+      <div class="addr-field">
+        <div class="flight-row">
+          <input id="commute-destination" type="text" value="{{ commute_destination }}"
+                 placeholder="181 Fremont St, San Francisco"
+                 autocomplete="off" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="commute-destination-suggest"
+                 maxlength="200" aria-label="Work address">
+        </div>
+        <ul class="addr-suggest" id="commute-destination-suggest" role="listbox" hidden></ul>
+        <p class="addr-note" id="commute-destination-note" hidden></p>
       </div>
       <fieldset id="commute-mode-picker">
         <legend class="schedule">Travel mode</legend>
@@ -1570,6 +1589,151 @@
     }
     commuteOrigin.addEventListener('change', commuteSaveAddresses);
     commuteDestination.addEventListener('change', commuteSaveAddresses);
+
+    /* Address typeahead.
+
+       Server-proxied (`/api/commute/places`) rather than calling Google from
+       the page, so the billable API key never ships to the browser.
+
+       Every request costs money, so the cheap guards matter more than the
+       fetching does:
+         - 350ms debounce, so a typed word is one request and not eight;
+         - a 3-char floor, matching the server's;
+         - a per-input cache keyed on the query, so backspacing back through
+           text already typed replays from memory and spends nothing;
+         - AbortController, so a superseded in-flight request cannot land after
+           a newer one and repaint a stale list.
+
+       There is no Place Details call: the suggestion's formatted text goes
+       straight into the field, and Directions geocodes it. */
+    function commuteAttachAutocomplete(input, listEl, noteEl) {
+      const cache = new Map();
+      let timer = null;
+      let controller = null;
+      let items = [];
+      let activeIndex = -1;
+
+      function close() {
+        listEl.hidden = true;
+        listEl.innerHTML = '';
+        items = [];
+        activeIndex = -1;
+        input.setAttribute('aria-expanded', 'false');
+      }
+
+      function note(message) {
+        if (!message) {
+          noteEl.hidden = true;
+          noteEl.textContent = '';
+          return;
+        }
+        noteEl.hidden = false;
+        noteEl.textContent = message;
+      }
+
+      function highlight(index) {
+        activeIndex = index;
+        Array.from(listEl.children).forEach((li, i) => {
+          li.classList.toggle('is-active', i === index);
+          li.setAttribute('aria-selected', i === index ? 'true' : 'false');
+        });
+        const active = listEl.children[index];
+        if (active) active.scrollIntoView({block: 'nearest'});
+      }
+
+      function choose(value) {
+        input.value = value;
+        close();
+        note('');
+        // Persist immediately. Picking a suggestion is not a 'change' event as
+        // far as the browser is concerned, so without this the pick would only
+        // save if the user also blurred the field.
+        commuteSaveAddresses();
+      }
+
+      function render(list) {
+        items = list;
+        listEl.innerHTML = '';
+        if (!list.length) { close(); return; }
+        list.forEach((value, index) => {
+          const li = document.createElement('li');
+          li.textContent = value;
+          li.setAttribute('role', 'option');
+          li.setAttribute('aria-selected', 'false');
+          // mousedown, not click: click fires after blur, which has already
+          // closed the list, so the tap would land on nothing.
+          li.addEventListener('mousedown', event => {
+            event.preventDefault();
+            choose(value);
+          });
+          li.addEventListener('mouseenter', () => highlight(index));
+          listEl.appendChild(li);
+        });
+        listEl.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
+        highlight(-1);
+      }
+
+      async function lookup(query) {
+        if (cache.has(query)) { render(cache.get(query)); return; }
+        if (controller) controller.abort();
+        controller = new AbortController();
+        try {
+          const res = await fetch(`/api/commute/places?q=${encodeURIComponent(query)}`,
+                                  {signal: controller.signal});
+          const data = await res.json();
+          // Ignore a response for text the user has already moved past.
+          if (input.value.trim() !== query) return;
+          const list = Array.isArray(data.suggestions) ? data.suggestions : [];
+          cache.set(query, list);
+          note(data.message || '');
+          render(list);
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+          // Typing by hand still works, so stay quiet about a transient.
+          close();
+        }
+      }
+
+      input.addEventListener('input', () => {
+        const query = input.value.trim();
+        if (timer) clearTimeout(timer);
+        if (query.length < 3) { close(); return; }
+        timer = setTimeout(() => lookup(query), 350);
+      });
+
+      input.addEventListener('keydown', event => {
+        if (listEl.hidden) return;
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          highlight((activeIndex + 1) % items.length);
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          highlight((activeIndex - 1 + items.length) % items.length);
+        } else if (event.key === 'Enter') {
+          // Only swallow Enter when a row is actually selected, so Enter on a
+          // hand-typed address still submits the way it did before.
+          if (activeIndex >= 0) {
+            event.preventDefault();
+            choose(items[activeIndex]);
+          }
+        } else if (event.key === 'Escape') {
+          close();
+        }
+      });
+
+      // Delay so a mousedown on a row is not cancelled by the blur.
+      input.addEventListener('blur', () => setTimeout(close, 120));
+    }
+
+    commuteAttachAutocomplete(
+      commuteOrigin,
+      document.getElementById('commute-origin-suggest'),
+      document.getElementById('commute-origin-note'));
+    commuteAttachAutocomplete(
+      commuteDestination,
+      document.getElementById('commute-destination-suggest'),
+      document.getElementById('commute-destination-note'));
     commuteModeRadios.forEach(radio => {
       radio.addEventListener('change', async () => {
         if (!radio.checked) return;

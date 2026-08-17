@@ -1618,3 +1618,63 @@ body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 
   .readout-value { font-size: 34px; }
   .mode-grid { grid-template-columns: 1fr; gap: 0; }
 }
+
+/* --- Commute address typeahead ---------------------------------------------
+   The list is absolutely positioned inside .addr-field so opening it overlays
+   the controls below instead of shoving the Route button down the page as the
+   user types -- a moving tap target is worse than an occluded one. */
+.addr-field { position: relative; }
+
+.addr-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: #14161c;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .55);
+  max-height: 232px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.addr-suggest li {
+  padding: 9px 10px;
+  border-radius: 7px;
+  /* Monospace to match the input the text lands in. In the page's sans face
+     the suggestion visibly reflowed the moment it was selected, which read as
+     the field having changed the address. 12px because monospace is wider and
+     the inputs are already at 14px to fit a full address. */
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .01em;
+  line-height: 1.35;
+  color: #d6dbe6;
+  cursor: pointer;
+  /* Addresses are long. Wrap rather than truncate: a clipped suggestion is
+     impossible to tell apart from its neighbour on the same street. */
+  overflow-wrap: anywhere;
+}
+
+/* One highlight class for both hover and keyboard, so arrowing through the
+   list looks identical to moving a finger down it. */
+.addr-suggest li:hover,
+.addr-suggest li.is-active {
+  background: rgba(120, 160, 255, .16);
+  color: #f2f5fb;
+}
+
+/* Reason shown when autocomplete is unavailable. Deliberately quiet: the input
+   still works by hand, so this is a hint, not an error. */
+.addr-note {
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8b93a6;
+}
