@@ -397,21 +397,40 @@ class CostcoMode(Mode):
         # adds a new ID invalidates the cache immediately rather than
         # waiting for the hour-long window to elapse.
         self._last_ids: tuple[str, ...] = ()
+        # Diagnostic bucket for the placeholder card: one of
+        # ``"pending"``  -- no refresh has ever run
+        # ``"empty"``    -- no warehouses configured
+        # ``"unknown"``  -- every configured ID is missing from WAREHOUSE_SLUGS
+        # ``"network"``  -- every fetch raised (DNS, timeout, TLS, 5xx)
+        # ``"parse"``    -- fetches succeeded but no og:description found
+        # ``"mixed"``    -- some combination of the failure modes above
+        # When set to anything other than ``"pending"``/``"empty"`` the
+        # placeholder card surfaces a human-readable label instead of the
+        # generic ``FETCHING PRICES``, so ``sudo journalctl -u ticker`` is
+        # not the first line of defense when the card looks stuck.
+        self._error_state: str = "pending"
 
     # -- data ---------------------------------------------------------------
 
-    def _fetch_one(self, warehouse_id: str) -> WarehousePrices | None:
+    def _fetch_one(
+        self, warehouse_id: str
+    ) -> tuple[WarehousePrices | None, str]:
         """Fetch one warehouse's snapshot from costcogasprices.com.
 
-        Returns ``None`` on any failure (unknown ID, network error, HTTP
-        error, missing og:description). The caller records the outcome
-        per-warehouse so one warehouse having stale prices doesn't
-        force us to retry every warehouse on the next tick.
+        Returns ``(snapshot, outcome)`` where ``outcome`` is one of
+        ``"ok"``, ``"unknown"``, ``"network"``, ``"parse"``. The caller
+        rolls the per-warehouse outcomes up into ``_error_state`` so the
+        placeholder card can surface *why* the card is stuck instead of a
+        generic "fetching".
         """
         entry = WAREHOUSE_SLUGS.get(warehouse_id)
         if entry is None:
-            LOGGER.debug("costco: no slug mapping for warehouse %s", warehouse_id)
-            return None
+            LOGGER.warning(
+                "costco: no slug mapping for warehouse %s -- add it to "
+                "WAREHOUSE_SLUGS or pick a different ID from the preset list",
+                warehouse_id,
+            )
+            return None, "unknown"
         slug, _ = entry
         request = _build_station_request(slug)
         try:
@@ -421,14 +440,15 @@ class CostcoMode(Mode):
             LOGGER.warning(
                 "costco: station %s (%s) fetch failed: %s", warehouse_id, slug, error
             )
-            return None
+            return None, "network"
         snapshot = _parse_station_page(warehouse_id, body)
         if snapshot is None:
             LOGGER.warning(
                 "costco: station %s (%s) had no parseable og:description",
                 warehouse_id, slug,
             )
-        return snapshot
+            return None, "parse"
+        return snapshot, "ok"
 
     def _refresh(self, ids: tuple[str, ...]) -> None:
         # Record ``_last_ids`` and ``_last_refresh`` up front so we do not
@@ -437,18 +457,37 @@ class CostcoMode(Mode):
         # 30-request-per-second retry storm.
         self._last_ids = ids
         self._last_refresh = time.monotonic()
+        if not ids:
+            # No warehouses configured -- keep any prior snapshots so a
+            # briefly-cleared list doesn't wipe the card, but flag the
+            # state so the placeholder can say so.
+            self._failed = True
+            self._error_state = "empty"
+            return
         collected: dict[str, WarehousePrices] = {}
+        outcomes: list[str] = []
         for warehouse_id in ids:
-            snapshot = self._fetch_one(warehouse_id)
+            snapshot, outcome = self._fetch_one(warehouse_id)
+            outcomes.append(outcome)
             if snapshot is not None:
                 collected[warehouse_id] = snapshot
         if collected:
             self._prices = collected
             self._failed = False
+            self._error_state = "pending"  # unused once has_prices renders
+            return
+        # Keep any prior successful snapshots so the panel keeps
+        # rendering yesterday's price rather than an empty card.
+        self._failed = True
+        # Roll per-warehouse outcomes into a single bucket. If every
+        # warehouse hit the same failure mode we surface that; otherwise
+        # ``mixed`` covers the ambiguous case so the label isn't
+        # actively misleading.
+        distinct_failures = {o for o in outcomes if o != "ok"}
+        if len(distinct_failures) == 1:
+            self._error_state = next(iter(distinct_failures))
         else:
-            # Keep any prior successful snapshots so the panel keeps
-            # rendering yesterday's price rather than an empty card.
-            self._failed = True
+            self._error_state = "mixed"
 
     # -- render -------------------------------------------------------------
 
@@ -488,6 +527,21 @@ class CostcoMode(Mode):
 
     # -- render helpers ------------------------------------------------------
 
+    # Placeholder labels: each error state maps to a two-word status pair
+    # that fits the 12-char SMALL slots the loaded card's REG/PREM rows
+    # use, so the placeholder shape stays identical to the real card.
+    # The second word carries the color: amber for "look at your config"
+    # states, red for network faults, dim otherwise so the wordmark stays
+    # the loudest element while the card is still waking up.
+    _PLACEHOLDER_LABELS: dict[str, tuple[str, str, tuple[int, int, int]]] = {
+        "pending": ("FETCHING", "PRICES", DIM),
+        "empty":   ("NO",       "WAREHOUSE", AMBER),
+        "unknown": ("UNKNOWN",  "ID",     AMBER),
+        "network": ("NO",       "NETWORK", COSTCO_RED),
+        "parse":   ("SITE",     "CHANGED", AMBER),
+        "mixed":   ("FETCH",    "ERROR",   COSTCO_RED),
+    }
+
     def _render_placeholder(self, canvas: Canvas, tick: int) -> None:
         # The dim red wordmark keeps the card recognisable while it waits
         # for the first successful fetch. Falling back to a generic text
@@ -495,12 +549,18 @@ class CostcoMode(Mode):
         # even though the card itself is fine.
         logo_y = (canvas.height - _LOGO_HEIGHT) // 2
         self._draw_wordmark(canvas, 0, logo_y, dim=True)
-        # A single "fetching" line lives on the right-column baseline the
-        # loaded card uses for its PREM row so the layout stays stable
-        # when the first fetch lands.
+        # Two SMALL lines live on the right-column baselines the loaded
+        # card uses for its REG / PREM rows so the layout stays stable
+        # when the first fetch lands. The label word is DIM (it's
+        # supporting text); the state word gets the color that matches
+        # its severity so at a glance you can tell config-fault from
+        # network-fault from just-slow.
+        label, detail, detail_color = self._PLACEHOLDER_LABELS.get(
+            self._error_state, self._PLACEHOLDER_LABELS["pending"]
+        )
         right_x = _LOGO_WIDTH + _RIGHT_GUTTER
-        canvas.text(right_x, 3, "FETCHING", DIM, SMALL)
-        canvas.text(right_x, canvas.height - SMALL, "PRICES", DIM, SMALL)
+        canvas.text(right_x, 3, label, DIM, SMALL)
+        canvas.text(right_x, canvas.height - SMALL, detail, detail_color, SMALL)
 
     def _render_warehouse(
         self,
