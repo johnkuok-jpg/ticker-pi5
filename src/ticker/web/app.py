@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from ticker import bart, baywheels, muni, net, spotify as spotify_client
 from ticker.config import (
@@ -161,9 +162,61 @@ def _describe_schedule(config) -> str:  # noqa: ANN001 - Config, avoiding an imp
     return f"{prefix}: {label} at {clock}{day}"
 
 
+def _asset_fingerprint(path: Path) -> str:
+    """Short content hash of a static file, or "0" if it can't be read.
+
+    Used to version static URLs. The page's markup and its stylesheet are a
+    matched pair -- the JS adds a `mode-visible` class that only the current
+    stylesheet knows how to render -- so serving fresh HTML against a cached
+    old stylesheet hides every settings card. This is not hypothetical: the
+    ticker is reachable through a Cloudflare tunnel, and both the edge and the
+    browser will happily hold `style.css` from a previous deploy while fetching
+    the HTML fresh.
+
+    Hashing content rather than mtime means a `git pull` that rewrites a file
+    without changing it does not needlessly bust the cache, and a restored
+    older file gets its old URL back.
+    """
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        # A missing or unreadable asset is the static handler's problem to
+        # report; don't take the page down over a cache-busting query string.
+        return "0"
+    return digest[:12]
+
+
 def create_app() -> Flask:
     """Build the web app without any in-process dependency on the renderer."""
     app = Flask(__name__)
+
+    # Fingerprints are computed per request but memoised on (path, mtime_ns,
+    # size), so the common case is a stat() rather than a re-hash. Recomputing
+    # per request matters on the Pi: `update.sh` rewrites static files under a
+    # running service, and a fingerprint captured at import time would keep
+    # pointing at the previous file until someone restarted the webapp.
+    static_root = Path(app.static_folder or "")
+    fingerprint_cache: dict[tuple[str, int, int], str] = {}
+
+    def static_url(filename: str) -> str:
+        """`url_for('static', ...)` plus a content fingerprint query."""
+        path = static_root / filename
+        try:
+            stat = path.stat()
+            key = (filename, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return url_for("static", filename=filename)
+        version = fingerprint_cache.get(key)
+        if version is None:
+            version = _asset_fingerprint(path)
+            # Keep this from growing without bound if a file is rewritten
+            # repeatedly; there are only a handful of static assets.
+            if len(fingerprint_cache) > 64:
+                fingerprint_cache.clear()
+            fingerprint_cache[key] = version
+        return url_for("static", filename=filename, v=version)
+
+    app.jinja_env.globals["static_url"] = static_url
 
     @app.get("/")
     def index():  # type: ignore[no-untyped-def]

@@ -19,7 +19,11 @@
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icon-180.png') }}">
   <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icon-192.png') }}">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {# static_url() appends a content fingerprint. The markup and this stylesheet
+     are a matched pair (the mode-visible class below is meaningless without
+     it), so a cached old stylesheet against fresh HTML hides every settings
+     card. The query string makes each deploy a new URL. #}
+  <link rel="stylesheet" href="{{ static_url('style.css') }}">
 </head>
 <body data-mode="{{ current_mode }}">
   <main class="panel">
