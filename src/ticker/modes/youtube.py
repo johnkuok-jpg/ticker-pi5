@@ -117,6 +117,25 @@ META_X = VIDEO_W + 3   # small gap between video and text
 TARGET_FPS = 12    # LED matrix runs at 30 fps; 12 fps video = every ~2.5 ticks
 CACHE_DIR = Path(tempfile.gettempdir()) / "ticker-yt-cache"
 
+# Cache size budget, in bytes.
+#
+# CACHE_DIR lives on tmpfs (/tmp), which is RAM-backed and deliberately chosen
+# to keep video churn off the SD card. tmpfs here is ~1 GB, so a count-based
+# retention rule ("keep the 5 newest files") is not a bound at all: the feeds
+# this mode watches are largely 60-minute compilations, and five of those at
+# ~200 MB apiece fills tmpfs to 100% while obeying the rule perfectly. A full
+# /tmp then breaks unrelated things -- apt writes there, and one earlier
+# ENOSPC left a corrupt `~t_dlp` dist-info behind in the venv.
+#
+# 400 MB keeps a few videos resident while leaving tmpfs headroom for other
+# users of /tmp and, since this is RAM, leaving the rest of the Pi's memory
+# alone.
+CACHE_BUDGET_BYTES = 400 * 1024 * 1024
+
+# Extra room freed before a download starts, so the incoming file has somewhere
+# to land instead of dying mid-write with ENOSPC and leaving a partial.
+CACHE_RESERVE_BYTES = 150 * 1024 * 1024
+
 # Trending list refresh interval (1 hour is plenty for a music chart).
 TRENDING_CACHE_SECONDS = 3600
 
@@ -616,21 +635,64 @@ def _scroll_within(
     canvas.image(x, y, visible)
 
 
+def _prune_cache(budget_bytes: int, keep: set[Path] | None = None) -> int:
+    """Delete oldest cached videos until the directory fits `budget_bytes`.
+
+    Newest-first retention: files are sorted by mtime descending and kept while
+    the running total stays within budget, so the most recently used videos
+    survive. Anything in `keep` is never deleted and does not count against the
+    budget -- that is the file the caller is about to play, and evicting it
+    would force an immediate re-download.
+
+    Returns the number of bytes freed. Never raises: a cache that cannot be
+    pruned is a worse reason to kill the mode than a cache that is too big, and
+    the caller has no useful recovery.
+    """
+    keep = keep or set()
+    freed = 0
+    try:
+        entries = []
+        for path in CACHE_DIR.glob("*"):
+            if not path.is_file() or path in keep:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            entries.append((stat.st_mtime, stat.st_size, path))
+
+        entries.sort(key=lambda item: item[0], reverse=True)
+
+        total = 0
+        for _mtime, size, path in entries:
+            total += size
+            if total > budget_bytes:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    total -= size  # deletion failed, so it still occupies space
+                    continue
+                freed += size
+                total -= size
+    except Exception:
+        pass
+    return freed
+
+
 def _fetch_and_decode(video_id: str) -> np.ndarray:
     """Download `video_id` at low quality and return a (N, 32, VIDEO_W, 3) uint8 array."""
     import yt_dlp
     import imageio_ffmpeg
 
-    # Cache cleanup: keep only the 5 newest files.
-    try:
-        cached = sorted(CACHE_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-        for old in cached[5:]:
-            if old.is_file():
-                old.unlink(missing_ok=True)
-    except Exception:
-        pass
-
     existing = list(CACHE_DIR.glob(f"{video_id}.*"))
+
+    # Evict by total bytes, not file count. Keep the file we are about to use.
+    # Before a download we also free CACHE_RESERVE_BYTES of headroom so the
+    # incoming file has room to land; on a cache hit the plain budget applies.
+    budget = CACHE_BUDGET_BYTES
+    if not existing:
+        budget = max(0, CACHE_BUDGET_BYTES - CACHE_RESERVE_BYTES)
+    _prune_cache(budget, keep=set(existing))
     if existing:
         cache_file = existing[0]
     else:
@@ -673,6 +735,11 @@ def _fetch_and_decode(video_id: str) -> np.ndarray:
         if not found:
             raise RuntimeError("download did not produce a file")
         cache_file = found[0]
+        # The reserve carved out above was an estimate; settle the cache back
+        # to the real budget now that the actual file size is known. yt-dlp can
+        # also leave `.part`/`.ytdl` siblings behind on a retry, and this sweeps
+        # those too.
+        _prune_cache(CACHE_BUDGET_BYTES, keep={cache_file})
 
     ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
     # Hard-cap the decoded portion of any video, regardless of source length.
