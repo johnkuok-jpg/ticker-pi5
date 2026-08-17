@@ -212,6 +212,11 @@ def create_app() -> Flask:
             currency_flag_grid=config.current_currency_flag_grid(),
             costco_warehouses=list(config.current_costco_warehouses()),
             max_costco_warehouses=MAX_COSTCO_WAREHOUSES,
+            commute_origin=config.current_commute_origin(),
+            commute_destination=config.current_commute_destination(),
+            commute_mode=config.current_commute_mode(),
+            commute_travel_modes=("transit", "driving", "walking", "bicycling"),
+            commute_api_key_present=bool(config.google_maps_api_key.strip()),
             weather_zip=weather_zip,
             weather_label=weather_label,
             weather_lat=weather_lat,
@@ -906,6 +911,85 @@ def create_app() -> Flask:
     def focus_state_api():  # type: ignore[no-untyped-def]
         config = load_config()
         return _focus_response(config.focus_state())
+
+    # Commute routes.
+    #
+    # Three endpoints, one purpose each:
+    #   POST /commute/addresses -- persist home + work text
+    #   POST /commute/mode      -- persist transit/driving/walking/bicycling
+    #   POST /commute/route     -- hit Google Directions once and cache result
+    #   GET  /api/commute       -- return the cached result for the webapp echo
+    #
+    # /commute/route is intentionally the ONLY thing that spends API quota.
+    # The renderer never fetches on its own; a user has to tap.
+
+    def _commute_snapshot(config):  # type: ignore[no-untyped-def]
+        # Instantiate the mode just to reuse its state-file readers. No
+        # network call happens here -- state() is a file read.
+        from ticker.modes.commute import CommuteMode
+        mode = CommuteMode(config)
+        return {
+            "origin": config.current_commute_origin(),
+            "destination": config.current_commute_destination(),
+            "mode": config.current_commute_mode(),
+            "last": mode.state(),
+            "api_key_present": bool(config.google_maps_api_key.strip()),
+        }
+
+    @app.post("/commute/addresses")
+    def commute_addresses():  # type: ignore[no-untyped-def]
+        payload = request.get_json(silent=True) or {}
+        origin = str(payload.get("origin", "") or "")
+        destination = str(payload.get("destination", "") or "")
+        config = load_config()
+        try:
+            config.set_commute_addresses(origin, destination)
+        except ValueError as err:
+            return jsonify(error=str(err), commute=_commute_snapshot(config)), 400
+        return jsonify(commute=_commute_snapshot(config))
+
+    @app.post("/commute/mode")
+    def commute_mode():  # type: ignore[no-untyped-def]
+        payload = request.get_json(silent=True) or {}
+        travel = str(payload.get("mode", "") or "")
+        config = load_config()
+        try:
+            config.set_commute_mode(travel)
+        except ValueError as err:
+            return jsonify(error=str(err), commute=_commute_snapshot(config)), 400
+        return jsonify(commute=_commute_snapshot(config))
+
+    @app.post("/commute/route")
+    def commute_route():  # type: ignore[no-untyped-def]
+        # Optional per-tap mode override so the UI can send the mode the
+        # user picked without waiting for /commute/mode to round-trip first.
+        # If absent, fetch() falls back to the persisted mode.
+        payload = request.get_json(silent=True) or {}
+        travel = payload.get("mode")
+        config = load_config()
+        # Tapping Route with a mode different from the persisted one also
+        # persists the pick -- otherwise the UI radio and the card would
+        # disagree on the next render.
+        if travel and str(travel).strip():
+            try:
+                config.set_commute_mode(str(travel))
+            except ValueError as err:
+                return jsonify(error=str(err), commute=_commute_snapshot(config)), 400
+        from ticker.modes.commute import CommuteMode
+        mode = CommuteMode(config)
+        mode.fetch()  # populates the state file; return value ignored -- read it back
+        # Also flip the current mode to "commute" so the tap surfaces on
+        # the LED without a separate mode click, matching how the flight
+        # form flips to flights and the worldclock form flips to worldclock.
+        config.set_mode("commute")
+        snapshot = _commute_snapshot(config)
+        snapshot["current_mode"] = config.current_mode()
+        return jsonify(commute=snapshot)
+
+    @app.get("/api/commute")
+    def commute_state_api():  # type: ignore[no-untyped-def]
+        config = load_config()
+        return jsonify(commute=_commute_snapshot(config))
 
     @app.post("/worldclock")
     def set_worldclock():  # type: ignore[no-untyped-def]

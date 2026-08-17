@@ -188,6 +188,46 @@
       <div id="costco-list" class="symbol-list" aria-label="Costco warehouses"></div>
       <p id="costco-note" class="schedule">Up to {{ max_costco_warehouses }} warehouses. Prices refresh hourly from Costco.com. Not every warehouse sells gas -- if a card shows no prices, that ID isn't a gas station.</p>
     </section>
+    <section class="flight" data-for="commute">
+      {# Commute mode is deliberately tap-to-update. There is no polling,
+         no auto-refresh, and no time-of-day trigger -- the panel shows
+         the last fetched number and a Route now button pulls a fresh
+         one on demand. This keeps API spend gated on user intent, and
+         lets the card sit quietly on a stale-but-labelled number rather
+         than pretending to be live. #}
+      <label for="commute-origin">Home address</label>
+      <input id="commute-origin" type="text" value="{{ commute_origin }}"
+             placeholder="221 Clara St, San Francisco CA 94107"
+             autocomplete="street-address" spellcheck="false"
+             maxlength="200" aria-label="Home address">
+      <label for="commute-destination">Work address</label>
+      <input id="commute-destination" type="text" value="{{ commute_destination }}"
+             placeholder="181 Fremont St, San Francisco"
+             autocomplete="street-address" spellcheck="false"
+             maxlength="200" aria-label="Work address">
+      <fieldset id="commute-mode-picker" class="flight-row" style="border:0;padding:0;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+        <legend class="schedule" style="margin-bottom:4px;">Travel mode</legend>
+        {% for travel in commute_travel_modes %}
+        <label class="commute-mode-option" style="display:inline-flex;align-items:center;gap:4px;">
+          <input type="radio" name="commute-mode" value="{{ travel }}"
+                 {% if travel == commute_mode %}checked{% endif %}>
+          <span>{{ {'transit':'Transit','driving':'Drive','walking':'Walk','bicycling':'Bike'}[travel] }}</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+      <form id="commute-form" class="flight-row" style="margin-top:8px;">
+        <button type="submit" id="commute-go" class="flight-go">Route now</button>
+      </form>
+      {# Echo of the last fetch. Filled in by /api/commute on first load and
+         after every Route-now tap. The freshness stamp is a client-side
+         relative time so it doesn't lie when the browser and Pi clocks
+         drift, and it re-computes as long as the page is open. #}
+      <div id="commute-last" class="schedule" aria-live="polite">Last fetch: —</div>
+      {% if not commute_api_key_present %}
+      <p id="commute-key-note" class="schedule" style="color:#f39;">GOOGLE_MAPS_API_KEY is not set. Add it to /home/pi/.ticker/.env and restart the ticker service, then Route now will work.</p>
+      {% endif %}
+      <p id="commute-note" class="schedule">One tap = one Google Directions call. Nothing refreshes on its own.</p>
+    </section>
     <section class="flight" data-for="flights">
       <label for="flight-input">Flight to track</label>
       <form id="flight-form" class="flight-row">
@@ -1424,6 +1464,112 @@
       }
     });
     renderCostcoWarehouses();
+    /* Commute: three POSTs (addresses, mode, route) + one GET to refill the
+       last-fetch echo. Route now flips the LED to commute; address/mode
+       edits are silent so the user can prep the fields without takeover.
+
+       Freshness stamp is a client-side relative time (`3 min ago`) that
+       re-computes every 30s while the page is open. That means the echo
+       doesn't lie when the browser clock and the Pi clock disagree by a
+       minute, and it doesn't need any timer on the server side. */
+    const commuteForm = document.getElementById('commute-form');
+    const commuteGo = document.getElementById('commute-go');
+    const commuteOrigin = document.getElementById('commute-origin');
+    const commuteDestination = document.getElementById('commute-destination');
+    const commuteModeRadios = document.querySelectorAll('input[name="commute-mode"]');
+    const commuteLast = document.getElementById('commute-last');
+    let commuteLastEpoch = null;
+    let commuteLastPayload = null;
+    function commuteFormatAge(epoch) {
+      if (!epoch) return '';
+      const secs = Math.max(0, Math.round(Date.now() / 1000 - epoch));
+      if (secs < 60) return 'just now';
+      const mins = Math.round(secs / 60);
+      if (mins < 60) return `${mins} min ago`;
+      const hours = Math.round(mins / 60);
+      if (hours < 24) return `${hours} hr ago`;
+      return 'stale';
+    }
+    function commuteRenderLast() {
+      if (!commuteLastPayload || !commuteLastPayload.has_result) {
+        // Explain the error bucket so a stuck card has a visible cause,
+        // rather than the user staring at a permanent em dash.
+        const bucket = commuteLastPayload && commuteLastPayload.error_state;
+        const labels = {
+          idle: 'Last fetch: — (tap Route now)',
+          no_key: 'Last fetch: Google Maps API key missing.',
+          no_route: 'Last fetch: no route found. Check the addresses.',
+          network: 'Last fetch: no network.',
+          api: 'Last fetch: Google Directions rejected the request.',
+        };
+        commuteLast.textContent = labels[bucket] || labels.idle;
+        return;
+      }
+      const p = commuteLastPayload;
+      const age = commuteFormatAge(p.fetched_epoch);
+      const hint = p.hint ? ` · ${p.hint}` : '';
+      commuteLast.textContent = `Last fetch: ${p.minutes} min (${p.mode})${hint} — ${age}`;
+    }
+    setInterval(commuteRenderLast, 30 * 1000);
+    async function commuteHydrate() {
+      try {
+        const response = await fetch('/api/commute');
+        const data = await response.json();
+        if (data && data.commute) commuteLastPayload = data.commute.last;
+      } catch (_) { /* silent -- next tap will retry */ }
+      commuteRenderLast();
+    }
+    commuteHydrate();
+    async function commuteSaveAddresses() {
+      const origin = commuteOrigin.value.trim();
+      const destination = commuteDestination.value.trim();
+      if (!origin || !destination) return;
+      await fetch('/commute/addresses', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({origin, destination}),
+      });
+    }
+    commuteOrigin.addEventListener('change', commuteSaveAddresses);
+    commuteDestination.addEventListener('change', commuteSaveAddresses);
+    commuteModeRadios.forEach(radio => {
+      radio.addEventListener('change', async () => {
+        if (!radio.checked) return;
+        await fetch('/commute/mode', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: radio.value}),
+        });
+      });
+    });
+    commuteForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      // Save the address fields first so the mode fetches against
+      // whatever's currently in the boxes, not what was persisted at
+      // page load. The route POST returns the fresh snapshot.
+      await commuteSaveAddresses();
+      const selected = document.querySelector('input[name="commute-mode"]:checked');
+      const travelMode = selected ? selected.value : null;
+      commuteGo.disabled = true;
+      const originalLabel = commuteGo.textContent;
+      commuteGo.textContent = 'Routing…';
+      try {
+        const response = await fetch('/commute/route', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(travelMode ? {mode: travelMode} : {}),
+        });
+        const data = await response.json();
+        if (data && data.commute) {
+          commuteLastPayload = data.commute.last;
+        }
+        commuteRenderLast();
+        refreshStatus();
+      } finally {
+        commuteGo.disabled = false;
+        commuteGo.textContent = originalLabel;
+      }
+    });
     async function saveNametag(fields) {
       const response = await fetch('/nametag', {
         method: 'POST',

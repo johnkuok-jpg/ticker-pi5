@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube", "costco")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube", "costco", "commute")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -328,6 +328,15 @@ class Config:
     # air-quality modes resolve it to coordinates on first use, so a fresh
     # Pi can be aimed with WEATHER_ZIP=94103 instead of a coordinate pair.
     weather_zip: str = ""
+    # Commute mode: origin, destination, and default travel mode. All three
+    # are overridable from the webapp and persisted to files under
+    # ``state_dir``; these dataclass fields are just the first-boot seeds.
+    # ``google_maps_api_key`` is set exclusively from the environment (a
+    # billable secret has no place in the state dir).
+    commute_origin: str = ""
+    commute_destination: str = ""
+    commute_mode: str = "transit"
+    google_maps_api_key: str = ""
     weather_user_agent: str = "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
     timezone: str = ""
     clock_24h: bool = False
@@ -443,6 +452,21 @@ class Config:
         Costco locator API directly without a name-to-ID lookup step.
         """
         return self.state_dir / "costco_warehouses"
+
+    @property
+    def commute_origin_file(self) -> Path:
+        """Persisted commute origin address (free-text, one line)."""
+        return self.state_dir / "commute_origin"
+
+    @property
+    def commute_destination_file(self) -> Path:
+        """Persisted commute destination address (free-text, one line)."""
+        return self.state_dir / "commute_destination"
+
+    @property
+    def commute_mode_file(self) -> Path:
+        """Persisted commute travel mode (transit/driving/walking/bicycling)."""
+        return self.state_dir / "commute_mode"
 
     @property
     def youtube_playlist_file(self) -> Path:
@@ -1380,6 +1404,73 @@ class Config:
         self.set_costco_warehouses(remaining)
         return self.current_costco_warehouses()
 
+    # -- commute ------------------------------------------------------------
+
+    _VALID_COMMUTE_MODES = ("transit", "driving", "walking", "bicycling")
+    # Free-form addresses are validated by shape only: something short like
+    # 'home' would happily geocode to the wrong hemisphere, and something
+    # very long is almost certainly a paste accident. 200 chars comfortably
+    # covers 'Building name, 181 Fremont St, San Francisco, CA 94105, USA'.
+    _COMMUTE_ADDRESS_MAX_LEN = 200
+    _COMMUTE_ADDRESS_MIN_LEN = 5
+
+    def current_commute_origin(self) -> str:
+        """Persisted origin address, falling back to the dataclass seed."""
+        try:
+            raw = self.commute_origin_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            raw = ""
+        return raw or self.commute_origin
+
+    def current_commute_destination(self) -> str:
+        """Persisted destination address, falling back to the dataclass seed."""
+        try:
+            raw = self.commute_destination_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            raw = ""
+        return raw or self.commute_destination
+
+    def current_commute_mode(self) -> str:
+        """Persisted travel mode, validated. Falls back to the dataclass seed."""
+        try:
+            raw = self.commute_mode_file.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            raw = ""
+        if raw in self._VALID_COMMUTE_MODES:
+            return raw
+        seed = (self.commute_mode or "transit").strip().lower()
+        return seed if seed in self._VALID_COMMUTE_MODES else "transit"
+
+    def set_commute_addresses(self, origin: str, destination: str) -> tuple[str, str]:
+        """Persist origin + destination together.
+
+        Rejects empty / too-short / too-long values so a stray form submit
+        can't wipe the addresses (which would leave the mode stuck on the
+        no-route placeholder). Returns the persisted values.
+        """
+        cleaned_origin = origin.strip()
+        cleaned_destination = destination.strip()
+        for label, value in (("origin", cleaned_origin), ("destination", cleaned_destination)):
+            if len(value) < self._COMMUTE_ADDRESS_MIN_LEN:
+                raise ValueError(f"Commute {label} is too short")
+            if len(value) > self._COMMUTE_ADDRESS_MAX_LEN:
+                raise ValueError(f"Commute {label} is too long")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.commute_origin_file.write_text(cleaned_origin + "\n", encoding="utf-8")
+        self.commute_destination_file.write_text(cleaned_destination + "\n", encoding="utf-8")
+        return cleaned_origin, cleaned_destination
+
+    def set_commute_mode(self, mode: str) -> str:
+        """Persist the default travel mode. Returns the persisted value."""
+        cleaned = (mode or "").strip().lower()
+        if cleaned not in self._VALID_COMMUTE_MODES:
+            raise ValueError(
+                f"Commute mode must be one of {self._VALID_COMMUTE_MODES}, got {mode!r}"
+            )
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.commute_mode_file.write_text(cleaned + "\n", encoding="utf-8")
+        return cleaned
+
     def current_stocks_lock_symbol(self) -> str:
         """Symbol the stocks card is pinned to, or empty for the normal rotation."""
         try:
@@ -1917,6 +2008,10 @@ def load_config(env_file: Path | None = None) -> Config:
         weather_lat=os.getenv("WEATHER_LAT", ""),
         weather_lon=os.getenv("WEATHER_LON", ""),
         weather_zip=os.getenv("WEATHER_ZIP", "").strip(),
+        commute_origin=os.getenv("COMMUTE_HOME", "").strip(),
+        commute_destination=os.getenv("COMMUTE_WORK", "").strip(),
+        commute_mode=(os.getenv("COMMUTE_MODE", "transit").strip().lower() or "transit"),
+        google_maps_api_key=os.getenv("GOOGLE_MAPS_API_KEY", "").strip(),
         weather_user_agent=os.getenv(
             "WEATHER_USER_AGENT", "ticker-pi5 (github.com/johnkuok-jpg/ticker-pi5)"
         ),

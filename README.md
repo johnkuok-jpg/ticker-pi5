@@ -153,6 +153,7 @@ The web control panel toggles modes on and off individually; the current selecti
 | `worldclock` | One large home dial plus two secondary dials, city labels underneath. |
 | `net` | The ticker's own network: SSID, IPv4 address in 6×12 type, and a four-bar signal reading. Also the screen the Wi-Fi fallback forces on when setup is needed. |
 | `youtube` | Actual video playback in the left 57 columns, with scrolling title/channel/views on the right. Sourced from YouTube's public global music chart via `yt-dlp` (no API key). |
+| `commute` | Door-to-door minutes from home to work via Google Maps Directions API. Picks between transit, driving, walking, and biking from the web app. Deliberately tap-to-update: the panel holds the last fetched number until you tap Route now again, so API spend stays gated on intent rather than a background timer. Requires `GOOGLE_MAPS_API_KEY`. |
 
 ### Add a mode
 
