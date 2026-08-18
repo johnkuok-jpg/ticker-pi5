@@ -748,7 +748,26 @@
     /* Set while the user is dragging, so a poll landing mid-drag cannot yank the
        slider out from under their thumb. */
     let dragging = false;
+    /* Status polling overlaps by construction: setInterval fires refreshStatus
+       every 10s, seventeen event handlers also call it directly, and
+       /api/status is not cheap (it stats a dozen state files and checks
+       Spotify auth). So several responses are often in flight at once, and
+       they can resolve out of order. Two guards keep that from corrupting
+       the UI, each covering a different failure:
+
+       statusSeq / statusApplied drop any response older than one that has
+       already painted, so an overtaken poll cannot roll the panel backwards.
+
+       modeAtRequest (below) covers the one that actually bit: a poll issued
+       *before* the user taps a mode button can resolve *after* it, carrying
+       the pre-tap mode. */
+    let statusSeq = 0;
+    let statusApplied = 0;
     async function refreshStatus() {
+      const seq = ++statusSeq;
+      /* Snapshot the mode as of *request* time, so that when the response
+         lands we can tell whether the user changed modes while we waited. */
+      const modeAtRequest = document.body.dataset.mode;
       /* A brief web/API outage happens whenever the ticker Pi is rebooting or
          switching networks. Without a handler, every 10s poll would surface as
          an unhandled promise rejection in devtools while the last-good UI
@@ -764,6 +783,11 @@
         renderer.className = 'renderer offline';
         return;
       }
+      /* A newer poll has already painted the UI, so this whole response is
+         stale -- not just its mode. Returning here keeps brightness, the
+         watchlist, and every other field from flickering backwards too. */
+      if (seq < statusApplied) return;
+      statusApplied = seq;
       /* The readout is the primary "what's on the panel" indicator. The
          status paragraph now doubles as a fallback for screen readers and
          for the older "Current mode" hint, so we write both. */
@@ -786,8 +810,18 @@
       /* Keep the visual mode class in step with what the panel is actually
          showing, in case another phone switched modes mid-session.
          syncModeSections() runs off a MutationObserver on this attribute, so
-         the settings cards follow without an explicit call here. */
-      if (typeof data.current_mode === 'string' && document.body.dataset.mode !== data.current_mode) {
+         the settings cards follow without an explicit call here.
+
+         Skipped when the mode changed locally while this request was in
+         flight. The mode-button handler flips data-mode optimistically before
+         POSTing /mode/<name>, so a poll that left before the tap comes back
+         carrying the mode the user just navigated *away from*. Writing that
+         back is what made the panel appear to randomly jump to weather --
+         weather being DEFAULT_MODE and therefore the most common pre-tap
+         value -- while the user was editing a different mode's settings. The
+         next poll carries the new mode and this branch resumes normally. */
+      const modeChangedLocally = document.body.dataset.mode !== modeAtRequest;
+      if (!modeChangedLocally && typeof data.current_mode === 'string' && document.body.dataset.mode !== data.current_mode) {
         document.body.dataset.mode = data.current_mode;
       }
       /* Keep the watchlist in step if it was edited from another phone. */
