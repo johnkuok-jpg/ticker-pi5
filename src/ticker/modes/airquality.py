@@ -1,10 +1,10 @@
 # MIT License — Copyright (c) 2026 John Kuok
 """US air quality, UV index, and pollen for the weather location.
 
-Three panels rotate through one mode so the AQI card doesn't lose its identity
-just because UV and pollen were bolted on. Each panel keeps the same left-hand
-hero column and right-hand label + trend layout that the original AQI card set,
-so the eye already knows where to look when the slide swaps.
+All three metrics live on one static panel split into three columns so a
+glance shows every reading and its category at once. Rotation was tried in
+an earlier revision and lost - a user watching for "is it safe to run right
+now" doesn't want to wait six seconds for the UV slide to come back.
 
 - AQI + UV both come from Open-Meteo's air-quality endpoint (one call, no key).
   Open-Meteo returns the US EPA index directly and hourly, so the panel doesn't
@@ -14,8 +14,8 @@ so the eye already knows where to look when the slide swaps.
 - Pollen for the US comes from Google's Pollen API. Open-Meteo carries pollen
   too, but only for Europe (CAMS coverage). Google's key is the same
   GOOGLE_MAPS_API_KEY the commute mode already uses -- just enable Pollen API
-  on the same Cloud project. If the key is missing, the pollen panel drops out
-  of the rotation instead of showing an error slide the user can't fix.
+  on the same Cloud project. If the key is missing, the pollen column collapses
+  to "--" instead of showing an error the user can't fix.
 
 Categories, names and colours for AQI are the EPA's own, from the AQI Technical
 Assistance Document (May 2026):
@@ -56,18 +56,20 @@ LOADING = (130, 180, 255)
 TREND_HOURS = 24
 GOOD_LIMIT = 50
 
-# The rightmost column sits against the panel's bezel, where a glyph edge or a
-# chart's last bar is easy to lose. Every mode leaves it dark.
+# The rightmost column sits against the panel's bezel, where a glyph edge is
+# easy to lose. Every mode leaves it dark.
 RIGHT_INSET = 1
-# Two HUGE digits and three LARGE digits are both 24px wide, so the hero column
-# can be fixed. A pinned column keeps the label, PM2.5 row and chart from
-# sliding sideways when the reading crosses 10 or 100.
-HERO_WIDTH = 24
-COLUMN_X = HERO_WIDTH + 5
 
-# Six seconds per panel is long enough to actually read the number and its
-# trailing detail, short enough that the rotation feels responsive when a user
-# taps AQI wanting a specific reading. Matches the pacing weather uses.
+# 128px canvas / 3 cells = 42.67, so cells are 43 / 43 / 42 and share a hairline
+# separator that sits INSIDE the right-hand cell. Fixed widths mean AQI 88 and
+# UV 6 don't jitter sideways when one climbs to three digits.
+CELL_WIDTH = 128 // 3  # 42
+CELL_1_X = 0
+CELL_2_X = CELL_WIDTH
+CELL_3_X = CELL_WIDTH * 2
+
+# Kept as a module constant so external callers that historically read the
+# rotation cadence keep working. Not used inside the module anymore.
 SLIDE_SECONDS = 6
 
 # The official AQI palette, in the EPA's standard RGB values.
@@ -334,13 +336,11 @@ class AirQualityMode(Mode):
     # -- panel selection -------------------------------------------------------
 
     def _panels(self) -> list[str]:
-        """Which slides are eligible right now.
+        """Which metrics have data right now.
 
-        AQI is always in the rotation once we have a reading. UV joins if the
-        response carried a uv_index (Open-Meteo returns it globally, but a
-        network failure or a stale cache can leave uv unset). Pollen joins if
-        the Pollen API key is configured -- with no key we hide the slide
-        entirely rather than show a persistent error card the user can't fix.
+        The panel is static (three cells shown at once) but the list still
+        drives the loading state - if none are ready we show LOADING, and
+        callers/tests can introspect what data has come back.
         """
         panels: list[str] = []
         if self.reading is not None:
@@ -376,146 +376,85 @@ class AirQualityMode(Mode):
             canvas.text_centered(18, "LOADING", LOADING, SMALL)
             return
 
-        ticks_per_slide = max(1, int(SLIDE_SECONDS * self.config.fps))
-        slide = panels[(tick // ticks_per_slide) % len(panels)]
+        self._render_combined(canvas)
 
-        if slide == "aqi":
-            self._render_aqi(canvas)
-        elif slide == "uv":
-            self._render_uv(canvas)
-        elif slide == "pollen":
-            self._render_pollen(canvas)
+    def _render_combined(self, canvas: Canvas) -> None:
+        """Three-cell layout: AQI | UV | POLLEN, static, always all three.
 
-    def _render_aqi(self, canvas: Canvas) -> None:
-        assert self.reading is not None
-        reading = self.reading
-        category, color = classify_aqi(reading.aqi)
+        Per cell (top to bottom):
+          - dim label ("AQI" / "UV" / "POL") centred at y=1
+          - LARGE value in the metric's category colour, centred at y=10
+          - SMALL category name ("MODERATE" / "HIGH" / etc), category
+            colour, centred at y=23, `fit()`-truncated to cell width
 
-        value_text = str(reading.aqi)
-        value_font = HUGE if len(value_text) <= 2 else LARGE
-        value_y = 4 if value_font == HUGE else 9
-        value_x = max(0, (HERO_WIDTH - canvas.text_bold_width(value_text, value_font)) // 2)
-        canvas.text_bold(value_x, value_y, value_text, color, value_font)
+        A cell whose data isn't loaded yet still draws label + "--" so the
+        column doesn't collapse when one API is slow.
+        """
+        # Faint separators between cells - not a full divider, just enough to
+        # cue the eye that these are three distinct readings, not one row of
+        # numbers.
+        for x in (CELL_2_X - 1, CELL_3_X - 1):
+            for y in range(3, 29):
+                canvas.pixel(x, y, (30, 34, 46))
 
-        column_x = COLUMN_X
-        column = canvas.width - column_x - RIGHT_INSET
-
-        label = canvas.fit("AQI", column, SMALL)
-        canvas.text(column_x, 1, label, DIM, SMALL)
-        name_x = column_x + canvas.text_width("AQI ", SMALL)
-        canvas.text(name_x, 1, canvas.fit(category, canvas.width - name_x - RIGHT_INSET, SMALL), color, SMALL)
-
-        if reading.pm2_5 is not None:
-            detail = f"PM2.5 {reading.pm2_5:.1f}"
+        # AQI cell (left)
+        if self.reading is not None:
+            aqi_cat, aqi_col = classify_aqi(self.reading.aqi)
+            self._draw_cell(canvas, CELL_1_X, CELL_WIDTH - 1, "AQI", str(self.reading.aqi), aqi_col, aqi_cat)
         else:
-            detail = "PM2.5 --"
-        canvas.text(column_x, 11, canvas.fit(detail, column, SMALL), DIM, SMALL)
+            self._draw_cell(canvas, CELL_1_X, CELL_WIDTH - 1, "AQI", "--", DIM, "...")
 
-        if len(reading.trend) >= 2:
-            fill = tuple(round(channel * 0.30) for channel in color)
-            canvas.area_chart(
-                column_x,
-                21,
-                column,
-                11,
-                reading.trend,
-                color,
-                fill,  # type: ignore[arg-type]
-                baseline=GOOD_LIMIT,
-                baseline_color=DIM,
-            )
+        # UV cell (middle). UV is almost always a single-digit-plus-tenth;
+        # round to a whole number - matches every UV app and doesn't force
+        # the .5 to hide behind a decimal at this pixel size. Classify the
+        # ROUNDED value, not the raw float, so "2 MODERATE" (which is the
+        # yellow band's start) never renders next to a UV that would round
+        # to 2 - the number and its category must agree at a glance.
+        if self.uv is not None:
+            uv_display = int(round(self.uv.now))
+            uv_cat, uv_col = classify_uv(float(uv_display))
+            self._draw_cell(canvas, CELL_2_X, CELL_WIDTH - 1, "UV", str(uv_display), uv_col, uv_cat)
+        else:
+            self._draw_cell(canvas, CELL_2_X, CELL_WIDTH - 1, "UV", "--", DIM, "...")
 
-    def _render_uv(self, canvas: Canvas) -> None:
-        assert self.uv is not None
-        uv = self.uv
-        category, color = classify_uv(uv.now)
+        # Pollen cell (right). Overall UPI (max of tree/grass/weed) - the same
+        # "worst wins" logic AQI uses for pollutants. Right cell has one fewer
+        # pixel of usable width because of RIGHT_INSET.
+        if self.pollen is not None:
+            upi = self.pollen.overall()
+            pol_cat, pol_col = classify_pollen(upi)
+            self._draw_cell(canvas, CELL_3_X, CELL_WIDTH - RIGHT_INSET, "POL", str(upi), pol_col, pol_cat)
+        else:
+            # No pollen data means either the API key is missing or the
+            # request is still in-flight. Either way "--" is honest.
+            self._draw_cell(canvas, CELL_3_X, CELL_WIDTH - RIGHT_INSET, "POL", "--", DIM, "...")
 
-        # UV is a single-digit-plus-tenth reading almost always. A whole-number
-        # hero reads faster and matches the rounding on every UV app; a value
-        # of 7.6 hides an entire category boundary in the ".6" that no one
-        # squints at on a 32px panel. Round.
-        value_text = str(int(round(uv.now)))
-        value_font = HUGE
-        value_y = 4
-        value_x = max(0, (HERO_WIDTH - canvas.text_bold_width(value_text, value_font)) // 2)
-        canvas.text_bold(value_x, value_y, value_text, color, value_font)
+    def _draw_cell(
+        self,
+        canvas: Canvas,
+        x0: int,
+        width: int,
+        label: str,
+        value: str,
+        color: tuple[int, int, int],
+        category: str,
+    ) -> None:
+        """Paint one AQI/UV/POL cell inside its horizontal slice.
 
-        column_x = COLUMN_X
-        column = canvas.width - column_x - RIGHT_INSET
-
-        label = "UV"
-        canvas.text(column_x, 1, label, DIM, SMALL)
-        name_x = column_x + canvas.text_width("UV ", SMALL)
-        canvas.text(name_x, 1, canvas.fit(category, canvas.width - name_x - RIGHT_INSET, SMALL), color, SMALL)
-
-        # Peak line: today's max in the past 24h so a morning glance shows how
-        # the number is trending toward the day's ceiling, not just where it
-        # sits right now.
-        peak = max(uv.trend) if uv.trend else uv.now
-        detail = f"PEAK {peak:.0f}"
-        canvas.text(column_x, 11, canvas.fit(detail, column, SMALL), DIM, SMALL)
-
-        if len(uv.trend) >= 2:
-            fill = tuple(round(channel * 0.30) for channel in color)
-            canvas.area_chart(
-                column_x,
-                21,
-                column,
-                11,
-                uv.trend,
-                color,
-                fill,  # type: ignore[arg-type]
-                # 3 is the WHO's "protection needed" threshold - the same
-                # meaning the AQI's 50 baseline has, one line away from
-                # "fine" into "act".
-                baseline=3.0,
-                baseline_color=DIM,
-            )
-
-    def _render_pollen(self, canvas: Canvas) -> None:
-        assert self.pollen is not None
-        pollen = self.pollen
-        upi = pollen.overall()
-        category, color = classify_pollen(upi)
-
-        value_text = str(upi)
-        value_font = HUGE
-        value_y = 4
-        value_x = max(0, (HERO_WIDTH - canvas.text_bold_width(value_text, value_font)) // 2)
-        canvas.text_bold(value_x, value_y, value_text, color, value_font)
-
-        column_x = COLUMN_X
-        column = canvas.width - column_x - RIGHT_INSET
-
-        canvas.text(column_x, 1, "POLLEN", DIM, SMALL)
-        name_x = column_x + canvas.text_width("POLLEN ", SMALL)
-        # Category won't fit next to "POLLEN" for the long band names on this
-        # column, so drop the category on line 2 instead.
-        canvas.text(column_x, 11, canvas.fit(category, column, SMALL), color, SMALL)
-
-        # Per-type numbers on the third line, in the plant order Google reports
-        # (tree, grass, weed). "--" for any species the API didn't return.
-        def _cell(value: int | None) -> str:
-            return "-" if value is None else str(value)
-
-        detail = f"T{_cell(pollen.tree)} G{_cell(pollen.grass)} W{_cell(pollen.weed)}"
-        # Highlight the dominant plant by drawing its cell in the category
-        # colour. Anything else stays dim so the eye lands on the driver.
-        dominant = pollen.dominant()
-        cells = [
-            ("T", pollen.tree, "TREE"),
-            ("G", pollen.grass, "GRASS"),
-            ("W", pollen.weed, "WEED"),
-        ]
-        cx = column_x
-        for i, (prefix, value, plant_name) in enumerate(cells):
-            token = f"{prefix}{_cell(value)}"
-            if i > 0:
-                canvas.text(cx, 22, " ", DIM, SMALL)
-                cx += canvas.text_width(" ", SMALL)
-            cell_color = color if plant_name == dominant else DIM
-            canvas.text(cx, 22, token, cell_color, SMALL)
-            cx += canvas.text_width(token, SMALL)
+        Centres every element to `width` so a 1- vs 2-digit value doesn't
+        push the layout around. Category is `fit()`-truncated because
+        "UNHEALTHY" is 9 characters and the cell only holds 8 at SMALL.
+        """
+        # Label
+        lw = canvas.text_width(label, SMALL)
+        canvas.text(x0 + max(0, (width - lw) // 2), 1, label, DIM, SMALL)
+        # Big value in category colour
+        vw = canvas.text_bold_width(value, LARGE)
+        canvas.text_bold(x0 + max(0, (width - vw) // 2), 10, value, color, LARGE)
+        # Category, truncated to cell width
+        cat_fit = canvas.fit(category, width, SMALL) if category else ""
+        cw = canvas.text_width(cat_fit, SMALL)
+        canvas.text(x0 + max(0, (width - cw) // 2), 23, cat_fit, color, SMALL)
 
 
 def _extract_pollen(payload: dict) -> PollenReading:
