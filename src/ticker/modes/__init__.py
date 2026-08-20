@@ -18,6 +18,7 @@ from ticker.modes.muni import MuniMode
 from ticker.modes.nametag import NametagMode
 from ticker.modes.network import NetworkMode
 from ticker.modes.news import NewsMode
+from ticker.modes.pihealth import PiHealthMode
 from ticker.modes.pokemon import PokemonMode
 from ticker.modes.spotify import SpotifyMode
 from ticker.modes.stocks import StocksMode
@@ -45,6 +46,7 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "pokemon": PokemonMode,
     "focus": FocusMode,
     "net": NetworkMode,
+    "pihealth": PiHealthMode,
     "worldclock": WorldClockMode,
     "youtube": YouTubeMode,
 }
@@ -84,6 +86,7 @@ __all__ = [
     "BikesMode",
     "NametagMode",
     "NetworkMode",
+    "PiHealthMode",
     "PokemonMode",
     "FocusMode",
     "SpotifyMode",

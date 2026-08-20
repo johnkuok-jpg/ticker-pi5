@@ -40,6 +40,7 @@ MODE_LABELS = {
     "pokemon": "Pok\u00e9mon",
     "focus": "Focus",
     "net": "Wi-Fi",
+    "pihealth": "Pi Health",
     "worldclock": "World Clock",
     "youtube": "YouTube",
 }

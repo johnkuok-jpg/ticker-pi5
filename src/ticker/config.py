@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "worldclock", "youtube", "costco", "commute")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "pihealth", "worldclock", "youtube", "costco", "commute")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
