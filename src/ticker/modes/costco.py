@@ -6,28 +6,41 @@ endpoint (``www.costco.com/AjaxWarehouseBrowseLookupView``) sits behind
 Akamai bot defense and returns HTTP 403/429 from every non-browser client
 the author has tried, including a home Pi. Every gas tracker in the wild
 (gastrak, costcogaspricelive.com, costcogasprices.com) has moved to their
-own crawler + cache; we just piggyback on the biggest one.
+own crawler + cache; we just piggyback on one of them.
 
-**What we hit.** ``www.costcogasprices.com`` is a Next.js SSR site whose
-per-station pages already contain the current prices in the initial
-HTML -- no JS required -- inside a single ``og:description`` meta tag
-that reads::
+**What we hit.** ``aruljohn.com/gas/{state}`` renders a plain HTML table
+with every Costco warehouse in a state on one page, refreshed daily. One
+row per warehouse::
 
-    Current Costco gas prices at 1600 El Camino Real, SOUTH SAN
-    Francisco. Regular: $5.30, Premium: $5.74, Diesel: N/A.
-    Updated 8/14/2026, 7:28:22 AM.
+    <tr>
+      <td>
+        <div class="citystate">Concord</div>
+        <div class="address">2400 MONUMENT BLVD<br>CONCORD, CA 94520-3105</div>
+      </td>
+      <td class="dlr ...">5.09</td>   <!-- regular -->
+      <td class="dlr ...">5.59</td>   <!-- premium -->
+      <td class="dlr ...">--</td>     <!-- diesel, -- when the station has none -->
+    </tr>
 
-One regex against that string gives us the address, city, regular,
-premium, and diesel prices for a warehouse. We fetch one URL per
-configured warehouse; three warehouses at a one-hour cache means three
-requests per hour -- well below any polite-poll threshold.
+We parse the table with stdlib ``html.parser``, match rows to warehouses
+by street address (which is embedded in the address div), and return one
+``WarehousePrices`` per configured ID. One request per state per hour;
+for an all-California fleet that is a single HTTP call an hour.
+
+**Prior source.** The module previously called
+``costcogasprices.com/station/us/{slug}`` per warehouse. That site's
+Vercel deployment was disabled on 2026-08-21 (HTTP 402
+``DEPLOYMENT_DISABLED``) and every fetch now fails; ``aruljohn.com`` has
+been running the same table since 2022 with no monetisation pressure to
+take it down.
 
 **How warehouse IDs work.** The user's warehouse IDs (``475`` = SSF El
 Camino, ``422`` = SSF S Airport, ...) are Costco's internal ``stlocID``
-values; costcogasprices.com routes by street-address slug instead. The
-``WAREHOUSE_SLUGS`` table below maps every Bay Area warehouse ID to its
-slug (harvested once from the site's California listing). Adding a new
-region == extending the table; nothing else changes.
+values; ``aruljohn.com`` uses street addresses. The ``WAREHOUSE_SLUGS``
+table below maps every Bay Area warehouse ID to its street key (the
+first line of its address, uppercased) and a short display name. Adding
+a new region == extending the table plus (rarely) adding a state to
+``_states_for_ids``.
 
 Layout is a two-warehouse rotation (well, up to three) at ~5 s per slide.
 The hand-drawn Costco Gasoline wordmark takes the left half of the card,
@@ -57,72 +70,77 @@ competing with the price row for the same horizontal band.
 from __future__ import annotations
 
 import logging
-import re
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from html.parser import HTMLParser
 
 from ticker.canvas import MEDIUM, SMALL, Canvas
 from ticker.modes.base import Mode
 
 LOGGER = logging.getLogger(__name__)
 
-# CostcoGasPrices.com serves plain SSR HTML at ``/station/us/{slug}``.
-STATION_URL_TEMPLATE = "https://www.costcogasprices.com/station/us/{slug}"
+# ArulJohn.com serves one plain-HTML table per state at ``/gas/{state}``.
+STATE_URL_TEMPLATE = "https://aruljohn.com/gas/{state}"
 
 REQUEST_TIMEOUT = 10.0
-# A realistic desktop Chrome UA. costcogasprices.com is not aggressive
-# about UA policing, but keeping the shape realistic reduces the odds a
-# future CDN change locks us out.
+# A realistic desktop Chrome UA. ArulJohn's site is a personal Cloudflare-
+# fronted page with no visible bot policing, but a browser-shaped UA is
+# cheap insurance against a future CDN rule change.
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/128.0.0.0 Safari/537.36"
 )
 
-# Costco warehouse ID -> (station-slug, short-name).
+# Costco warehouse ID -> (street-key, short-name, state).
 #
-# The slug is the last path segment on costcogasprices.com. Short-names
-# are hand-picked to fit the ~12-char panel window at SMALL 6x8 -- the
-# source's city field is often ``SOUTH SAN Francisco``, which title-cases
-# to a 19-char string that clips ugly. Where two warehouses share a
-# city, we disambiguate by neighborhood/street rather than by ID number
-# so the label still reads as a place.
+# ``street-key`` is the first line of the warehouse's street address in the
+# ArulJohn table, uppercased. That's what we match table rows on. Match
+# is exact after uppercasing; ArulJohn is consistent enough that fuzzy
+# matching is not needed.
 #
-# Harvested from the site's California listing. Adding a warehouse is a
-# one-line edit here plus (optionally) a matching preset in
-# templates/index.html.
-WAREHOUSE_SLUGS: dict[str, tuple[str, str]] = {
-    "1002": ("2201-verne-roberts-cir", "Antioch"),
-    "1662": ("5151-heidorn-ranch-rd", "Brentwood"),
-    "663": ("2400-monument-blvd", "Concord"),
-    "21": ("3150-fostoria-way", "Danville"),
-    "453": ("5101-business-center-dr", "Fairfield"),
-    "778": ("43621-pacific-commons-blvd", "Fremont"),
-    "760": ("7251-camino-arroyo", "Gilroy"),
-    "823": ("22330-hathaway-ave", "Hayward"),         # Hathaway
-    "1061": ("28505-hesperian-blvd", "Hesperian"),    # Hayward (Hesperian)
-    "146": ("2800-independence-dr", "Livermore"),
-    "1679": ("280-riversound-way", "Napa"),
-    "1660": ("350-newpark-mall", "Newark"),
-    "1341": ("7200-johnson-drive", "Pleasanton"),
-    "1042": ("2300-middlefield-rd", "Redwood City"),
-    "482": ("4801-central-avenue", "Richmond"),
-    "659": ("5901-redwood-dr", "Rohnert Park"),
-    "1004": ("1709-automation-pkwy", "SJ Automation"),
-    "148": ("2201-senter-rd", "SJ Senter"),
-    "848": ("2376-s-evergreen-loop", "SJ Evergreen"),
-    "1267": ("6898-raleigh-road", "SJ Raleigh"),
-    "118": ("1900-davis-st", "San Leandro"),
-    "129": ("1601-coleman-ave", "Santa Clara"),
-    "149": ("220-sylvania-ave", "Santa Cruz"),
-    "41": ("1900-santa-rosa-ave", "Santa Rosa"),
-    "475": ("1600-el-camino-real", "El Camino"),      # South SF
-    "422": ("451-s-airport-blvd", "S Airport"),       # South SF
-    "423": ("150-lawrence-station-rd", "Sunnyvale"),
-    "694": ("1051-hume-way", "Vacaville"),
-    "132": ("198-plaza-dr", "Vallejo"),
+# ``short-name`` is what appears on the panel -- hand-picked to fit the
+# ~12-char SMALL window. The source's ``citystate`` field is often
+# ``SOUTH SAN Francisco``, which title-cases to a 19-char string that
+# clips ugly. Where two warehouses share a city, we disambiguate by
+# neighborhood/street rather than by ID number so the label still reads
+# as a place.
+#
+# ``state`` is the two-letter USPS code used to construct the ArulJohn
+# URL. All Bay Area warehouses are ``"ca"``; the field exists so
+# out-of-state warehouses can be added without teaching the fetcher.
+WAREHOUSE_SLUGS: dict[str, tuple[str, str, str]] = {
+    "1002": ("2201 VERNE ROBERTS CIR", "Antioch", "ca"),
+    "1662": ("5151 HEIDORN RANCH RD", "Brentwood", "ca"),
+    "663":  ("2400 MONUMENT BLVD", "Concord", "ca"),
+    "21":   ("3150 FOSTORIA WAY", "Danville", "ca"),
+    "453":  ("5101 BUSINESS CENTER DR", "Fairfield", "ca"),
+    "778":  ("43621 PACIFIC COMMONS BLVD", "Fremont", "ca"),
+    "760":  ("7251 CAMINO ARROYO", "Gilroy", "ca"),
+    "823":  ("22330 HATHAWAY AVE", "Hayward", "ca"),         # Hathaway
+    "1061": ("28505 HESPERIAN BLVD", "Hesperian", "ca"),     # Hayward (Hesperian)
+    "146":  ("2800 INDEPENDENCE DR", "Livermore", "ca"),
+    "1679": ("280 RIVERSOUND WAY", "Napa", "ca"),
+    "1660": ("350 NEWPARK MALL", "Newark", "ca"),
+    "1341": ("7200 JOHNSON DRIVE", "Pleasanton", "ca"),
+    "1042": ("2300 MIDDLEFIELD RD", "Redwood City", "ca"),
+    "482":  ("4801 CENTRAL AVENUE", "Richmond", "ca"),
+    "659":  ("5901 REDWOOD DR", "Rohnert Park", "ca"),
+    "1004": ("1709 AUTOMATION PKWY", "SJ Automation", "ca"),
+    "148":  ("2201 SENTER RD", "SJ Senter", "ca"),
+    "848":  ("2376 S EVERGREEN LOOP", "SJ Evergreen", "ca"),
+    "1267": ("6898 RALEIGH ROAD", "SJ Raleigh", "ca"),
+    "118":  ("1900 DAVIS ST", "San Leandro", "ca"),
+    "129":  ("1601 COLEMAN AVE", "Santa Clara", "ca"),
+    "149":  ("220 SYLVANIA AVE", "Santa Cruz", "ca"),
+    "41":   ("1900 SANTA ROSA AVE", "Santa Rosa", "ca"),
+    "475":  ("1600 EL CAMINO REAL", "El Camino", "ca"),      # South SF
+    "422":  ("451 S AIRPORT BLVD", "S Airport", "ca"),       # South SF
+    "423":  ("150 LAWRENCE STATION RD", "Sunnyvale", "ca"),
+    "694":  ("1051 HUME WAY", "Vacaville", "ca"),
+    "132":  ("198 PLAZA DR", "Vallejo", "ca"),
 }
 
 # Panel colors. Costco red is the exact PMS 185 hex the brand book uses;
@@ -307,10 +325,10 @@ class WarehousePrices:
         return bool(self.regular or self.premium or self.diesel)
 
 
-def _build_station_request(slug: str) -> urllib.request.Request:
-    """Build the SSR-page GET for one warehouse."""
+def _build_state_request(state: str) -> urllib.request.Request:
+    """Build the GET for one state's ArulJohn table page."""
     return urllib.request.Request(
-        STATION_URL_TEMPLATE.format(slug=slug),
+        STATE_URL_TEMPLATE.format(state=state.lower()),
         headers={
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
@@ -319,42 +337,113 @@ def _build_station_request(slug: str) -> urllib.request.Request:
     )
 
 
-# One regex against the ``og:description`` meta tag pulls address, city,
-# and all three prices at once. Diesel comes through as ``$5.29`` when
-# available or literal ``N/A`` when the station doesn't sell diesel.
-_OG_PATTERN = re.compile(
-    r'<meta\s+property="og:description"\s+content="'
-    r'Current Costco gas prices at ([^,]+),\s*([^\.]+?)\.\s*'
-    r'Regular:\s*(\$[\d.]+|N/A),\s*'
-    r'Premium:\s*(\$[\d.]+|N/A),\s*'
-    r'Diesel:\s*(\$[\d.]+|N/A)\.',
-    re.IGNORECASE,
-)
+class _ArulJohnTableParser(HTMLParser):
+    """Stream-parse one ArulJohn state page into ``{street_key_upper: prices}``.
 
+    ArulJohn serves a single HTML table whose rows repeat the same shape::
 
-def _parse_station_page(warehouse_id: str, html: str) -> WarehousePrices | None:
-    """Extract a ``WarehousePrices`` from one station-page HTML.
+        <tr>
+          <td>
+            <div class="citystate">Concord</div>
+            <div class="address">2400 MONUMENT BLVD<br>CONCORD, CA 94520-3105</div>
+          </td>
+          <td class="dlr ...">5.09</td>   <!-- regular -->
+          <td class="dlr ...">5.59</td>   <!-- premium -->
+          <td class="dlr ...">--</td>     <!-- diesel; -- when unsold -->
+        </tr>
 
-    Returns ``None`` when the og:description tag doesn't match -- the
-    site has never rendered a station page without one but a schema
-    change would show up here and we'd rather skip that warehouse than
-    render garbage.
+    We collect the text of each ``div.address`` and the text of every
+    ``td.dlr`` in order. Row segmentation is implicit: the address divs
+    and the dlr cells arrive in matched groups (one address followed by
+    three dlrs), so the parser accumulates them into flat lists and pairs
+    them up at the end. That is more forgiving of stray whitespace nodes
+    than trying to track ``<tr>`` boundaries, and ArulJohn's markup has
+    been stable enough since 2022 that the shape is safe to assume.
+
+    The street key is the first line of the address div's text (before
+    the ``<br>``), uppercased. That's what ``WAREHOUSE_SLUGS`` stores.
     """
-    match = _OG_PATTERN.search(html)
-    if not match:
-        return None
-    address, city, regular, premium, diesel = (part.strip() for part in match.groups())
-    entry = WAREHOUSE_SLUGS.get(warehouse_id)
-    short_name = entry[1] if entry else ""
-    return WarehousePrices(
-        warehouse_id=warehouse_id,
-        city=city,
-        location_name=address,
-        regular="" if regular.upper() == "N/A" else regular.lstrip("$"),
-        premium="" if premium.upper() == "N/A" else premium.lstrip("$"),
-        diesel="" if diesel.upper() == "N/A" else diesel.lstrip("$"),
-        short_name=short_name,
-    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        # ``_capture`` is the current stream we are appending character
+        # data to -- one of ``"address"`` or ``"dlr"`` or ``None``. The
+        # address div sometimes contains a ``<br>`` which we translate to
+        # a literal newline so the street/city split is unambiguous.
+        self._capture: str | None = None
+        self._address_chunks: list[str] = []
+        self._dlr_chunks: list[str] = []
+        self.addresses: list[str] = []
+        self.dlrs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {name: (value or "") for name, value in attrs}
+        classes = attr_map.get("class", "").split()
+        if tag == "div" and "address" in classes:
+            self._capture = "address"
+            self._address_chunks = []
+        elif tag == "td" and "dlr" in classes:
+            self._capture = "dlr"
+            self._dlr_chunks = []
+        elif tag == "br" and self._capture == "address":
+            # Preserve the street/city split as a newline so the caller
+            # can grab the first line as the street key without having
+            # to know where the city starts.
+            self._address_chunks.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self._capture == "address":
+            self.addresses.append("".join(self._address_chunks).strip())
+            self._capture = None
+        elif tag == "td" and self._capture == "dlr":
+            self.dlrs.append("".join(self._dlr_chunks).strip())
+            self._capture = None
+
+    def handle_data(self, data: str) -> None:
+        if self._capture == "address":
+            self._address_chunks.append(data)
+        elif self._capture == "dlr":
+            self._dlr_chunks.append(data)
+
+
+def _parse_state_page(html: str) -> dict[str, tuple[str, str, str]]:
+    """Return ``{street_key_upper: (regular, premium, diesel)}`` for a state page.
+
+    Missing prices (``--``) come through as empty strings. Rows whose
+    dlrs don't align 3-to-1 with an address are skipped rather than
+    silently miscounted -- ArulJohn's shape is stable, so a misalignment
+    means the page has changed and we'd rather return nothing than
+    render a wrong price against the wrong warehouse.
+    """
+    parser = _ArulJohnTableParser()
+    parser.feed(html)
+    parser.close()
+    if len(parser.dlrs) != len(parser.addresses) * 3:
+        LOGGER.warning(
+            "costco: aruljohn table shape drifted -- addresses=%d dlrs=%d",
+            len(parser.addresses), len(parser.dlrs),
+        )
+        return {}
+    prices: dict[str, tuple[str, str, str]] = {}
+    for i, address in enumerate(parser.addresses):
+        # First line before the newline we injected for ``<br>``. Handles
+        # single-line addresses too (no newline == whole string).
+        street = address.split("\n", 1)[0].strip().upper()
+        if not street:
+            continue
+        regular = _clean_price(parser.dlrs[i * 3])
+        premium = _clean_price(parser.dlrs[i * 3 + 1])
+        diesel = _clean_price(parser.dlrs[i * 3 + 2])
+        prices[street] = (regular, premium, diesel)
+    return prices
+
+
+def _clean_price(cell: str) -> str:
+    """Normalise one ArulJohn price cell. ``--`` -> ``""``, ``5.09`` stays."""
+    text = cell.strip()
+    if not text or text == "--":
+        return ""
+    return text
 
 
 def _format_price(value: str) -> str:
@@ -412,48 +501,35 @@ class CostcoMode(Mode):
 
     # -- data ---------------------------------------------------------------
 
-    def _fetch_one(
-        self, warehouse_id: str
-    ) -> tuple[WarehousePrices | None, str]:
-        """Fetch one warehouse's snapshot from costcogasprices.com.
+    def _fetch_state(
+        self, state: str
+    ) -> tuple[dict[str, tuple[str, str, str]] | None, str]:
+        """Fetch one state's ArulJohn table.
 
-        Returns ``(snapshot, outcome)`` where ``outcome`` is one of
-        ``"ok"``, ``"unknown"``, ``"network"``, ``"parse"``. The caller
-        rolls the per-warehouse outcomes up into ``_error_state`` so the
-        placeholder card can surface *why* the card is stuck instead of a
-        generic "fetching".
+        Returns ``(prices_by_street, outcome)`` where ``outcome`` is one
+        of ``"ok"``, ``"network"``, ``"parse"``. ``prices_by_street`` is
+        the ``{STREET_KEY: (regular, premium, diesel)}`` dict shape used
+        by the caller to look up individual warehouses.
         """
-        entry = WAREHOUSE_SLUGS.get(warehouse_id)
-        if entry is None:
-            LOGGER.warning(
-                "costco: no slug mapping for warehouse %s -- add it to "
-                "WAREHOUSE_SLUGS or pick a different ID from the preset list",
-                warehouse_id,
-            )
-            return None, "unknown"
-        slug, _ = entry
-        request = _build_station_request(slug)
+        request = _build_state_request(state)
         try:
             with self._opener(request, timeout=REQUEST_TIMEOUT) as response:
                 body = response.read().decode("utf-8", errors="replace")
         except (urllib.error.URLError, OSError, TimeoutError) as error:
-            LOGGER.warning(
-                "costco: station %s (%s) fetch failed: %s", warehouse_id, slug, error
-            )
+            LOGGER.warning("costco: state %s fetch failed: %s", state, error)
             return None, "network"
-        snapshot = _parse_station_page(warehouse_id, body)
-        if snapshot is None:
+        prices = _parse_state_page(body)
+        if not prices:
             LOGGER.warning(
-                "costco: station %s (%s) had no parseable og:description",
-                warehouse_id, slug,
+                "costco: state %s page had no parseable warehouse rows", state
             )
             return None, "parse"
-        return snapshot, "ok"
+        return prices, "ok"
 
     def _refresh(self, ids: tuple[str, ...]) -> None:
         # Record ``_last_ids`` and ``_last_refresh`` up front so we do not
-        # retry the whole set on every render if one warehouse errors --
-        # the old locator path shared this bug and buried the logs in a
+        # retry the whole set on every render if a fetch errors -- the
+        # old locator path shared this bug and buried the logs in a
         # 30-request-per-second retry storm.
         self._last_ids = ids
         self._last_refresh = time.monotonic()
@@ -464,13 +540,64 @@ class CostcoMode(Mode):
             self._failed = True
             self._error_state = "empty"
             return
+
+        # Bucket the configured IDs by which state's page holds their
+        # row. IDs missing from WAREHOUSE_SLUGS have no state, so we
+        # bail on them with ``"unknown"`` and don't waste a fetch.
+        states_needed: dict[str, list[str]] = {}
+        unknown_ids: list[str] = []
+        for warehouse_id in ids:
+            entry = WAREHOUSE_SLUGS.get(warehouse_id)
+            if entry is None:
+                unknown_ids.append(warehouse_id)
+                continue
+            _, _, state = entry
+            states_needed.setdefault(state, []).append(warehouse_id)
+        for warehouse_id in unknown_ids:
+            LOGGER.warning(
+                "costco: no mapping for warehouse %s -- add it to "
+                "WAREHOUSE_SLUGS or pick a different ID from the preset list",
+                warehouse_id,
+            )
+
+        # One HTTP request per state, regardless of how many warehouses
+        # in that state are configured. All-California fleet == one
+        # call per hour.
         collected: dict[str, WarehousePrices] = {}
         outcomes: list[str] = []
-        for warehouse_id in ids:
-            snapshot, outcome = self._fetch_one(warehouse_id)
-            outcomes.append(outcome)
-            if snapshot is not None:
-                collected[warehouse_id] = snapshot
+        for warehouse_id in unknown_ids:
+            outcomes.append("unknown")
+        for state, warehouse_ids in states_needed.items():
+            state_prices, state_outcome = self._fetch_state(state)
+            if state_prices is None:
+                # Whole state fetch/parse failed -- all its warehouses
+                # inherit the same outcome so the roll-up label reflects
+                # the actual failure mode.
+                outcomes.extend([state_outcome] * len(warehouse_ids))
+                continue
+            for warehouse_id in warehouse_ids:
+                street_key, short_name, _ = WAREHOUSE_SLUGS[warehouse_id]
+                lookup = state_prices.get(street_key.upper())
+                if lookup is None:
+                    LOGGER.warning(
+                        "costco: warehouse %s (%s) not found in %s table -- "
+                        "street key may have changed on ArulJohn",
+                        warehouse_id, street_key, state,
+                    )
+                    outcomes.append("parse")
+                    continue
+                regular, premium, diesel = lookup
+                collected[warehouse_id] = WarehousePrices(
+                    warehouse_id=warehouse_id,
+                    city=short_name,          # short_name is our display city
+                    location_name=street_key,  # street address as location
+                    regular=regular,
+                    premium=premium,
+                    diesel=diesel,
+                    short_name=short_name,
+                )
+                outcomes.append("ok")
+
         if collected:
             self._prices = collected
             self._failed = False
