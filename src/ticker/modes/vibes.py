@@ -221,47 +221,78 @@ class _Campfire:
                 dst[x] = heat if heat > 0 else 0
 
     def _draw_logs(self, canvas: Canvas) -> None:
-        """Two staggered logs across the bottom rows, with a pulsing crest.
+        """Two logs angled inward like a teepee, with a pulsing crest.
+
+        Each log is a slanted band: the left log slopes up-right ( / ),
+        the right log slopes up-left ( \\ ), so together they read as
+        the classic campfire teepee lean. The slant is done by shifting
+        the horizontal fill by ``slope * (y - _LOG_TOP)`` on each row.
+
+        Rendered as trapezoidal cross-sections (2px inset on the crest,
+        1px inset at the base) so the ends read as cylinders catching
+        firelight rather than as tilted bricks.
 
         The pile is drawn once per frame rather than cached because the
-        crest embers change every ~10 ticks; caching would mean tracking
-        which cells to invalidate, which is more code than just drawing
-        18 rows of pixels.
-
-        Log arrangement:
-
-            row 26   .....xxxxxxxxxxxxxxxx.....xxxxxxxxxxxxxxxxxxx.....
-            row 27   ...xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxx....
-            row 28   ..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx....
-            row 29   ..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...
-            row 30   ..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..
-            row 31   ...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...
-
-        The panel is 128 wide -- we tile two logs across so the fire has
-        a wider base than a single log would allow.
+        crest embers change every few ticks; caching would mean tracking
+        which cells to invalidate, which is more code than just repainting.
         """
-        # Two log spans, tiled across the panel width. Each span is drawn
-        # as a rounded trapezoid; the "notches" between them read as the
-        # gap where two logs meet.
-        log_spans = ((6, 60), (68, 122))
-        for x0, x1 in log_spans:
-            # Body: dark brown fill across the log's footprint.
+        # Log geometry. Each log has a baseline span at row 31, plus a
+        # slope in pixels per row upward. Positive slope = crest shifts
+        # right of the base; negative = crest shifts left of the base.
+        # The two logs slope toward each other so their crests meet
+        # roughly in the middle -- teepee shape.
+        #
+        # base spans chosen so the two logs *almost* meet at the panel
+        # centre when tilted; the tiny gap at the crest is where the
+        # fire looks like it's punching through the middle of the pile.
+        log_specs = (
+            # (x_base_left, x_base_right, slope_per_row)
+            (0, 52, +3),   # left log: leans up-right
+            (76, 128, -3), # right log: leans up-left
+        )
+
+        for x_base_l, x_base_r, slope in log_specs:
+            base_width = x_base_r - x_base_l
             for y in range(_LOG_TOP, 32):
-                # Round the corners slightly so the logs read as cylinders
-                # rather than bricks: bite off 1-2px from each end on the
-                # top and bottom rows.
-                inset = 0
+                # Distance above the base row (0 at bottom, _LOG_ROWS-1 at top).
+                rise = 31 - y
+                shift = slope * rise
+                # Inset to round the cylinder ends: fatter in the middle,
+                # thinner at crest and base.
                 if y == _LOG_TOP:
                     inset = 3
                 elif y == _LOG_TOP + 1:
                     inset = 2
                 elif y == 31:
                     inset = 1
-                canvas.fill_rect(x0 + inset, y, (x1 - x0) - 2 * inset, 1, _LOG_DARK)
-            # Highlight row along the crest of the log -- this is what
-            # sells the "cylinder catching the firelight" read. One pixel
-            # inset from each end, one pixel down from the topmost row.
-            canvas.fill_rect(x0 + 3, _LOG_TOP + 1, (x1 - x0) - 6, 1, _LOG_MID)
+                else:
+                    inset = 0
+                x_left = x_base_l + shift + inset
+                width = base_width - 2 * inset
+                # Clip to panel bounds so a steep slope near the edge
+                # doesn't paint off-canvas (Canvas.fill_rect is unclipped).
+                if x_left < 0:
+                    width += x_left
+                    x_left = 0
+                if x_left + width > 128:
+                    width = 128 - x_left
+                if width > 0:
+                    canvas.fill_rect(x_left, y, width, 1, _LOG_DARK)
+
+            # Highlight along the crest. Follows the same slant so the
+            # firelight line reads as running along the top of the log,
+            # not floating parallel to the ground.
+            rise = 31 - (_LOG_TOP + 1)
+            shift = slope * rise
+            hi_left = x_base_l + shift + 3
+            hi_width = base_width - 6
+            if hi_left < 0:
+                hi_width += hi_left
+                hi_left = 0
+            if hi_left + hi_width > 128:
+                hi_width = 128 - hi_left
+            if hi_width > 0:
+                canvas.fill_rect(hi_left, _LOG_TOP + 1, hi_width, 1, _LOG_MID)
 
         # Ember dots. A handful of pixels along the crest of each log
         # pulse between the ember and hot-ember colors on a slow phase
@@ -271,22 +302,26 @@ class _Campfire:
         # steady, brightening in time with the phase.
         ember_rng = random.Random(0xE1BE12)
         embers_per_log = 6
-        for x0, x1 in log_spans:
+        crest_y = _LOG_TOP + 1
+        crest_rise = 31 - crest_y
+        for x_base_l, x_base_r, slope in log_specs:
+            crest_shift = slope * crest_rise
+            crest_l = x_base_l + crest_shift + 4
+            crest_r = x_base_r + crest_shift - 4
+            if crest_r <= crest_l:
+                continue  # log too narrow at crest after slope clipping
             for _ in range(embers_per_log):
-                ex = ember_rng.randint(x0 + 4, x1 - 4)
-                # Phase-offset per ember so they don't all pulse together.
+                ex = ember_rng.randint(crest_l, crest_r)
                 offset = ember_rng.randint(0, 15)
                 phase = (self._ember_phase + offset) % 32
-                # Bright half of the cycle -> hot; dim half -> normal.
-                # An occasional black frame ("popping") sells the coal
-                # further; drop a single tick in eight to black.
                 if phase == 0:
                     color = (0, 0, 0)
                 elif phase < 8:
                     color = _EMBER_HOT
                 else:
                     color = _EMBER
-                canvas.pixel(ex, _LOG_TOP + 1, color)
+                if 0 <= ex < 128:
+                    canvas.pixel(ex, crest_y, color)
 
     def render(self, canvas: Canvas, tick: int) -> None:
         # Step the plasma once per frame. At the panel's 30fps this gives
