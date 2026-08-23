@@ -535,7 +535,21 @@ class _Campfire:
     # This replaces the old prev/current cross-fade -- the filter already
     # supplies the in-between frames, and running both just double-blurs.
     _ATTACK = 0.85
-    _RELEASE = 0.22
+    _RELEASE = 0.30
+
+    # ...with one exception. A slow release applied all the way down to
+    # zero leaves a dark-red haze hanging above the flame for a third of
+    # a second after the tongue is gone -- read as smeary ghosting, and
+    # the thing that makes the fire look like it is fading rather than
+    # burning. The fix is not a faster release everywhere (that just
+    # brings the sizzle back), it is a faster release only in the bottom
+    # of the palette, where the smoothing was buying nothing: those
+    # pixels are dim enough that their flicker was never the problem.
+    # Below ``_SNAP_BELOW`` heat, fall at ``_SNAP_RELEASE`` instead, so
+    # the tail extinguishes in ~2 frames while the bright body of the
+    # flame keeps the slow, calm falloff.
+    _SNAP_BELOW = 7.0
+    _SNAP_RELEASE = 0.65
 
     def render(self, canvas: Canvas, tick: int) -> None:
         # Step the plasma on a slower cadence than the frame rate, then
@@ -547,6 +561,8 @@ class _Campfire:
         shown = self._shown
         attack = self._ATTACK
         release = self._RELEASE
+        snap_below = self._SNAP_BELOW
+        snap_release = self._SNAP_RELEASE
         palette = _CAMPFIRE_PALETTE
         max_heat = len(palette) - 1
         for row_index in range(_FIRE_HEIGHT):
@@ -558,7 +574,14 @@ class _Campfire:
                 value = row_shown[x]
                 # Rising and falling get different time constants; see the
                 # class comment above.
-                coeff = attack if target > value else release
+                if target > value:
+                    coeff = attack
+                elif value < snap_below:
+                    # Embers of the tail: let them go quickly. See
+                    # ``_SNAP_BELOW``.
+                    coeff = snap_release
+                else:
+                    coeff = release
                 value += (target - value) * coeff
                 row_shown[x] = value
                 heat = int(value + 0.5)

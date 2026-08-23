@@ -19,6 +19,7 @@ from ticker.config import VALID_MODES, load_config
 from ticker.modes import MODE_TYPES, VibesMode
 from ticker.modes.vibes import (
     DEFAULT_VIBE,
+    _CAMPFIRE_PALETTE,
     _Aquarium,
     _Campfire,
     _Rain,
@@ -280,6 +281,51 @@ def test_campfire_smoothing_is_asymmetric_and_cuts_the_worst_frame_jump(config) 
     filtered = peak_frame_jump(_Campfire._ATTACK, _Campfire._RELEASE)
     assert filtered < unfiltered * 0.8, (
         f"filter barely helps: peak jump {filtered:.2f} vs unfiltered {unfiltered:.2f}"
+    )
+
+
+def test_campfire_tail_extinguishes_quickly(config) -> None:  # type: ignore[no-untyped-def]
+    """A dead tongue must clear fast, even though the body fades slowly.
+
+    The slow release that removes the sizzle also left a dark-red haze
+    hanging where a tongue used to be, long enough to read as ghosting.
+    The bottom of the palette therefore gets its own, much faster release
+    (``_SNAP_BELOW`` / ``_SNAP_RELEASE``) -- the smoothing was never
+    buying anything down there. Kill the plasma and the flame band must
+    go dark within a few frames, not a third of a second.
+    """
+    from ticker.modes.vibes import _FIRE_TOP, _LOG_TOP
+
+    fire = _Campfire()
+    canvas = Canvas(config.width, config.height)
+    for tick in range(60):
+        fire.render(canvas, tick=tick)
+
+    # Only flame pixels count. The upright kindling piece and the log
+    # crests are painted unconditionally every frame, so sampling by
+    # region would never go dark -- sample by colour instead.
+    flame_colours = set(_CAMPFIRE_PALETTE[2:])
+    frames_to_dark = None
+    for offset in range(12):
+        # Hold the plasma at zero, and render only on ticks that are not
+        # step boundaries so _step never refills it. 1001 % 4 == 1.
+        for row in fire._buffer:
+            for x in range(len(row)):
+                row[x] = 0
+        canvas = Canvas(config.width, config.height)
+        fire.render(canvas, tick=1001 + offset * 4)
+        lit_flame = sum(
+            1
+            for y in range(_FIRE_TOP, _LOG_TOP)
+            for x in range(128)
+            if canvas.image_buffer.getpixel((x, y)) in flame_colours
+        )
+        if lit_flame == 0:
+            frames_to_dark = offset + 1
+            break
+
+    assert frames_to_dark is not None and frames_to_dark <= 7, (
+        f"flame leaves a lingering ghost: {frames_to_dark} frames to go dark"
     )
 
 
