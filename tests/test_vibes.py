@@ -22,6 +22,7 @@ from ticker.modes.vibes import (
     _CAMPFIRE_PALETTE,
     _Aquarium,
     _Campfire,
+    _FluidFlame,
     _Rain,
     valid_vibes,
     vibe_labels,
@@ -211,143 +212,140 @@ def test_campfire_draws_logs_in_the_bottom_rows(config) -> None:  # type: ignore
     assert dark_hits > 60, f"expected >60 log-body pixels, got {dark_hits}"
 
 
-def test_campfire_holds_its_buffer_between_steps(config) -> None:  # type: ignore[no-untyped-def]
-    """The plasma is a simulation, and the cross-fade depends on that.
+def test_campfire_flame_is_temporally_coherent(config) -> None:  # type: ignore[no-untyped-def]
+    """Consecutive frames must be a continuation, not a re-roll.
 
-    A rewrite replaced the buffer with a stateless noise field. It moved
-    beautifully and looked like a blob: the tongues that make this read
-    as fire come from the automaton's per-cell decay and x-jitter, and no
-    smooth envelope reproduces them. This pins the mechanism so the trade
-    is made deliberately -- the buffer must persist across frames, only
-    advancing on a step boundary, with the in-between frames blending
-    from the snapshot in ``_prev_buffer``.
+    This is the whole reason the Doom automaton was replaced. That
+    automaton re-rolled every cell's decay and x-jitter each step, so
+    successive frames were uncorrelated and the flame sizzled; the fixes
+    for it were all display-side filters fighting the generator. A real
+    solver advects the previous frame's temperature field along the
+    velocity field, so coherence is intrinsic and no smoothing is needed.
+
+    We measure it: the mean absolute frame-to-frame change in the heat
+    field must be small compared with the field's own spatial spread. A
+    stateless generator scores near 1.0 on that ratio; advected fluid
+    scores a fraction of it.
     """
-    fire = _Campfire()
-    canvas = Canvas(config.width, config.height)
+    np = pytest.importorskip("numpy")
 
-    fire.render(canvas, tick=0)
-    after_step = [row[:] for row in fire._buffer]
+    flame = _FluidFlame()
+    for _ in range(90):  # let the plume establish
+        flame.step()
 
-    # A frame between step boundaries only moves the cross-fade; the
-    # simulation state must be untouched.
-    fire.render(canvas, tick=1)
-    assert fire._buffer == after_step
+    prev = flame.heat().copy()
+    ratios = []
+    for _ in range(40):
+        flame.step()
+        cur = flame.heat()
+        spread = float(np.mean(np.abs(cur - cur.mean())))
+        change = float(np.mean(np.abs(cur - prev)))
+        ratios.append(change / max(spread, 1e-6))
+        prev = cur.copy()
 
-    fire.render(canvas, tick=_Campfire._STEP_EVERY)
-    assert fire._buffer != after_step, "buffer never advanced at a step boundary"
-    # The snapshot is what the in-between frames blend from, so it has to
-    # hold the state we just left behind.
-    assert fire._prev_buffer == after_step
+    worst = max(ratios)
+    assert worst < 0.35, f"flame re-rolls rather than flows: worst ratio {worst:.2f}"
+    # ...and it must not be frozen either, or a static image would pass.
+    assert max(ratios) > 0.01, "flame is not moving at all"
 
 
-def test_campfire_smoothing_is_asymmetric_and_cuts_the_worst_frame_jump(config) -> None:  # type: ignore[no-untyped-def]
-    """The display filter must smooth the sizzle without flattening a tongue.
+def test_campfire_turbulence_stays_out_of_the_still_air(config) -> None:  # type: ignore[no-untyped-def]
+    """The air outside the plume must be still.
 
-    Two failure modes bracket this. Raw stepping strobes: the buffer holds
-    for three frames then jumps a whole palette step, and that peak jump
-    is what reads as jarring. A symmetric low-pass fixes the strobe by
-    rounding off every leading edge, which is how the fire turns into a
-    blob. So the filter has to be asymmetric -- fast up, slow down -- and
-    it has to measurably reduce the WORST single-frame jump, not just the
-    average.
+    Curl-noise forcing applied to the whole grid shimmers the entire
+    panel, including the black region either side of the fire and above
+    the tips -- it reads as static, not as fire. Turbulence is therefore
+    masked by temperature AND a height ramp. Assert the cold cells carry
+    far less speed than the hot ones.
     """
-    assert _Campfire._ATTACK > _Campfire._RELEASE, "filter must rise faster than it falls"
+    np = pytest.importorskip("numpy")
 
-    def peak_frame_jump(attack: float, release: float) -> float:
-        original = (_Campfire._ATTACK, _Campfire._RELEASE)
-        _Campfire._ATTACK, _Campfire._RELEASE = attack, release
-        try:
-            fire = _Campfire()
-            warm = Canvas(config.width, config.height)
-            for tick in range(60):
-                fire.render(warm, tick=tick)
-            frames = []
-            for tick in range(60, 120):
-                canvas = Canvas(config.width, config.height)
-                fire.render(canvas, tick=tick)
-                frames.append(list(canvas.image_buffer.convert("RGB").getdata()))
-        finally:
-            _Campfire._ATTACK, _Campfire._RELEASE = original
-        jumps = []
-        for a, b in zip(frames, frames[1:]):
-            total = sum(
-                abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2])
-                for p, q in zip(a, b)
-            )
-            jumps.append(total / (len(a) * 3))
-        return max(jumps)
+    flame = _FluidFlame()
+    for _ in range(120):
+        flame.step()
 
-    unfiltered = peak_frame_jump(1.0, 1.0)
-    filtered = peak_frame_jump(_Campfire._ATTACK, _Campfire._RELEASE)
-    assert filtered < unfiltered * 0.8, (
-        f"filter barely helps: peak jump {filtered:.2f} vs unfiltered {unfiltered:.2f}"
+    speed = np.hypot(flame._u, flame._v)
+    temp = flame._t
+    cold = temp < 0.02
+    hot = temp > 0.30
+    assert cold.any() and hot.any(), "no cold/hot split to compare"
+
+    cold_speed = float(speed[cold].mean())
+    hot_speed = float(speed[hot].mean())
+    assert cold_speed < hot_speed * 0.35, (
+        f"still air is being stirred: cold {cold_speed:.3f} vs hot {hot_speed:.3f}"
     )
 
 
-def test_campfire_tail_extinguishes_quickly(config) -> None:  # type: ignore[no-untyped-def]
-    """A dead tongue must clear fast, even though the body fades slowly.
+def test_campfire_hot_spots_wander_along_the_log_line(config) -> None:  # type: ignore[no-untyped-def]
+    """The bright tongue must migrate, not stand in a fixed column.
 
-    The slow release that removes the sizzle also left a dark-red haze
-    hanging where a tongue used to be, long enough to read as ghosting.
-    The bottom of the palette therefore gets its own, much faster release
-    (``_SNAP_BELOW`` / ``_SNAP_RELEASE``) -- the smoothing was never
-    buying anything down there. Kill the plasma and the flame band must
-    go dark within a few frames, not a third of a second.
+    With static per-spot weights the fuel bed produced two bright pillars
+    parked in the same x columns in every frame -- correct as fluid,
+    wrong as fire, because a log burns through and the flame front moves.
+    Each spot's weight now swings on its own non-harmonic period, so the
+    fuel centroid drifts. Assert the drift is real and bounded (it must
+    stay over the log pile, not walk off the panel).
     """
-    from ticker.modes.vibes import _FIRE_TOP, _LOG_TOP
+    np = pytest.importorskip("numpy")
 
+    flame = _FluidFlame()
+    xs = np.arange(flame._w, dtype=np.float32)
+    centroids = []
+    for i in range(600):
+        flame.step()
+        if i % 10 == 0:
+            profile = flame._fuel
+            centroids.append(float((profile * xs).sum() / max(profile.sum(), 1e-6)))
+
+    span = (max(centroids) - min(centroids)) / flame._SS  # in panel px
+    assert span > 2.0, f"fuel centroid barely moves: {span:.2f} px"
+    assert span < 20.0, f"fuel centroid wanders off the log pile: {span:.2f} px"
+
+
+def test_campfire_falls_back_to_the_automaton_without_numpy(config, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """No numpy must degrade, not crash.
+
+    The solver is vectorised and hard-depends on numpy. numpy is pinned
+    in requirements, but the Doom automaton is kept intact as the
+    fallback so a bare checkout (or a wheel that failed to build on the
+    Pi) still shows a fire instead of an empty panel.
+    """
+    import ticker.modes.vibes as vibes
+
+    monkeypatch.setattr(vibes, "_np", None)
     fire = _Campfire()
+    assert fire._fluid is None, "fallback path did not engage"
+
     canvas = Canvas(config.width, config.height)
-    for tick in range(60):
+    for tick in range(120):
         fire.render(canvas, tick=tick)
 
-    # Only flame pixels count. The upright kindling piece and the log
-    # crests are painted unconditionally every frame, so sampling by
-    # region would never go dark -- sample by colour instead.
-    flame_colours = set(_CAMPFIRE_PALETTE[2:])
-    frames_to_dark = None
-    for offset in range(12):
-        # Hold the plasma at zero, and render only on ticks that are not
-        # step boundaries so _step never refills it. 1001 % 4 == 1.
-        for row in fire._buffer:
-            for x in range(len(row)):
-                row[x] = 0
-        canvas = Canvas(config.width, config.height)
-        fire.render(canvas, tick=1001 + offset * 4)
-        lit_flame = sum(
-            1
-            for y in range(_FIRE_TOP, _LOG_TOP)
-            for x in range(128)
-            if canvas.image_buffer.getpixel((x, y)) in flame_colours
-        )
-        if lit_flame == 0:
-            frames_to_dark = offset + 1
-            break
+    pixels = _pixels(canvas)
+    warm = [p for p in pixels if p != (0, 0, 0) and p[0] > p[2]]
+    assert len(warm) > 200, f"automaton fallback drew almost nothing: {len(warm)}"
 
-    assert frames_to_dark is not None and frames_to_dark <= 7, (
-        f"flame leaves a lingering ghost: {frames_to_dark} frames to go dark"
+
+def test_campfire_uses_the_solver_when_numpy_is_available(config) -> None:  # type: ignore[no-untyped-def]
+    """The default path is the fluid solver, stepped once per frame.
+
+    The automaton ran at a divided step rate with a cross-fade in
+    between; the solver is coherent on its own, so it advances every
+    frame and there is no filter downstream of it. Pin both halves of
+    that: the solver is the active renderer, and one render is one step.
+    """
+    pytest.importorskip("numpy")
+
+    fire = _Campfire()
+    assert fire._fluid is not None, "solver did not initialise"
+
+    canvas = Canvas(config.width, config.height)
+    before = fire._fluid._tick
+    for tick in range(10):
+        fire.render(canvas, tick=tick)
+    assert fire._fluid._tick == before + 10, (
+        f"solver stepped {fire._fluid._tick - before} times in 10 frames"
     )
-
-
-def test_campfire_display_filter_never_feeds_back_into_the_plasma(config) -> None:  # type: ignore[no-untyped-def]
-    """Smoothed output must stay downstream of the simulation.
-
-    An earlier fire died because the thing being displayed was also the
-    thing being stepped, so every multiplication compounded until the
-    flame either smeared or went out. ``_shown`` follows ``_buffer``; it
-    must never be the source the automaton reads.
-    """
-    fire = _Campfire()
-    canvas = Canvas(config.width, config.height)
-    for tick in range(40):
-        fire.render(canvas, tick=tick)
-
-    poisoned = [row[:] for row in fire._buffer]
-    for row in fire._shown:
-        for x in range(len(row)):
-            row[x] = 0.0
-    fire.render(canvas, tick=41)  # not a step boundary
-    assert fire._buffer == poisoned, "clearing the display field disturbed the plasma"
 
 
 def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyped-def]

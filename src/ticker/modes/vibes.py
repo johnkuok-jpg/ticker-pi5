@@ -13,14 +13,20 @@ one mode keeps the mode grid at exactly one tile ("Vibes") that expands
 into a picker on the settings card, mirroring how ``worldclock`` shows
 an Analog/Digital toggle instead of shipping two top-level modes.
 
-**Campfire.** The flame effect is the Doom PSX / "Fabien Sanglard fire"
-cellular automaton: seed a hot row at the bottom, propagate upward one
-row per frame, decay by 0-1 palette steps with a horizontal wind jitter.
-That produces the flicker Doom's fire is known for at a cost of one
-uint8 per pixel per frame -- easily 60fps on a Pi 5 for our 128x22
-flame area. A hand-drawn log pile sits below the flames; embers on the
-top of the logs pulse with a slow noise so the fire looks like it's
-consuming something rather than floating above dead wood.
+**Campfire.** The flame is an actual fluid simulation (``_FluidFlame``):
+buoyancy, curl-noise turbulence, vorticity confinement, Jacobi pressure
+projection and semi-Lagrangian advection on a 2x supersampled grid. It
+replaced the Doom PSX / "Fabien Sanglard fire" cellular automaton, which
+is a 1993 trick for machines with no CPU budget: that automaton re-rolls
+every cell independently, so consecutive frames are uncorrelated and the
+flame sizzles, and every fix for the sizzle is a display filter fighting
+the generator. A solver is temporally coherent for free, because each
+frame's heat field is the previous frame's field carried along the flow.
+A Pi 5 has the headroom: measure it with ``scripts/bench_campfire.py``.
+The automaton is kept intact as the fallback for a checkout without
+numpy. A hand-drawn log pile sits below the flames; embers on the top of
+the logs pulse with a slow noise so the fire looks like it's consuming
+something rather than floating above dead wood.
 
 **Rain.** Drops-on-a-window night scene: a shallow midnight-blue vertical
 gradient stands in for the sky through the pane, and up to ~20 drops slide
@@ -62,6 +68,11 @@ from __future__ import annotations
 import logging
 import random
 from typing import ClassVar, Protocol
+
+try:  # numpy drives the campfire's fluid solver; see ``_FluidFlame``.
+    import numpy as _np
+except ImportError:  # pragma: no cover - exercised by the fallback test
+    _np = None  # type: ignore[assignment]
 
 from ticker.canvas import MEDIUM, SMALL, Canvas
 from ticker.modes.base import Mode
@@ -169,6 +180,355 @@ _EMBER = (215, 87, 15)     # pulsing coal on the crest
 _EMBER_HOT = (231, 143, 31)  # brief brighter flash
 
 
+class _FluidFlame:
+    """The campfire flame as an actual fluid simulation.
+
+    The Doom automaton this replaced is a 1993 trick for machines with no
+    CPU budget: every cell independently re-rolls its decay and a
+    horizontal jitter, which carves tongue shapes but has no memory, so
+    consecutive frames are uncorrelated and the result sizzles. Every fix
+    for the sizzle (cross-fading, asymmetric attack/release, snap
+    thresholds) is a display-side filter fighting the generator.
+
+    A real solver does not need any of that: temporal coherence is
+    intrinsic, because each frame's temperature field is the previous
+    frame's field carried along the velocity field. Per frame:
+
+    1. Inject fuel (heat) in the bottom rows over the log pile, with an
+       upward impulse.
+    2. Buoyancy: hot gas accelerates upward, proportional to temperature.
+    3. Curl-noise turbulence: add the curl of a smooth sine potential.
+       Divergence-free by construction, so it stirs without inventing
+       mass. This is what makes tongues -- buoyancy on its own gives a
+       featureless plume, and white noise gives vertical streaks.
+    4. Vorticity confinement: re-inject the small curls that numerical
+       diffusion eats, or the flame goes soft after a few seconds.
+    5. Pressure projection (Jacobi): make the flow near-incompressible,
+       which is why hot gas rolls and curls instead of just sliding up.
+    6. Semi-Lagrangian advection of velocity, then temperature.
+    7. Cool multiplicatively.
+
+    Two details that took the longest to get right:
+
+    * Turbulence is masked by both temperature and a height ramp. Real
+      flame is laminar where it leaves the fuel and breaks up as it rises
+      and entrains air; unmasked turbulence shimmers the entire panel,
+      including the still air outside the plume.
+    * The fuel bed is a low plateau across the log pile plus four uneven
+      Gaussian hot spots. Hot spots alone read as a row of separate
+      candles; the plateau alone reads as a gas burner. Together the
+      tongues share one base and separate as they rise, which is what a
+      log pile actually does.
+
+    Runs on a supersampled grid and area-averages down to the panel, so
+    each LED is the mean of ``_SS**2`` cells and the flame edge lands on
+    sub-LED positions instead of snapping between columns.
+    """
+
+    # Supersample factor. 3 is visually indistinguishable from 2 at this
+    # panel size and costs a bit over twice as much, so 2 it is.
+    _SS = 2
+
+    # All coefficients are per-frame at 30fps; there is no separate dt.
+    _JACOBI = 10          # pressure iterations
+    _BUOYANCY = 0.16      # upward accel per unit temperature
+    _COOLING = 0.905      # multiplicative heat loss per frame
+    _VORTICITY = 0.55     # vorticity-confinement strength
+    _DRAG = 0.978         # velocity damping
+    _VMAX = 3.0           # px/frame clamp, keeps advection stable
+    _GUST = 0.010         # ambient horizontal breeze amplitude
+
+    _TURB = 14.0          # curl-noise forcing strength
+    _TURB_RAMP = 0.35     # fraction of height over which turbulence ramps in
+    _TURB_MODES = 6
+    _KX_LO, _KX_HI = 5.0, 14.0   # cycles across the grid width
+    _KY_LO, _KY_HI = 1.5, 5.0    # cycles across the grid height
+
+    _FUEL_ROWS = 3
+    _FUEL_KICK = 0.40     # upward impulse at the fuel rows
+    _FUEL_HALF = 0.045    # hot-spot width, as a fraction of panel width
+    _BED_LEVEL = 0.18     # low plateau that merges the tongues at the base
+    _BED_HALF = 0.24      # plateau half-width, fraction of panel width
+    _BED_EDGE = 0.045     # plateau edge softness, fraction of panel width
+    # (centre as a fraction of width, weight, width scale)
+    _SPOTS = (
+        (0.28, 0.80, 0.75),
+        (0.40, 0.55, 0.60),
+        (0.61, 0.78, 0.70),
+        (0.76, 0.60, 0.65),
+    )
+    # Each hot spot's strength wanders on its own slow cycle, so the
+    # dominant tongue moves along the log line instead of two bright
+    # pillars standing in fixed columns forever. Physically this is a log
+    # burning through: the flame front migrates. Periods are in frames and
+    # deliberately non-harmonic so the pattern never visibly repeats.
+    _SPOT_WANDER = 0.55       # fraction of each spot's weight it swings by
+    _SPOT_PERIODS = (211.0, 137.0, 179.0, 97.0, 251.0)
+
+    # Temperature window mapped across the palette. Averaging _SS**2 cells
+    # per LED plus a 32-step palette turns a flame edge into a soft ramp;
+    # real flame has a thin bright reaction zone, so rescale the window we
+    # care about across the whole palette instead of showing the cold tail.
+    _FRONT_LO = 0.05
+    _FRONT_HI = 0.82
+
+    def __init__(self, width: int = 128, height: int = _FIRE_HEIGHT) -> None:
+        np = _np
+        if np is None:  # pragma: no cover - guarded by the caller
+            raise RuntimeError("_FluidFlame requires numpy")
+        self.width = width
+        self.height = height
+        ss = self._SS
+        self._w = w = width * ss
+        self._h = h = height * ss
+
+        # Deterministic so preview captures and tests reproduce.
+        rng = np.random.default_rng(0xC0FFEE)
+        self._rng = rng
+
+        self._t = np.zeros((h, w), dtype=np.float32)   # temperature
+        self._u = np.zeros((h, w), dtype=np.float32)   # velocity, +x
+        self._v = np.zeros((h, w), dtype=np.float32)   # velocity, +y is DOWN
+        self._p = np.zeros((h, w), dtype=np.float32)   # pressure scratch
+        self._tick = 0
+        self._ys, self._xs = np.meshgrid(
+            np.arange(h, dtype=np.float32), np.arange(w, dtype=np.float32), indexing="ij"
+        )
+        # Fuel is rebuilt every frame from per-spot shapes and wandering
+        # weights; see ``_fuel_profile``.
+        self._bed, self._shapes, self._weights = self._fuel_parts()
+        self._spot_phases = rng.uniform(0, 2 * np.pi, size=len(self._weights)).astype(
+            np.float32
+        )
+        self._fuel = self._fuel_profile()
+
+        # Smooth flicker: a sum of a few sines, so fuel intensity wanders
+        # over about a second instead of white-noising every frame.
+        self._phases = rng.uniform(0, 2 * np.pi, size=6).astype(np.float32)
+        self._freqs = np.array(
+            [0.013, 0.021, 0.034, 0.055, 0.089, 0.144], dtype=np.float32
+        )
+
+        n = self._TURB_MODES
+        self._kx = rng.uniform(self._KX_LO, self._KX_HI, size=n).astype(np.float32) * (
+            2 * np.pi / w
+        )
+        self._ky = rng.uniform(self._KY_LO, self._KY_HI, size=n).astype(np.float32) * (
+            2 * np.pi / h
+        )
+        self._px = rng.uniform(0, 2 * np.pi, size=n).astype(np.float32)
+        self._py = rng.uniform(0, 2 * np.pi, size=n).astype(np.float32)
+        self._wx = rng.uniform(-0.05, 0.05, size=n).astype(np.float32)
+        self._wy = rng.uniform(-0.04, 0.04, size=n).astype(np.float32)
+        self._amp = (rng.uniform(0.6, 1.0, size=n) / np.arange(1, n + 1)).astype(
+            np.float32
+        )
+
+        rows = np.arange(h, dtype=np.float32)
+        above = (h - 1 - rows) / max(h - 1, 1)   # 0 at the fuel, 1 at the top
+        self._height_ramp = np.clip(above / self._TURB_RAMP, 0.0, 1.0)[:, None].astype(
+            np.float32
+        )
+        self._xline = np.arange(w, dtype=np.float32)
+        self._yline = np.arange(h, dtype=np.float32)
+
+        # Palette as an array, so mapping heat -> RGB is one fancy index.
+        self._lut = np.array(_CAMPFIRE_PALETTE, dtype=np.uint8)
+        # Heat 0 and 1 were never painted by the automaton (1 is a grey
+        # smoke value that reads as a dead pixel at panel scale), so keep
+        # them black here too.
+        self._lut[1] = (0, 0, 0)
+
+    # -- setup ------------------------------------------------------------
+    def _fuel_parts(self):
+        """Split the fuel bed into a static plateau and per-spot shapes.
+
+        Returns ``(bed, shapes, weights)`` where ``bed`` is the low
+        plateau over the log pile, ``shapes`` is one unit-height Gaussian
+        per hot spot, and ``weights`` their nominal strengths. Keeping
+        them separate means the per-frame update is one small matrix
+        product rather than recomputing five exponentials.
+        """
+        np = _np
+        w = self._w
+        x = np.arange(w, dtype=np.float32)
+        centre = w * 0.5
+        half = w * self._FUEL_HALF
+
+        spots = ((0.5, 1.0, 1.0),) + tuple(self._SPOTS)
+        shapes = np.stack(
+            [
+                np.exp(-((x - w * frac) / (half * wscale)) ** 2).astype(np.float32)
+                for frac, _weight, wscale in spots
+            ]
+        )
+        weights = np.array([weight for _frac, weight, _ws in spots], dtype=np.float32)
+
+        bed_half = w * self._BED_HALF
+        edge = max(w * self._BED_EDGE, 1.0)
+        d = np.abs(x - centre) - bed_half
+        bed = np.clip(1.0 - d / edge, 0.0, 1.0)
+        bed = bed * bed * (3.0 - 2.0 * bed)      # smoothstep
+        bed = (self._BED_LEVEL * bed).astype(np.float32)
+        return bed, shapes, weights
+
+    def _fuel_profile(self):
+        """The fuel bed for this frame, with hot spots wandering slowly."""
+        np = _np
+        periods = self._SPOT_PERIODS
+        phase = np.array(
+            [
+                self._spot_phases[i] + 2 * np.pi * self._tick / periods[i % len(periods)]
+                for i in range(len(self._weights))
+            ],
+            dtype=np.float32,
+        )
+        swing = np.float32(1.0) + np.float32(self._SPOT_WANDER) * np.sin(phase)
+        hump = self._bed + (self._weights * swing) @ self._shapes
+        return np.clip(hump, 0.0, 1.4).astype(np.float32)
+
+    # -- solver pieces ----------------------------------------------------
+    def _flicker(self, k: float) -> float:
+        np = _np
+        return float(np.sin(self._freqs * self._tick * 2 * np.pi + self._phases + k).mean())
+
+    def _turbulence(self) -> None:
+        np = _np
+        t = float(self._tick)
+        du = np.zeros((self._h, self._w), dtype=np.float32)
+        dv = np.zeros((self._h, self._w), dtype=np.float32)
+        xl, yl = self._xline, self._yline
+        for i in range(len(self._kx)):
+            sx = np.sin(self._kx[i] * xl + self._px[i] + self._wx[i] * t)
+            cx = np.cos(self._kx[i] * xl + self._px[i] + self._wx[i] * t)
+            sy = np.sin(self._ky[i] * yl + self._py[i] + self._wy[i] * t)
+            cy = np.cos(self._ky[i] * yl + self._py[i] + self._wy[i] * t)
+            a = self._amp[i] * np.float32(self._TURB)
+            # psi = a * sx(x) * sy(y);  u += dpsi/dy, v -= dpsi/dx
+            du += np.float32(a * self._ky[i]) * np.outer(cy, sx).astype(
+                np.float32, copy=False
+            )
+            dv -= np.float32(a * self._kx[i]) * np.outer(sy, cx).astype(
+                np.float32, copy=False
+            )
+        # Stir only where there is hot gas, and more the higher it has
+        # risen. Still air outside the plume must stay still.
+        mask = np.minimum(self._t * np.float32(2.0), np.float32(1.0)) * self._height_ramp
+        self._u += du * mask
+        self._v += dv * mask
+
+    def _advect(self, field):
+        """Semi-Lagrangian backtrace with bilinear sampling."""
+        np = _np
+        x = self._xs - self._u
+        y = self._ys - self._v
+        np.clip(x, 0, self._w - 1.001, out=x)
+        np.clip(y, 0, self._h - 1.001, out=y)
+        x0 = x.astype(np.int32)
+        y0 = y.astype(np.int32)
+        x1 = x0 + 1
+        y1 = y0 + 1
+        fx = x - x0
+        fy = y - y0
+        f00 = field[y0, x0]
+        f10 = field[y0, x1]
+        f01 = field[y1, x0]
+        f11 = field[y1, x1]
+        top = f00 + (f10 - f00) * fx
+        bot = f01 + (f11 - f01) * fx
+        return (top + (bot - top) * fy).astype(np.float32, copy=False)
+
+    def _project(self) -> None:
+        """Make the velocity field (nearly) divergence-free."""
+        np = _np
+        div = np.zeros_like(self._u)
+        div[1:-1, 1:-1] = 0.5 * (
+            self._u[1:-1, 2:]
+            - self._u[1:-1, :-2]
+            + self._v[2:, 1:-1]
+            - self._v[:-2, 1:-1]
+        )
+        p = self._p
+        p *= 0.0
+        for _ in range(self._JACOBI):
+            p[1:-1, 1:-1] = np.float32(0.25) * (
+                p[1:-1, 2:] + p[1:-1, :-2] + p[2:, 1:-1] + p[:-2, 1:-1] - div[1:-1, 1:-1]
+            )
+        self._u[1:-1, 1:-1] -= 0.5 * (p[1:-1, 2:] - p[1:-1, :-2])
+        self._v[1:-1, 1:-1] -= 0.5 * (p[2:, 1:-1] - p[:-2, 1:-1])
+
+    def _vorticity_confinement(self) -> None:
+        """Re-inject the small curls numerical diffusion smears out."""
+        np = _np
+        w = np.zeros_like(self._u)
+        w[1:-1, 1:-1] = 0.5 * (
+            self._v[1:-1, 2:]
+            - self._v[1:-1, :-2]
+            - (self._u[2:, 1:-1] - self._u[:-2, 1:-1])
+        )
+        aw = np.abs(w)
+        gx = np.zeros_like(aw)
+        gy = np.zeros_like(aw)
+        gx[1:-1, 1:-1] = 0.5 * (aw[1:-1, 2:] - aw[1:-1, :-2])
+        gy[1:-1, 1:-1] = 0.5 * (aw[2:, 1:-1] - aw[:-2, 1:-1])
+        mag = np.sqrt(gx * gx + gy * gy) + np.float32(1e-5)
+        gx /= mag
+        gy /= mag
+        # force = eps * (N x w); in 2D the cross with the scalar curl.
+        self._u += np.float32(self._VORTICITY) * gy * w
+        self._v -= np.float32(self._VORTICITY) * gx * w
+
+    # -- one frame --------------------------------------------------------
+    def step(self) -> None:
+        np = _np
+        self._tick += 1
+
+        # Fuel injection at the log line, intensity wandering smoothly.
+        base = np.float32(1.0 + 0.35 * self._flicker(0.0))
+        self._fuel = self._fuel_profile()
+        rows = slice(self._h - self._FUEL_ROWS, self._h)
+        jitter = (1.0 + 0.25 * self._rng.standard_normal(self._w)).astype(np.float32)
+        self._t[rows] = np.maximum(
+            self._t[rows], (self._fuel * base * jitter).astype(np.float32)
+        )
+        self._v[rows] -= np.float32(self._FUEL_KICK) * self._fuel
+        self._u += np.float32(self._GUST * self._flicker(1.7))
+
+        # Buoyancy: hot gas rises, and +y is down, so subtract.
+        self._v -= np.float32(self._BUOYANCY) * self._t
+        self._v *= np.float32(self._DRAG)
+        self._u *= np.float32(self._DRAG)
+        np.clip(self._u, -self._VMAX, self._VMAX, out=self._u)
+        np.clip(self._v, -self._VMAX, self._VMAX, out=self._v)
+
+        self._turbulence()
+        self._vorticity_confinement()
+        self._project()
+
+        u_new = self._advect(self._u)
+        v_new = self._advect(self._v)
+        self._u, self._v = u_new, v_new
+        self._t = self._advect(self._t)
+
+        self._t *= np.float32(self._COOLING)
+        np.clip(self._t, 0.0, 1.6, out=self._t)
+
+    def heat(self):
+        """Area-average to the panel band, as 0..1 floats."""
+        np = _np
+        ss = self._SS
+        t = self._t.reshape(self.height, ss, self.width, ss).mean(axis=(1, 3))
+        t = (t - np.float32(self._FRONT_LO)) / np.float32(self._FRONT_HI - self._FRONT_LO)
+        return np.clip(t, 0.0, 1.0) ** np.float32(1.1)
+
+    def rgb(self):
+        """The band as an ``(height, width, 3)`` uint8 array."""
+        np = _np
+        max_heat = len(self._lut) - 1
+        idx = np.clip((self.heat() * max_heat + 0.5).astype(np.int32), 0, max_heat)
+        return self._lut[idx]
+
+
 class _Campfire:
     """Doom-fire plasma flames sitting on a hand-drawn log pile.
 
@@ -225,6 +585,20 @@ class _Campfire:
         # Ember phase advances slowly so the log crest pulses out of
         # sync with the flame body, which is what real coals look like.
         self._ember_phase = 0
+        # The flame itself is a fluid solver when numpy is available (see
+        # ``_FluidFlame``). The automaton above stays as the fallback so a
+        # numpy-less venv still renders the panel rather than crashing the
+        # whole vibes mode -- numpy is in requirements.txt, but the mode
+        # should not be the thing that discovers a broken install.
+        self._fluid: _FluidFlame | None = None
+        if _np is not None:
+            try:
+                self._fluid = _FluidFlame()
+            except Exception:  # pragma: no cover - defensive
+                LOGGER.exception("campfire: fluid flame unavailable, using the automaton")
+                self._fluid = None
+        else:
+            LOGGER.warning("campfire: numpy missing, falling back to the plasma automaton")
 
     def _step(self) -> None:
         """Advance the plasma one row upward with wind + decay jitter.
@@ -552,6 +926,28 @@ class _Campfire:
     _SNAP_RELEASE = 0.65
 
     def render(self, canvas: Canvas, tick: int) -> None:
+        if self._fluid is not None:
+            self._render_fluid(canvas, tick)
+            return
+        self._render_automaton(canvas, tick)
+
+    def _render_fluid(self, canvas: Canvas, tick: int) -> None:
+        """Advance the fluid solver one frame and blit it.
+
+        No step-rate division and no attack/release filter here: the
+        solver is already temporally coherent, so it runs at the full frame
+        rate and needs no smoothing on top. Blitting the band in one paste
+        instead of ~3.7k ``canvas.pixel`` calls is most of why this fits
+        the frame budget at all.
+        """
+        self._fluid.step()
+        canvas.clear()
+        canvas.blit_rgb(0, _FIRE_TOP, self._fluid.rgb())
+        self._draw_logs(canvas)
+        if tick % 4 == 0:
+            self._ember_phase = (self._ember_phase + 1) % 32
+
+    def _render_automaton(self, canvas: Canvas, tick: int) -> None:
         # Step the plasma on a slower cadence than the frame rate, then
         # let the display filter carry the in-between frames.
         if tick % self._STEP_EVERY == 0:

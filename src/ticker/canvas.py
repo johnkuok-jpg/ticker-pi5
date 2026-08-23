@@ -395,6 +395,45 @@ class Canvas:
         if 0 <= x < self.width and 0 <= y < self.height:
             self._draw.point((x, y), fill=color)
 
+    def blit_rgb(self, x: int, y: int, rgb) -> None:
+        """Paste a block of RGB bytes at (x, y) in one operation.
+
+        ``rgb`` is anything ``PIL.Image.frombytes`` accepts as an
+        ``(h, w, 3)`` uint8 buffer -- in practice a numpy array. This
+        exists because a full-panel effect painted through
+        :meth:`pixel` costs one Python call per pixel: ~3.7k calls a
+        frame for a 128x29 band, which is the difference between
+        comfortable and marginal at 30fps on a Pi. Callers that already
+        have their frame as an array should use this instead.
+
+        The block is clipped to the panel, and pasting black overwrites
+        whatever was there -- it is a blit, not an alpha composite, so
+        draw it before the things that should sit on top.
+        """
+        height = len(rgb)
+        if height == 0:
+            return
+        width = len(rgb[0])
+        if width == 0:
+            return
+        raw = rgb.tobytes() if hasattr(rgb, "tobytes") else bytes(
+            component for row in rgb for pixel in row for component in pixel
+        )
+        block = Image.frombytes("RGB", (width, height), raw)
+        if x < 0 or y < 0 or x + width > self.width or y + height > self.height:
+            # Clip by cropping the source rather than letting PIL silently
+            # drop the paste.
+            left = max(0, -x)
+            top = max(0, -y)
+            right = min(width, self.width - x)
+            bottom = min(height, self.height - y)
+            if right <= left or bottom <= top:
+                return
+            block = block.crop((left, top, right, bottom))
+            x += left
+            y += top
+        self.image_buffer.paste(block, (x, y))
+
     def hline(self, y: int, color: Color, x0: int = 0, x1: int | None = None) -> None:
         """Thin horizontal rule, handy for separating rows."""
         self._draw.line((x0, y, (self.width if x1 is None else x1) - 1, y), fill=color)
