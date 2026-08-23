@@ -1561,15 +1561,17 @@ class _Driving:
             y_bot = self._project_z_to_y(min(1.0, z + self._DASH_LENGTH))
             if y_top >= _DR_BOTTOM_Y:
                 continue
-            # Dash width scales with perspective: 1 px near the horizon,
-            # up to ~3 px right at the camera.
-            width = max(1, int(round(1 + (y_bot - _DR_HORIZON_Y) * 0.12)))
+            # Dash width stays a pinstripe: 1 px far away, 2 px only
+            # for the very nearest dashes. Anything thicker turns the
+            # center line into a blocky tower on a 128x32 panel.
+            width = 2 if (y_bot - _DR_HORIZON_Y) >= 14 else 1
             colour = _DR_LANE_EDGE if width == 1 else _DR_LANE_LINE
             for y in range(y_top, min(y_bot + 1, _DR_BOTTOM_Y)):
-                for dx in range(-(width // 2), (width // 2) + 1):
-                    px = _DR_VP_X + dx
-                    if 0 <= px < 128:
-                        canvas.pixel(px, y, colour)
+                if width == 1:
+                    canvas.pixel(_DR_VP_X, y, colour)
+                else:
+                    canvas.pixel(_DR_VP_X, y, colour)
+                    canvas.pixel(_DR_VP_X + 1, y, colour)
 
     def _paint_poles(self, canvas: Canvas) -> None:
         # Telephone poles on the left and right shoulders. Each pole
