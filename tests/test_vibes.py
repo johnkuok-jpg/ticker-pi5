@@ -210,6 +210,55 @@ def test_campfire_draws_logs_in_the_bottom_rows(config) -> None:  # type: ignore
     assert dark_hits > 60, f"expected >60 log-body pixels, got {dark_hits}"
 
 
+def test_campfire_field_is_a_pure_function_of_the_tick() -> None:
+    """The flame carries no simulation state between frames.
+
+    Two earlier campfires stored a heat buffer and stepped it, and both
+    died the same way: whatever we multiplied into the buffer compounded
+    frame over frame until the fire either smeared into a mound or went
+    out. This version samples a continuous noise field, so a fresh
+    instance jumped straight to tick N must produce exactly the field an
+    instance that has been running since tick 0 produces at tick N. If
+    someone reintroduces a persistent buffer, this fails.
+    """
+    running = _Campfire()
+    for t in range(200):
+        running._advance(t)
+
+    cold = _Campfire()
+    cold._advance(199)
+
+    assert running._heat.tolist() == cold._heat.tolist()
+
+
+def test_campfire_changes_far_less_per_frame_than_per_second() -> None:
+    """Motion is calm: the fire evolves over seconds, not per frame.
+
+    The user-visible bug this pins is jarring animation. A per-pixel
+    automaton re-rolls randomness every step, so consecutive frames are
+    only loosely correlated and the eye reads sizzle. Here the field
+    scrolls a fifth of a row per frame, so one frame of change must be a
+    small fraction of a second's worth of change.
+    """
+    fire = _Campfire()
+    fields = []
+    for t in range(120):
+        fire._advance(t)
+        fields.append(fire._heat.copy())
+
+    def mean_abs_diff(a, b) -> float:
+        return float(abs(a - b).mean())
+
+    per_frame = mean_abs_diff(fields[-1], fields[-2])
+    per_second = mean_abs_diff(fields[-1], fields[-31])  # 30 frames back
+
+    assert per_second > 0.2, f"fire looks frozen: {per_second} over one second"
+    assert per_frame * 8 < per_second, (
+        f"per-frame change {per_frame} is too close to per-second change "
+        f"{per_second} -- the animation will read as jittery"
+    )
+
+
 def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyped-def]
     """Rain paints a night gradient sky plus visible drop heads.
 
