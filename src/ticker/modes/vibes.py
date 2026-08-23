@@ -22,15 +22,25 @@ flame area. A hand-drawn log pile sits below the flames; embers on the
 top of the logs pulse with a slow noise so the fire looks like it's
 consuming something rather than floating above dead wood.
 
-**Rain / Aquarium.** Stubbed with a light animation and a "COMING SOON"
-label. They exist so the picker is not a one-item menu today and so a
-future PR only has to fill in ``render`` rather than plumb the mode
-selection end-to-end.
+**Rain.** Drops-on-a-window night scene: a shallow midnight-blue vertical
+gradient stands in for the sky through the pane, and up to ~20 drops slide
+down with fading trails, size-scaled speed, occasional surface-tension
+pauses, and merge-on-contact (a bigger drop swallows a smaller one and
+speeds up, exactly like real drops racing down a window). Every 20-40 s
+a single-frame lightning strike screen-blends bright silver across the
+whole panel and decays over ~4 frames, no branching bolts (they read as
+noise on 32 rows).
+
+**Aquarium.** Still stubbed with a light animation and a "COMING SOON"
+label. It exists so the picker isn't a two-item menu today and so a future
+PR only has to fill in ``render`` rather than plumb the mode selection
+end-to-end.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import random
 from typing import ClassVar, Protocol
 
@@ -375,31 +385,288 @@ class _Campfire:
 # plumbing don't have to change.
 
 
+# ---------------------------------------------------------------------------
+# Rain-on-a-window palette + constants
+# ---------------------------------------------------------------------------
+
+# Night sky through the pane. A shallow top-to-bottom gradient sells
+# the "looking out a window" read without any sky detail: darker at the
+# bottom (deep glass), a hair lighter at the top (city light bleed).
+_RAIN_BG_TOP    = (10, 14, 28)
+_RAIN_BG_BOTTOM = (4,  6,  14)
+
+# Drop colours. The head is a bright cool white -- water catching
+# whatever ambient light there is. The trail decays through cooler,
+# darker teal to nothing so a fresh drop reads as "currently sliding"
+# and an old one reads as "passed by a moment ago".
+_RAIN_HEAD          = (190, 215, 235)
+_RAIN_TRAIL_STAGES  = (
+    (140, 175, 210),  # freshest -- 1-2 ticks old
+    (85,  120, 165),
+    (50,  75,  110),
+    (25,  40,  70),
+    (12,  22,  45),   # oldest visible; below this the pixel is bg
+)
+
+# Lightning: a rare, dramatic flash. Frame 0 hits ~90% brightness on
+# every panel pixel, then decays over the next few frames back to the
+# base scene. During the flash the drops also read at silver so the
+# whole scene feels lit from behind.
+_RAIN_FLASH_STAGES = (
+    (210, 220, 235),  # frame 0 -- full flash
+    (150, 160, 180),  # frame 1
+    (90,  100, 125),  # frame 2
+    (45,  55,  80),   # frame 3 -- almost gone
+)
+
+
 class _Rain:
-    """Placeholder: dim blue diagonal streaks with a COMING SOON banner."""
+    """Water droplets sliding down a night window pane.
+
+    Each drop tracks a *head* position plus a deque of recent positions
+    that render as a fading trail -- the wet path down the glass. Drops
+    mostly slide down but wobble left/right so no two paths look like
+    a ruler line. When two drops touch, they merge: the bigger drop
+    absorbs the smaller and speeds up, exactly the way real drops on
+    a window pane rip through smaller drops on their way down.
+
+    Runtime footprint: ~20 drops * ~10 trail positions each = ~200
+    pixel writes per frame, plus 128*32 background paint. Trivial
+    on a Pi 5.
+
+    Lightning: on a random schedule (12-40 s between strikes) the
+    whole panel briefly flashes bright, decays over 4 frames, then
+    returns to the base scene. No branching bolts -- at 32 rows a
+    branching bolt reads as random noise, not lightning; the flash
+    alone carries the storm feel.
+    """
+
+    # Drop physics tuning.
+    _MAX_DROPS      = 20
+    _TRAIL_LEN      = len(_RAIN_TRAIL_STAGES)
+    # Speed is fractional rows per tick. Small drops crawl (0.2-0.4),
+    # bigger drops rip (0.6-1.2). Real drops on a window pane obey
+    # size-and-gravity: bigger = faster.
+    _MIN_SPEED      = 0.18
+    _MAX_SPEED      = 0.45
+    # Pause behaviour: a drop occasionally sticks for a second or two
+    # (surface tension) before continuing. Each frame there's a small
+    # chance to enter a pause state.
+    _PAUSE_PROB     = 0.006
+    _PAUSE_MIN      = 20   # ticks
+    _PAUSE_MAX      = 90
+    # Spawn cadence. A new drop appears every ~15-40 ticks until the
+    # population reaches _MAX_DROPS.
+    _SPAWN_MIN      = 12
+    _SPAWN_MAX      = 45
+    # Lightning cadence and shape.
+    _LIGHTNING_MIN  = 20 * 30   # 20 s at 30 fps
+    _LIGHTNING_MAX  = 40 * 30   # 40 s at 30 fps
+    _FLASH_FRAMES   = len(_RAIN_FLASH_STAGES)
 
     def __init__(self) -> None:
-        # Streak positions carried across frames so the streaks appear
-        # to fall rather than jitter each tick. Each entry is ``(x, y)``.
-        rng = random.Random(0xBA5EBA11)
-        self._streaks: list[list[int]] = [
-            [rng.randint(0, 127), rng.randint(0, 31)] for _ in range(40)
+        # Two RNGs. The first seeds the initial drop layout so the
+        # first preview frame is reproducible; the second drives
+        # per-frame stochastic behaviour (spawn timing, wobble, pauses,
+        # merges) and is intentionally *not* seeded so the scene
+        # doesn't loop across service restarts.
+        seed_rng = random.Random(0xBA5EBA11)
+        self._rng = random.Random()
+
+        self._drops: list[_Rain._Drop] = []
+        # Pre-populate so the first frame isn't an empty window.
+        for _ in range(self._MAX_DROPS // 2):
+            self._drops.append(self._new_drop(seed_rng, y=seed_rng.randint(0, 31)))
+
+        # Countdown until the next spawn (frames).
+        self._next_spawn = self._rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
+        # Countdown until the next lightning strike (frames).
+        self._next_flash = self._rng.randint(self._LIGHTNING_MIN, self._LIGHTNING_MAX)
+        # Frames remaining in the current flash (0 = no flash active).
+        self._flash_left = 0
+
+    # ------------------------------------------------------------------
+    # Drop bookkeeping
+    # ------------------------------------------------------------------
+
+    class _Drop:
+        """One water drop. Mutated in place each frame.
+
+        ``size`` is 1..3 and drives both the head brightness and the
+        speed multiplier. Merges bump ``size`` by 1 (capped at 3).
+
+        ``trail`` is a list of recent integer (x, y) grid cells the
+        drop has occupied, oldest first. Fresh positions get bright
+        trail colours; the tail fades to background.
+
+        ``pause`` is a frame countdown; while > 0 the drop doesn't
+        move (surface tension holding it in place).
+        """
+
+        __slots__ = ("x", "y", "speed", "size", "trail", "pause", "wobble_phase")
+
+        def __init__(self, x: float, y: float, speed: float, size: int, wobble_phase: float) -> None:
+            self.x = x
+            self.y = y
+            self.speed = speed
+            self.size = size
+            self.trail: list[tuple[int, int]] = []
+            self.pause = 0
+            self.wobble_phase = wobble_phase
+
+    def _new_drop(self, rng: random.Random, y: float = -1.0) -> "_Rain._Drop":
+        """Spawn a fresh drop at a random x, given y (or off-panel top)."""
+        return _Rain._Drop(
+            x=float(rng.randint(2, 125)),
+            y=y,
+            speed=rng.uniform(self._MIN_SPEED, self._MAX_SPEED),
+            size=1,
+            wobble_phase=rng.uniform(0.0, 6.283),
+        )
+
+    # ------------------------------------------------------------------
+    # Physics step
+    # ------------------------------------------------------------------
+
+    def _step(self, tick: int) -> None:
+        rng = self._rng
+
+        # Spawn pacing.
+        self._next_spawn -= 1
+        if self._next_spawn <= 0 and len(self._drops) < self._MAX_DROPS:
+            self._drops.append(self._new_drop(rng))
+            self._next_spawn = rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
+
+        # Lightning pacing. Flash duration overrides everything else
+        # visually; the countdown to the *next* flash only ticks down
+        # while no flash is active.
+        if self._flash_left > 0:
+            self._flash_left -= 1
+        else:
+            self._next_flash -= 1
+            if self._next_flash <= 0:
+                self._flash_left = self._FLASH_FRAMES
+                self._next_flash = rng.randint(self._LIGHTNING_MIN, self._LIGHTNING_MAX)
+
+        # Move each drop.
+        for drop in self._drops:
+            if drop.pause > 0:
+                drop.pause -= 1
+                continue
+            # Occasionally stick to the glass (surface tension).
+            if rng.random() < self._PAUSE_PROB:
+                drop.pause = rng.randint(self._PAUSE_MIN, self._PAUSE_MAX)
+                continue
+            # Record trail (integer cell) BEFORE moving so the trail
+            # includes the current head; the head render on top will
+            # paint over the freshest trail pixel with head colour.
+            ix, iy = int(drop.x), int(drop.y)
+            if 0 <= ix < 128 and 0 <= iy < 32:
+                if not drop.trail or drop.trail[-1] != (ix, iy):
+                    drop.trail.append((ix, iy))
+                    if len(drop.trail) > self._TRAIL_LEN:
+                        drop.trail.pop(0)
+            # Advance. Speed scales with size (bigger drops fall faster).
+            drop.y += drop.speed * (1.0 + 0.3 * (drop.size - 1))
+            # Wobble x with a slow sine + small jitter so drops don't
+            # slide in ruler-straight lines. Amplitude is <1 px so the
+            # drop stays roughly in its column on a 128 px panel.
+            drop.wobble_phase += 0.15
+            drop.x += 0.35 * math.sin(drop.wobble_phase) + rng.uniform(-0.15, 0.15)
+
+        # Merges: any two drops whose heads occupy the same or adjacent
+        # cell fuse. Iterating an index pair is O(n^2) but n <= 20.
+        merged: set[int] = set()
+        for i, a in enumerate(self._drops):
+            if i in merged:
+                continue
+            for j in range(i + 1, len(self._drops)):
+                if j in merged:
+                    continue
+                b = self._drops[j]
+                if abs(a.x - b.x) <= 1.2 and abs(a.y - b.y) <= 1.2:
+                    # Bigger drop absorbs the smaller; if equal, the
+                    # lower one wins (gravity's on its side).
+                    if a.size > b.size or (a.size == b.size and a.y >= b.y):
+                        winner, loser = a, b
+                        merged.add(j)
+                    else:
+                        winner, loser = b, a
+                        merged.add(i)
+                    winner.size = min(3, winner.size + 1)
+                    # Speed bumps too -- merged drop is heavier.
+                    winner.speed = min(self._MAX_SPEED * 1.6,
+                                       winner.speed + loser.speed * 0.3)
+                    # A merge often kicks the winner free from any pause.
+                    winner.pause = 0
+                    if winner is b:
+                        break  # ``a`` was absorbed; stop scanning j for it
+        if merged:
+            self._drops = [d for i, d in enumerate(self._drops) if i not in merged]
+
+        # Retire drops that have slid off the bottom. Also retire drops
+        # that have wandered off the sides (wobble accumulator drift).
+        self._drops = [
+            d for d in self._drops
+            if -2 <= d.x < 130 and d.y < 34
         ]
-        self._rng = rng
+
+    # ------------------------------------------------------------------
+    # Draw
+    # ------------------------------------------------------------------
+
+    def _paint_background(self, canvas: Canvas) -> None:
+        """Vertical gradient from midnight top to darker glass bottom."""
+        for y in range(32):
+            t = y / 31.0
+            r = int(_RAIN_BG_TOP[0] + (_RAIN_BG_BOTTOM[0] - _RAIN_BG_TOP[0]) * t)
+            g = int(_RAIN_BG_TOP[1] + (_RAIN_BG_BOTTOM[1] - _RAIN_BG_TOP[1]) * t)
+            b = int(_RAIN_BG_TOP[2] + (_RAIN_BG_BOTTOM[2] - _RAIN_BG_TOP[2]) * t)
+            canvas.fill_rect(0, y, 128, 1, (r, g, b))
 
     def render(self, canvas: Canvas, tick: int) -> None:
-        canvas.clear()
-        for streak in self._streaks:
-            x, y = streak
-            # Two-pixel tail for a bit of motion feel.
-            canvas.pixel(x, y, (60, 90, 160))
-            canvas.pixel(x, (y - 1) % 32, (30, 45, 90))
-            # Diagonal fall: 1 down, 1 across every two frames.
-            streak[1] = (y + 1) % 32
-            if tick % 2 == 0:
-                streak[0] = (x - 1) % 128
-        canvas.text_centered(12, "RAIN", (180, 200, 235), MEDIUM)
-        canvas.text_centered(24, "COMING SOON", (110, 130, 170), SMALL)
+        self._step(tick)
+
+        # Base scene: night gradient behind everything.
+        self._paint_background(canvas)
+
+        # Draw each drop's trail (oldest first so newer trail pixels
+        # paint over older ones at any collision) then its head.
+        for drop in self._drops:
+            for idx, (tx, ty) in enumerate(drop.trail):
+                # Oldest is trail[0] -> stage index len-1;
+                # newest is trail[-1] -> stage index 0.
+                age = len(drop.trail) - 1 - idx
+                stage = _RAIN_TRAIL_STAGES[min(age, self._TRAIL_LEN - 1)]
+                if 0 <= tx < 128 and 0 <= ty < 32:
+                    canvas.pixel(tx, ty, stage)
+            ix, iy = int(drop.x), int(drop.y)
+            if 0 <= ix < 128 and 0 <= iy < 32:
+                canvas.pixel(ix, iy, _RAIN_HEAD)
+                # Bigger drops get a slight halo so size reads visually.
+                if drop.size >= 2 and iy + 1 < 32:
+                    canvas.pixel(ix, iy + 1, _RAIN_TRAIL_STAGES[0])
+                if drop.size >= 3 and ix + 1 < 128:
+                    canvas.pixel(ix + 1, iy, _RAIN_TRAIL_STAGES[0])
+
+        # Lightning: composite a flash colour over everything by simply
+        # brightening every pixel. On an LED panel additive brightening
+        # over the whole scene reads exactly like a lightning bulb going
+        # off behind the glass -- the drops still show through because
+        # they were already brighter than the sky.
+        if self._flash_left > 0:
+            stage = _RAIN_FLASH_STAGES[self._FLASH_FRAMES - self._flash_left]
+            fr, fg, fb = stage
+            img = canvas.image_buffer
+            for y in range(32):
+                for x in range(128):
+                    r, g, b = img.getpixel((x, y))
+                    # Screen-blend so bright drops stay bright, dark
+                    # sky lifts most: out = 255 - (255-a)(255-b)/255.
+                    nr = 255 - ((255 - r) * (255 - fr)) // 255
+                    ng = 255 - ((255 - g) * (255 - fg)) // 255
+                    nb = 255 - ((255 - b) * (255 - fb)) // 255
+                    img.putpixel((x, y), (nr, ng, nb))
 
 
 class _Aquarium:

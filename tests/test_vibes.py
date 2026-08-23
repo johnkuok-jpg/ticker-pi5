@@ -4,8 +4,9 @@
 The vibes mode is a full-screen screensaver that dispatches to one of
 several sub-vibes (Campfire, Rain, Aquarium). These tests cover the
 dispatch contract, the config persistence, and enough per-vibe pixel
-sampling to catch a regression that turns the campfire cold or removes
-the "COMING SOON" placeholders from Rain/Aquarium.
+sampling to catch a regression that turns the campfire cold, freezes
+the rain drops in place, or removes the "COMING SOON" placeholder from
+the Aquarium stub.
 """
 
 from __future__ import annotations
@@ -206,17 +207,44 @@ def test_campfire_draws_logs_in_the_bottom_rows(config) -> None:  # type: ignore
     assert dark_hits > 100, f"expected >100 log-body pixels, got {dark_hits}"
 
 
-def test_rain_shows_coming_soon(config) -> None:  # type: ignore[no-untyped-def]
-    """Rain is a stub -- the label is the whole product."""
+def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyped-def]
+    """Rain paints a night gradient sky plus visible drop heads.
+
+    Full scene coverage: every pixel is at least the gradient bg, and
+    across a short run we expect drop heads (matching ``_RAIN_HEAD``)
+    to land in a variety of x positions -- i.e. the drops are actually
+    moving down the pane, not stuck at one x.
+    """
+    from ticker.modes.vibes import _RAIN_HEAD, _RAIN_BG_TOP, _RAIN_BG_BOTTOM
+
     config.set_vibe("rain")
     mode = VibesMode(config)
     canvas = Canvas(config.width, config.height)
-    mode.render(canvas, tick=0)
 
-    pixels = _pixels(canvas)
-    lit = sum(1 for p in pixels if p != (0, 0, 0))
-    # The COMING SOON label plus streaks light up dozens of pixels.
-    assert lit > 60, f"rain vibe drew almost nothing ({lit} lit pixels)"
+    head_positions: set[tuple[int, int]] = set()
+    seen_bg_top = False
+    seen_bg_bottom = False
+    for tick in range(20):
+        canvas = Canvas(config.width, config.height)
+        mode.render(canvas, tick=tick)
+        pixels = _pixels(canvas)
+        # Full-panel gradient means no pixel is pure black.
+        assert all(p != (0, 0, 0) for p in pixels), "rain vibe should paint every pixel"
+        for idx, p in enumerate(pixels):
+            if p == _RAIN_HEAD:
+                head_positions.add((idx % 128, idx // 128))
+            if p == _RAIN_BG_TOP:
+                seen_bg_top = True
+            if p == _RAIN_BG_BOTTOM:
+                seen_bg_bottom = True
+
+    # Drops moved: several distinct head positions over the run.
+    assert len(head_positions) >= 5, (
+        f"expected multiple drop-head positions over 20 ticks, got {len(head_positions)}"
+    )
+    # Gradient endpoints render somewhere on the panel.
+    assert seen_bg_top, "expected the top gradient colour on the panel"
+    assert seen_bg_bottom, "expected the bottom gradient colour on the panel"
 
 
 def test_aquarium_shows_coming_soon(config) -> None:  # type: ignore[no-untyped-def]
