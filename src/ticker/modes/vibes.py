@@ -1313,24 +1313,32 @@ class _Aquarium:
 _DR_SKY_TOP    = (18, 22, 55)     # deep blue-purple
 _DR_SKY_HORIZ  = (215, 110, 55)   # warm orange at the horizon
 
-# Distant hills silhouetted against the sky along the horizon. A single
-# medium-dark colour reads as a silhouette on LEDs; a gradient would
-# just look like noise at 128 px wide.
-_DR_HILLS      = (35, 25, 60)
+# Desert mesas silhouetted against the sunset sky -- a deep, dusty
+# purple-brown reads as "backlit mesa" without competing with the
+# orange horizon. A single medium-dark colour reads as a silhouette
+# on LEDs; a gradient would just look like noise at 128 px wide.
+_DR_HILLS      = (60, 30, 45)
 
 # Road palette. Real asphalt at dusk photographs almost black with a
 # subtle warm tint from the sky; going true black loses depth cues so
 # we keep a hair of blue-grey. Shoulders sit a touch lighter so the
 # lane edges read without a hard line.
 _DR_ROAD       = (18, 18, 28)
-_DR_SHOULDER   = (55, 45, 40)     # gravel edge along the lane border
-_DR_GROUND     = (32, 22, 26)     # dusk-lit dirt/scrub beyond the shoulders
+_DR_SHOULDER   = (95, 65, 45)     # dusty sand-orange gravel edge
+_DR_GROUND     = (75, 45, 35)     # sunset-lit desert sand beyond the shoulders
 _DR_LANE_LINE  = (250, 235, 180)  # bright cream -- the classic dash colour
 _DR_LANE_EDGE  = (230, 210, 150)  # slightly duller edge for smaller/farther dashes
 
 # Roadside poles: dark silhouettes against the sky, then just below the
 # horizon they blend into the road. Tall, thin, whipping past.
 _DR_POLE       = (25, 15, 30)
+
+# Saguaro cacti standing along the shoulders. Silhouetted dark green
+# against the sunset -- readable as "cactus" once the classic T shape
+# with an arm reads. Uses two tones so the near cacti pop and the far
+# ones recede into the mesas.
+_DR_CACTUS_NEAR = (30, 55, 30)    # near-camera saguaros
+_DR_CACTUS_FAR  = (45, 35, 40)    # distant saguaros, closer to hill colour
 
 # Dashboard strip: solid dark at the very bottom so the road doesn't
 # hit the panel edge. Reads as "looking over a dashboard".
@@ -1426,21 +1434,43 @@ class _Driving:
     # ------------------------------------------------------------------
 
     def _build_hills(self) -> list[int]:
-        """Precomputed hill silhouette, 256 columns wide.
+        """Precomputed desert mesa silhouette, 256 columns wide.
 
         Each entry is the number of rows the silhouette rises above
-        the horizon at that column. Sum of two sine waves plus a
-        little RNG jitter -- enough shape that hills read as rolling
-        rather than as a saw-tooth pattern.
+        the horizon at that column. Instead of rolling sinusoidal
+        hills, we lay down flat-topped mesa segments with sharp
+        vertical edges -- the signature Monument Valley profile that
+        reads unambiguously as "desert" on a 128 px strip.
         """
-        import math
         rng = self._layout_rng
-        out: list[int] = []
-        for x in range(256):
-            base = 2.0 + 1.5 * math.sin(x * 0.05) + 0.9 * math.sin(x * 0.13 + 1.3)
-            jitter = rng.uniform(-0.3, 0.3)
-            h = int(round(max(0.0, base + jitter)))
-            out.append(min(h, 4))   # cap so hills don't eat the sky
+        out: list[int] = [0] * 256
+        x = 0
+        while x < 256:
+            # Alternate flat gaps (open sky) with mesa plateaus so
+            # the horizon isn't a solid wall of silhouette.
+            gap = rng.randint(8, 22)
+            for k in range(gap):
+                if x + k < 256:
+                    out[x + k] = 0
+            x += gap
+            if x >= 256:
+                break
+            # A mesa: pick a plateau height and width, plus a tiny
+            # step down on one edge so it doesn't feel machined.
+            plateau_h = rng.choice([2, 2, 3, 3, 4])
+            mesa_w = rng.randint(12, 30)
+            step_edge = rng.choice(["left", "right", "none"])
+            for k in range(mesa_w):
+                if x + k >= 256:
+                    break
+                h = plateau_h
+                # Small ramp-down at one edge for visual variety.
+                if step_edge == "left" and k == 0:
+                    h = max(1, plateau_h - 1)
+                elif step_edge == "right" and k == mesa_w - 1:
+                    h = max(1, plateau_h - 1)
+                out[x + k] = h
+            x += mesa_w
         return out
 
     def _pole_slot(self, slot: int) -> tuple[float, float]:
@@ -1619,6 +1649,83 @@ class _Driving:
                         if 0 <= cpx < 128 and 0 <= cross_y < 32:
                             canvas.pixel(cpx, cross_y, _DR_POLE)
 
+    def _cactus_slot(self, slot: int) -> tuple[float, float, int, int]:
+        """Deterministic per-slot cactus params.
+
+        Returns ``(jitter_x, height_scale, arm_side, arm_offset)``
+        where ``arm_side`` is -1/0/+1 (0 means no arm), and
+        ``arm_offset`` is how many pixels below the top the arm
+        attaches. Cached-by-seed so each cactus keeps its shape.
+        """
+        r = random.Random(0xCAC ^ slot)
+        jitter_x    = r.uniform(-0.015, 0.015)
+        height_scale = r.uniform(0.9, 1.25)
+        # 60% get an arm; 30% get two (one either side); 10% bare.
+        roll = r.random()
+        if roll < 0.10:
+            arm_side = 0
+        elif roll < 0.70:
+            arm_side = r.choice([-1, +1])
+        else:
+            arm_side = 2  # sentinel: both arms
+        arm_offset = r.randint(2, 3)
+        return jitter_x, height_scale, arm_side, arm_offset
+
+    def _paint_cacti(self, canvas: Canvas) -> None:
+        # Saguaros along the shoulders. Placed at half-pole spacing so
+        # they don't overlap with poles, and offset by half a spacing
+        # so a cactus and a pole never share the same z. Only rendered
+        # when they'd be tall enough to read as a cactus (>= 3 px).
+        spacing = self._POLE_SPACING
+        offset  = spacing * 0.5
+        d = (self._distance + offset) % spacing
+        base_slot = int((self._distance + offset) // spacing)
+        for i in range(20):
+            slot = base_slot + i
+            z = d + i * spacing - spacing
+            if z <= 0.05 or z > 1.0:
+                continue
+            jitter_x, height_scale, arm_side, arm_offset = self._cactus_slot(slot)
+            base_y = self._project_z_to_y(z)
+            if base_y >= _DR_BOTTOM_Y:
+                continue
+            t = (base_y - _DR_HORIZON_Y) / max(1, _DR_BOTTOM_Y - _DR_HORIZON_Y)
+            width = _DR_ROAD_TOP_W + (_DR_ROAD_BOTTOM_W - _DR_ROAD_TOP_W) * t
+            half = width / 2.0 + 4.0    # +4 px past the shoulder, one more than poles
+            cactus_h = int(round(6 * (t + 0.15) * height_scale))
+            if cactus_h < 3:
+                continue    # too far to read as anything but a speck
+            # Colour: far cacti blend into the mesa palette, near ones
+            # stand out in green.
+            colour = _DR_CACTUS_NEAR if t > 0.35 else _DR_CACTUS_FAR
+            for side in (-1, +1):
+                px = int(round(_DR_VP_X + side * half + jitter_x * 128))
+                if not (0 <= px < 128):
+                    continue
+                # Trunk: vertical column, 1 px wide (2 px right at camera).
+                trunk_w = 2 if t > 0.75 else 1
+                for k in range(cactus_h):
+                    py = base_y - k
+                    if 0 <= py < 32:
+                        canvas.pixel(px, py, colour)
+                        if trunk_w == 2 and 0 <= px + 1 < 128:
+                            canvas.pixel(px + 1, py, colour)
+                # Arms: only render if the cactus is tall enough that
+                # a bump reads as an arm and not as noise.
+                if cactus_h >= 5 and arm_side != 0:
+                    # Arm attaches near the top: goes out 1 px, up 1 px.
+                    arm_y = base_y - min(arm_offset, cactus_h - 2)
+                    sides_to_draw = (-1, +1) if arm_side == 2 else (arm_side,)
+                    for aside in sides_to_draw:
+                        # Elbow pixel (goes out from trunk).
+                        elbow_x = px + aside
+                        if 0 <= elbow_x < 128 and 0 <= arm_y < 32:
+                            canvas.pixel(elbow_x, arm_y, colour)
+                        # Tip pixel (one row up).
+                        tip_y = arm_y - 1
+                        if 0 <= elbow_x < 128 and 0 <= tip_y < 32:
+                            canvas.pixel(elbow_x, tip_y, colour)
+
     def _paint_headlights(self, canvas: Canvas) -> None:
         if self._headlight_progress is None:
             return
@@ -1668,6 +1775,11 @@ class _Driving:
         # occludes the dash correctly.
         self._paint_dashes(canvas)
         self._paint_poles(canvas)
+        # Cacti come after poles: at a given z they're offset by half
+        # a spacing so they never collide with a pole, and the paint
+        # order doesn't really matter -- kept last of the roadside
+        # props so the green trunk sits cleanly on the sand shoulder.
+        self._paint_cacti(canvas)
         # Oncoming headlights compose on top of the road; if a pole
         # sits between the camera and the headlight, tough luck (at
         # 32 rows the correct z-sort is imperceptible).
