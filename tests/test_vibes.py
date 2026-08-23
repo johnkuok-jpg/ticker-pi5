@@ -187,7 +187,7 @@ def test_campfire_draws_logs_in_the_bottom_rows(config) -> None:  # type: ignore
     """Log body pixels use the fixed dark-brown palette entry.
 
     If the log renderer were skipped or drawn off-panel, no pixel would
-    match the exact _LOG_DARK triple in the bottom five rows.
+    match the exact _LOG_DARK triple in the bottom rows.
     """
     from ticker.modes.vibes import _LOG_DARK, _LOG_TOP
 
@@ -202,9 +202,12 @@ def test_campfire_draws_logs_in_the_bottom_rows(config) -> None:  # type: ignore
         for x in range(128):
             if img.getpixel((x, y)) == _LOG_DARK:
                 dark_hits += 1
-    # Two logs span ~54 px wide across 5 rows minus notches -- easily
-    # 100+ pixels of body colour on a fresh frame.
-    assert dark_hits > 100, f"expected >100 log-body pixels, got {dark_hits}"
+    # Two angled logs at thickness 5, minus the notches and the pixels the
+    # flame overdraws. The bar is deliberately well below the actual count so
+    # that retuning the log geometry doesn't require retuning the test -- this
+    # is asserting "logs got drawn on-panel in the right colour", not a
+    # specific silhouette.
+    assert dark_hits > 60, f"expected >60 log-body pixels, got {dark_hits}"
 
 
 def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyped-def]

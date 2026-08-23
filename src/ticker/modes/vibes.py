@@ -138,13 +138,20 @@ _CAMPFIRE_PALETTE: tuple[tuple[int, int, int], ...] = (
 # The Doom PSX fire needs vertical room to look like fire: with only 4-5
 # rows the flame reads as a bright edge, not a flame. Twenty-plus rows
 # is where the tips start visibly waving and the classic wobble emerges.
-_LOG_ROWS = 7
-_LOG_TOP = 32 - _LOG_ROWS   # y = 25
-# Flame buffer covers rows 0..26 (27 rows visible + 1 hidden fuel row).
+# Log pile sits low in the frame so the fire dominates. Log geometry is
+# tuned in ``_draw_logs`` (thinner logs, outer ends dropped one row), so
+# the visible flame area grows from 27 to 29 rows. ``_LOG_TOP`` here is
+# where the FUEL row lives -- above that height heat can propagate. We
+# push it down two rows to give the plasma more vertical runway. Reads
+# as if the camera pulled up: wood is a rim along the bottom edge, and
+# a tall column of flame climbs out of it.
+_LOG_ROWS = 3
+_LOG_TOP = 32 - _LOG_ROWS   # y = 29
+# Flame buffer covers rows 0..28 (29 rows visible + 1 hidden fuel row).
 # The fuel row is fed in just above the log crest so heat drives up the
 # whole panel, letting the tips lick the top edge.
 _FIRE_TOP = 0
-_FIRE_HEIGHT = _LOG_TOP - _FIRE_TOP  # rows of *visible* flame (0..26)
+_FIRE_HEIGHT = _LOG_TOP - _FIRE_TOP  # rows of *visible* flame (0..28)
 
 # Log palette. Kept dim so the logs read as silhouettes with warmth on top
 # rather than competing with the flames for attention. The "ember" colour
@@ -182,8 +189,8 @@ class _Campfire:
     # Buffer geometry. Width matches the panel; height is the visible
     # flame area plus one hidden fuel row at the bottom that stays hot
     # every frame. On a 32-row panel with a 5-row log pile this gives
-    # 27 visible flame rows -- enough for the flame tips to actually
-    # wave rather than reading as a bright edge.
+    # 29 visible flame rows -- plenty of vertical runway for the tips
+    # to actually wave and curl rather than reading as a bright edge.
     _BUFFER_HEIGHT = _FIRE_HEIGHT + 1  # includes fuel row
 
     def __init__(self) -> None:
@@ -349,8 +356,11 @@ class _Campfire:
         # stack." Leans a hair to the right so it doesn't look robotic.
         # Its top is inside the flame area; the crest gets the fire-lit
         # LIGHT colour and the sides fade to DARK, giving it volume.
-        vert_x_bot, vert_y_bot = 64, 27  # base sits inside the log cross
-        vert_x_top, vert_y_top = 66, 12  # top pokes into the flames
+        # Kindling base sits inside the log cross (log crest is now y=27
+        # after shrinking the pile), top pokes higher into the taller flame
+        # column so the flames lick past it.
+        vert_x_bot, vert_y_bot = 64, 29  # base sits inside the log cross
+        vert_x_top, vert_y_top = 66, 10  # top pokes into the flames
         vert_thick = 4
         vdx = vert_x_top - vert_x_bot
         vdy = vert_y_top - vert_y_bot
@@ -388,9 +398,17 @@ class _Campfire:
 
         log_specs = (
             # (x_outer, y_outer, x_inner, y_inner, thickness)
-            # y_outer=29 keeps the 3-px-radius end cap fully on-panel.
-            (7,   29, 78, 22, 7),   # left log:  outer left,  crosses right of centre
-            (120, 29, 50, 22, 7),   # right log: outer right, crosses left  of centre (on top)
+            # y_outer=30 sits the outer ends one row lower than before so
+            # the log pile reads as a rim along the bottom edge ("camera
+            # up"). Thickness stays 5 -- thick enough to keep the four
+            # shading rows below the crest, thin enough that the crest
+            # is at y=28 (outer) / y=22 (inner) and the flames get all
+            # of rows 0..27 to work with. 3-px-radius end cap still fits
+            # inside the panel: cap centre y=30, cap spans y=27..32 clipped
+            # to y=27..31, which sits just below the crest without eating
+            # into the flame column.
+            (7,   30, 78, 24, 5),   # left log:  outer left,  crosses right of centre
+            (120, 30, 50, 24, 5),   # right log: outer right, crosses left  of centre (on top)
         )
 
         for x_o, y_o, x_i, y_i, thickness in log_specs:
@@ -473,12 +491,20 @@ class _Campfire:
                 if 0 <= ex < 128 and 0 <= ey < 32:
                     canvas.pixel(ex, ey, color)
 
-    # Plasma step rate. At 30fps, stepping every frame makes the fire look
-    # like a strobe. Real fire flickers at ~15 Hz. We step every 2 ticks
-    # (15 Hz) and INTERPOLATE the intermediate frame between the previous
-    # and current buffers, so the perceived animation is smooth 30 fps
-    # motion with a 15 Hz plasma underneath.
-    _STEP_EVERY = 2
+    # Plasma step rate. At 30fps, stepping every frame reads as a strobe
+    # even with interpolation -- each simulation step is a big palette
+    # jump (Doom's decay is aggressive by design), so what the eye sees
+    # is a rapid twitch on every step frame. Real relaxing fire wobbles
+    # closer to 7-8 Hz: slow enough that the flame tongues visibly rise
+    # and curl instead of blurring together.
+    #
+    # We step every 4 ticks (~7.5 Hz on the 30fps loop) and interpolate
+    # the THREE intermediate frames between the previous buffer and the
+    # current one on the heat scalar, so the perceived animation is
+    # smooth 30fps motion with a slow plasma underneath. Blend fractions
+    # are 0, 0.25, 0.5, 0.75 -- the eye sees a continuous rise instead
+    # of a hard jump every step frame.
+    _STEP_EVERY = 4
 
     def render(self, canvas: Canvas, tick: int) -> None:
         # Step the plasma on a slower cadence than the frame rate. The
