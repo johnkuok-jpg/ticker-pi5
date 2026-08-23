@@ -182,18 +182,45 @@ class _Campfire:
         """
         buf = self._buffer
         rng = self._rng
-        # Sparser fuel: about a third of the base row starts hot each
-        # frame, the rest starts cool. This is what gives the flames
-        # distinct "tongues" with dark gaps between them instead of a
-        # solid wall of orange. Doom PSX did the same trick -- the
-        # bottom row was mostly white with dark gaps punched in.
+        # Fuel is CONCENTRATED, not panel-wide. A real campfire has
+        # heat only above the log pile; if we seed the full 128 px
+        # base row uniformly, the flame reads as a squat 128 x 27
+        # wall of fire. Narrowing the fuel to the centre of the panel
+        # gives a much taller silhouette even though the buffer height
+        # is unchanged, because the same heat now propagates through
+        # a narrow column instead of a wide one.
+        #
+        # Window layout:
+        #   HOT_CORE  = full-intensity fuel where the log pile sits.
+        #   WARM_EDGE = tapered fuel band on either side of the core --
+        #               a few flickering sparks so the fire has some
+        #               width variation instead of a hard-edged pillar.
+        #   COLD      = everything outside; permanently zero.
+        HOT_CORE_L, HOT_CORE_R = 40, 88     # 48 px hot column, centred
+        WARM_L, WARM_R         = 28, 100    # 24 px total taper (12 each side)
         fuel = buf[-1]
         for x in range(128):
-            r = rng.random()
-            if r > 0.60:
-                fuel[x] = 31
-            elif r > 0.30:
-                fuel[x] = rng.randint(18, 28)
+            if HOT_CORE_L <= x < HOT_CORE_R:
+                # Same tri-state as before, but only inside the core:
+                # ~40% hot / ~30% mid / ~30% cold. The cold pixels
+                # inside the core are what create the flame TONGUES;
+                # without them we're back to a solid wall.
+                r = rng.random()
+                if r > 0.60:
+                    fuel[x] = 31
+                elif r > 0.30:
+                    fuel[x] = rng.randint(18, 28)
+                else:
+                    fuel[x] = 0
+            elif WARM_L <= x < WARM_R:
+                # Sparse warm sparks around the edges -- most of the
+                # time they're cold, occasionally a mid or hot spark
+                # pops so the flame doesn't have a hard vertical edge.
+                r = rng.random()
+                if r > 0.85:
+                    fuel[x] = rng.randint(18, 28)
+                else:
+                    fuel[x] = 0
             else:
                 fuel[x] = 0
 
