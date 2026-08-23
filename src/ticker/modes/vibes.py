@@ -37,10 +37,12 @@ top 3 rows. Along the bottom a two-row sand strip anchors six swaying
 seaweed fronds (top of each frond wobbles more than the base, exactly
 like a real weed in a current). Two filter vents in the sand each
 release bubbles on their own cadence -- bubbles wobble sideways as they
-rise (bubbles in water actually do sway) and come in two sizes. Four
-fish sprites (tang, angelfish, neon tetra, clownfish) drift horizontally
-with a small triangular y-bob and reflect off the tank walls; they
-never wrap through the glass.
+rise (bubbles in water actually do sway) and come in two sizes. Fish
+come and go: a rotating cast of species (tang, angelfish, neon tetra,
+clownfish, yellow tang, butterflyfish, pufferfish, blue chromis, betta)
+spawn just off-screen, drift across with a small triangular y-bob, and
+exit the far side. 2-3 are always on screen; new species stream in on a
+slow cadence so the tank never repeats itself.
 """
 
 from __future__ import annotations
@@ -771,6 +773,81 @@ _FISH_SPRITES: tuple[
         (255, 250, 240),  # fin  -- white bands + tail edge
         (10,  10,  15),   # eye
     ),
+    # Yellow tang -- longer oval with a needle-thin caudal peduncle and
+    # wide dorsal + anal fins. Solid canary yellow.
+    (
+        "     FFFFFF   \n"
+        "   BBBBBBBB   \n"
+        "F BBBBBBBBBB  \n"
+        "FFBBBBBBBBBEB \n"
+        "F BBBBBBBBBB  \n"
+        "   BBBBBBBB   \n"
+        "     FFFFFF   ",
+        (250, 210, 40),   # body -- canary yellow
+        (180, 140, 20),   # dark -- underside
+        (255, 235, 120),  # fin  -- pale yellow
+        (10,  10,  15),   # eye
+    ),
+    # Butterflyfish -- disc-shaped with a black eye stripe. Silver-white
+    # body with a warm yellow rear half (a schooling reef staple).
+    (
+        "    BBBB    \n"
+        "   BBBBBBB  \n"
+        "  BBBBFFFFF \n"
+        "FEBBBBFFFFF \n"
+        "F BBBBFFFFF \n"
+        "  BBBBFFFFF \n"
+        "   BBBBBBB  \n"
+        "    BBBB    ",
+        (230, 230, 235),  # body -- silver white
+        (150, 150, 160),  # dark -- shaded silver
+        (250, 205, 60),   # fin  -- yellow rear half
+        (10,  10,  15),   # eye
+    ),
+    # Pufferfish -- nearly circular with tiny fins and a big eye. Sandy
+    # tan with darker spots (represented by the dark palette slot).
+    (
+        "    BBBB    \n"
+        "  BBBDBBDBB \n"
+        " BBBBBBBBBBB\n"
+        "FEBBDBBBDBBB\n"
+        "FFBBBBBBBBBB\n"
+        " BBBBDBBBDBB\n"
+        "  BBBBBBBBB \n"
+        "    BBBB    ",
+        (215, 175, 100),  # body -- sandy tan
+        (140, 100, 50),   # dark -- spots
+        (245, 210, 145),  # fin  -- pale belly hint
+        (10,  10,  15),   # eye
+    ),
+    # Blue chromis -- small fusiform damselfish, sleek and quick. Solid
+    # vivid blue.
+    (
+        "F BBBBBBBB  \n"
+        "FFBBBBBBBEB \n"
+        "F BBBBBBBB  \n"
+        "   DDDDDD   ",
+        (65,  115, 235),  # body -- vivid blue
+        (30,  60,  140),  # dark -- shaded belly
+        (150, 190, 250),  # fin  -- pale sky
+        (10,  10,  15),   # eye
+    ),
+    # Betta / fighting fish -- long trailing fins. Rich magenta.
+    (
+        "       FF   \n"
+        "     BBBFF  \n"
+        "   FBBBBBBB \n"
+        "F FBBBBBBEB \n"
+        "FFFBBBBBBBB \n"
+        "F FBBBBBBBB \n"
+        "   FBBBBBBB \n"
+        "     BBBFF  \n"
+        "       FF   ",
+        (185, 45,  110),  # body -- magenta
+        (110, 25,  70),   # dark -- shaded
+        (240, 100, 175),  # fin  -- pink flare
+        (10,  10,  15),   # eye
+    ),
 )
 
 
@@ -785,8 +862,10 @@ class _Aquarium:
     * A sand strip and swaying seaweed silhouettes at the bottom.
     * Rising bubbles from a couple of fixed vents in the sand -- real
       bubbles come from filter outlets, not random floor tiles.
-    * ~4 fish drifting horizontally with slow y-bob, each mirrored when
-      they hit the tank edge (they never wrap through the wall).
+    * A rotating cast of fish that spawn just off-screen, swim across
+      the panel, and exit the other side (not the same 4 residents on
+      loop). Species are drawn from a catalog of ~10, always keeping
+      2-3 on screen so the tank never looks empty.
 
     Everything animates off ``tick`` plus an unseeded RNG for bubble
     spawn jitter so the scene doesn't loop across restarts.
@@ -796,6 +875,13 @@ class _Aquarium:
     _BUBBLE_VENTS = (28, 92)      # x positions of the two sand vents
     _WEED_XS      = (10, 20, 44, 78, 108, 118)  # seaweed frond bases
     _SAND_Y       = 30            # top row of sand (rows 30, 31)
+    # Fish spawn pacing. Keep at least this many fish on screen so the
+    # tank never looks abandoned, and never more than _MAX_FISH so the
+    # panel doesn't turn into a fish pile-up.
+    _MIN_FISH     = 2
+    _MAX_FISH     = 5
+    _SPAWN_MIN    = 30   # frames between spawn attempts once above min
+    _SPAWN_MAX    = 150
 
     class _Fish:
         __slots__ = ("sprite_idx", "x", "y", "y_phase", "speed", "direction")
@@ -824,29 +910,50 @@ class _Aquarium:
         seed_rng = random.Random(0xC0FFEEBE)
         self._rng = random.Random()
 
-        # Spawn one fish per sprite so all four species are on screen at
-        # start. Positions and directions are seeded so the first frame
-        # is reproducible. y range is bounded so the tallest sprite
-        # (9-row angelfish) fits between the caustic band and the sand.
+        # Pre-populate: seed 3 random fish at random x positions inside
+        # the tank so the first frame isn't empty water. Everything
+        # after that comes from the spawn system.
         self._fish: list[_Aquarium._Fish] = []
-        for idx, (sprite, *_rest) in enumerate(_FISH_SPRITES):
-            rows = sprite.split("\n")
-            h = len(rows)
-            y_min = 4
-            y_max = max(y_min, self._SAND_Y - h - 1)
-            self._fish.append(_Aquarium._Fish(
-                sprite_idx=idx,
-                x=float(seed_rng.randint(10, 110)),
-                y=float(seed_rng.randint(y_min, y_max)),
-                y_phase=seed_rng.random(),
-                speed=seed_rng.uniform(0.15, 0.35),
-                direction=seed_rng.choice((-1, 1)),
-            ))
+        for _ in range(3):
+            self._fish.append(self._make_fish(seed_rng, on_screen=True))
 
         self._bubbles: list[_Aquarium._Bubble] = []
         # Countdown until each vent next spawns a bubble.
         self._vent_cooldowns = [self._rng.randint(4, 14)
                                 for _ in self._BUBBLE_VENTS]
+        # Countdown until next fish spawn attempt.
+        self._next_spawn = self._rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
+
+    def _make_fish(self, rng: random.Random,
+                   on_screen: bool = False) -> "_Aquarium._Fish":
+        """Build a fish -- randomly picked species, y row, direction.
+
+        If ``on_screen`` is True, the fish starts inside the visible
+        panel (used only for the initial pre-populate). Otherwise it
+        starts just off the panel on the side opposite its swim
+        direction, so it slides into frame naturally.
+        """
+        idx = rng.randrange(len(_FISH_SPRITES))
+        sprite = _FISH_SPRITES[idx][0]
+        rows = sprite.split("\n")
+        h = len(rows)
+        w = max(len(r) for r in rows)
+        y_min = 4
+        y_max = max(y_min, self._SAND_Y - h - 1)
+        direction = rng.choice((-1, 1))
+        if on_screen:
+            x = float(rng.randint(8, max(9, 128 - w - 8)))
+        else:
+            # Spawn just off-screen on the trailing side.
+            x = float(-w - 1) if direction > 0 else float(128 + 1)
+        return _Aquarium._Fish(
+            sprite_idx=idx,
+            x=x,
+            y=float(rng.randint(y_min, y_max)),
+            y_phase=rng.random(),
+            speed=rng.uniform(0.15, 0.4),
+            direction=direction,
+        )
 
     # ------------------------------------------------------------------
     # Physics step
@@ -881,22 +988,35 @@ class _Aquarium:
                    + rng.uniform(-0.05, 0.05)
         self._bubbles = [b for b in self._bubbles if b.y > 1 and 0 <= b.x < 128]
 
-        # Move fish: horizontal drift plus a slow sine y-bob.
+        # Move fish: horizontal drift plus a slow triangular y-bob.
+        # Fish that swim off-screen are culled rather than reflected --
+        # a real aquarium has fish coming and going, not four residents
+        # bouncing back and forth like arcade pong.
+        surviving: list[_Aquarium._Fish] = []
         for f in self._fish:
             f.x += f.speed * f.direction
             f.y_phase = (f.y_phase + 0.008) % 1.0
-            # y-bob rides on top of the fish's home row; amplitude ~1 px
-            # keeps the fish inside the tank interior.
-            # (Home row is captured via ``y`` at spawn; we shift by a
-            # cheap triangular wave that avoids importing math.sin.)
-            # Reflect at tank walls with a small margin so the sprite
-            # doesn't clip the border.
             sprite = _FISH_SPRITES[f.sprite_idx][0]
             sprite_w = max(len(row) for row in sprite.split("\n"))
-            if f.direction > 0 and f.x + sprite_w >= 126:
-                f.direction = -1
-            elif f.direction < 0 and f.x <= 2:
-                f.direction = 1
+            # Off-screen check: only cull once the whole sprite has
+            # cleared the edge, so the exit reads.
+            if f.direction > 0 and f.x > 128 + 1:
+                continue
+            if f.direction < 0 and f.x + sprite_w < -1:
+                continue
+            surviving.append(f)
+        self._fish = surviving
+
+        # Spawn pacing. Always spawn if below the minimum; otherwise
+        # spawn on the countdown up to _MAX_FISH.
+        if len(self._fish) < self._MIN_FISH:
+            self._fish.append(self._make_fish(rng, on_screen=False))
+            self._next_spawn = rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
+        else:
+            self._next_spawn -= 1
+            if self._next_spawn <= 0 and len(self._fish) < self._MAX_FISH:
+                self._fish.append(self._make_fish(rng, on_screen=False))
+                self._next_spawn = rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
 
     # ------------------------------------------------------------------
     # Draw
