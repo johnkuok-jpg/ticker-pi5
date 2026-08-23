@@ -31,6 +31,17 @@ a single-frame lightning strike screen-blends bright silver across the
 whole panel and decays over ~4 frames, no branching bolts (they read as
 noise on 32 rows).
 
+**Driving.** First-person view through a windshield at dusk. A blue-to-
+orange sky gradient meets a dark asphalt road that recedes to a
+vanishing point. Center-line dashes rush at the camera with true
+perspective (small and slow near the horizon, large and fast at the
+foot of the screen). Silhouetted hills scroll slowly along the horizon;
+telephone poles whip past on either shoulder with parallax speed; a
+thin dashboard strip anchors the bottom edge. Occasional oncoming
+headlights flash into view down the far lane. No fixed loop -- speed
+variation and pole spacing come from an unseeded RNG so no two
+sessions look the same.
+
 **Aquarium.** Underwater tank diorama. A vertical blue gradient stands
 in for water depth, with a broken caustic ripple animated across the
 top 3 rows. Along the bottom a two-row sand strip anchors six swaying
@@ -1286,6 +1297,383 @@ class _Aquarium:
 
 
 # ---------------------------------------------------------------------------
+# Driving palette + geometry
+# ---------------------------------------------------------------------------
+#
+# Scene is anchored around a horizon row and a vanishing point.
+# Everything above the horizon is sky; everything below is road.
+# All perspective scaling uses ``t = (y - horizon) / (bottom - horizon)``,
+# where t = 0 at the horizon and t = 1 at the panel bottom. Objects
+# at t=0 are infinitely far away, at t=1 they're on top of the camera.
+
+# Sky gradient -- deep blue at the top fading to warm orange near the
+# horizon. Dusk was chosen over daylight so the sky/road boundary reads
+# even on a low-contrast LED panel: the warm horizon line pops against
+# the dark asphalt.
+_DR_SKY_TOP    = (18, 22, 55)     # deep blue-purple
+_DR_SKY_HORIZ  = (215, 110, 55)   # warm orange at the horizon
+
+# Distant hills silhouetted against the sky along the horizon. A single
+# medium-dark colour reads as a silhouette on LEDs; a gradient would
+# just look like noise at 128 px wide.
+_DR_HILLS      = (35, 25, 60)
+
+# Road palette. Real asphalt at dusk photographs almost black with a
+# subtle warm tint from the sky; going true black loses depth cues so
+# we keep a hair of blue-grey. Shoulders sit a touch lighter so the
+# lane edges read without a hard line.
+_DR_ROAD       = (18, 18, 28)
+_DR_SHOULDER   = (55, 45, 40)     # gravel edge along the lane border
+_DR_GROUND     = (32, 22, 26)     # dusk-lit dirt/scrub beyond the shoulders
+_DR_LANE_LINE  = (250, 235, 180)  # bright cream -- the classic dash colour
+_DR_LANE_EDGE  = (230, 210, 150)  # slightly duller edge for smaller/farther dashes
+
+# Roadside poles: dark silhouettes against the sky, then just below the
+# horizon they blend into the road. Tall, thin, whipping past.
+_DR_POLE       = (25, 15, 30)
+
+# Dashboard strip: solid dark at the very bottom so the road doesn't
+# hit the panel edge. Reads as "looking over a dashboard".
+_DR_DASH       = (12, 10, 18)
+_DR_DASH_TRIM  = (60, 40, 30)     # a hair of warmth along the top edge
+
+# Oncoming headlights on the opposite lane -- a rare, bright cameo.
+_DR_HEADLIGHT      = (255, 245, 200)  # hot cream-white core
+_DR_HEADLIGHT_HALO = (200, 180, 130)  # halo around the core
+
+# Scene geometry constants. Panel is 128x32.
+_DR_HORIZON_Y   = 13          # row of the horizon line (sky above, road below)
+_DR_BOTTOM_Y    = 30          # last row of road before the dashboard strip
+_DR_DASH_Y      = 30          # top row of the dashboard strip
+_DR_VP_X        = 64          # vanishing-point x (dead centre)
+# Road width in pixels at the horizon (~narrow) and at the bottom of the
+# panel (~wide, filling most of the frame). The road trapezoid is a
+# linear interpolation between these two widths per scanline.
+_DR_ROAD_TOP_W    = 20
+_DR_ROAD_BOTTOM_W = 118
+
+
+class _Driving:
+    """First-person view driving down a road at dusk.
+
+    All motion is driven by a single ``distance`` scalar (float, in
+    "perspective units") that advances every tick. Dashes and poles
+    are placed at fixed spacing in world units; per-frame they're
+    projected onto the panel using the standard 1/z perspective
+    formula. That's what gives the classic "lines flying at you"
+    effect for free -- an object at world-z = 0.05 is infinitely far,
+    an object at world-z = 1.0 is right at the camera, and the
+    projected screen y is ``horizon + (bottom - horizon) * z``.
+
+    Speed is not constant: a very slow sinusoidal modulation (period
+    ~30 seconds) sells "real driving" over "cruise-control demo".
+
+    Roadside poles get a random horizontal jitter and per-pole scale
+    factor so the parade doesn't look like a metronome.
+
+    Runtime cost: ~50 line/pole projections per frame, plus a 128x32
+    background paint. Trivial on a Pi 5.
+    """
+
+    # World-space geometry. Dashes repeat every _DASH_SPACING world
+    # units along the road; the visible window covers z in (0, 1].
+    # Poles are spaced further apart than dashes so they don't look
+    # like a picket fence.
+    _DASH_SPACING   = 0.14   # world units between consecutive dash starts
+    _DASH_LENGTH    = 0.06   # length of each dash in world units
+    _POLE_SPACING   = 0.35
+    # Base speed (world units per tick) and modulation.
+    _SPEED_BASE     = 0.010
+    _SPEED_AMP      = 0.004
+    _SPEED_PERIOD   = 900    # ticks per full breath cycle (~30 s at 30 fps)
+    # Hills scroll at a fraction of the ground speed to give parallax.
+    _HILLS_PARALLAX = 0.05
+    # Headlight cadence: a rare cameo, similar spirit to the shark.
+    _HEADLIGHT_MIN_TICKS = 12 * 30   # 12 s
+    _HEADLIGHT_MAX_TICKS = 40 * 30   # 40 s
+    _HEADLIGHT_TRAVEL    = 30        # ticks from horizon to camera pass-by
+
+    def __init__(self) -> None:
+        # Deterministic RNG for the pole layout so the parade is stable
+        # (poles don't randomly teleport when you look away), plus an
+        # unseeded RNG for headlight cadence + speed jitter so the vibe
+        # doesn't loop across restarts.
+        self._layout_rng = random.Random(0xD1E5E11)
+        self._rng = random.Random()
+
+        self._distance = 0.0
+        # Pole layout: for each pole slot, precompute a tiny x-jitter
+        # (the road isn't a ruler; poles wander a couple of feet from
+        # the shoulder) and a height scale (some poles are shorter).
+        # Keyed by an integer slot index; we materialize entries on
+        # demand in _paint_poles.
+        self._pole_jitter: dict[int, tuple[float, float]] = {}
+        # Hills layout: pre-render a 256-px-wide silhouette that we
+        # scroll horizontally. Each column has a hill height in pixels
+        # above the horizon. Using two full panel widths lets us wrap
+        # cleanly on modulo without a visible seam.
+        self._hills = self._build_hills()
+        self._hills_offset = 0.0
+        # Headlight state: distance from the horizon to the camera in
+        # "progress" units (0..1); None means no active oncoming car.
+        self._headlight_progress: float | None = None
+        self._headlight_cooldown = self._rng.randint(
+            self._HEADLIGHT_MIN_TICKS, self._HEADLIGHT_MAX_TICKS,
+        )
+
+    # ------------------------------------------------------------------
+    # Layout helpers
+    # ------------------------------------------------------------------
+
+    def _build_hills(self) -> list[int]:
+        """Precomputed hill silhouette, 256 columns wide.
+
+        Each entry is the number of rows the silhouette rises above
+        the horizon at that column. Sum of two sine waves plus a
+        little RNG jitter -- enough shape that hills read as rolling
+        rather than as a saw-tooth pattern.
+        """
+        import math
+        rng = self._layout_rng
+        out: list[int] = []
+        for x in range(256):
+            base = 2.0 + 1.5 * math.sin(x * 0.05) + 0.9 * math.sin(x * 0.13 + 1.3)
+            jitter = rng.uniform(-0.3, 0.3)
+            h = int(round(max(0.0, base + jitter)))
+            out.append(min(h, 4))   # cap so hills don't eat the sky
+        return out
+
+    def _pole_slot(self, slot: int) -> tuple[float, float]:
+        """``(jitter_x, height_scale)`` for pole ``slot``, cached."""
+        cached = self._pole_jitter.get(slot)
+        if cached is not None:
+            return cached
+        # Use a slot-derived seed so the jitter is deterministic per
+        # slot (a given pole always has the same shape).
+        r = random.Random(0xB00 ^ slot)
+        jitter_x = r.uniform(-0.02, 0.02)     # tiny lateral wander
+        height_scale = r.uniform(0.85, 1.15)  # short and tall mixed
+        self._pole_jitter[slot] = (jitter_x, height_scale)
+        return self._pole_jitter[slot]
+
+    # ------------------------------------------------------------------
+    # Physics
+    # ------------------------------------------------------------------
+
+    def _step(self, tick: int) -> None:
+        import math
+        # Speed with a slow breath so the drive doesn't feel robotic.
+        speed = (
+            self._SPEED_BASE
+            + self._SPEED_AMP * math.sin(tick * (2 * math.pi / self._SPEED_PERIOD))
+        )
+        self._distance += speed
+        self._hills_offset += speed * self._HILLS_PARALLAX * 128
+
+        # Headlight cadence.
+        if self._headlight_progress is not None:
+            self._headlight_progress += 1.0 / self._HEADLIGHT_TRAVEL
+            if self._headlight_progress >= 1.05:
+                # Car has swept past the camera; retire and wait.
+                self._headlight_progress = None
+                self._headlight_cooldown = self._rng.randint(
+                    self._HEADLIGHT_MIN_TICKS, self._HEADLIGHT_MAX_TICKS,
+                )
+        else:
+            self._headlight_cooldown -= 1
+            if self._headlight_cooldown <= 0:
+                self._headlight_progress = 0.0
+
+    # ------------------------------------------------------------------
+    # Draw
+    # ------------------------------------------------------------------
+
+    def _paint_sky(self, canvas: Canvas) -> None:
+        # Vertical gradient from deep blue at the top to warm orange at
+        # the horizon.
+        for y in range(_DR_HORIZON_Y + 1):
+            t = y / max(1, _DR_HORIZON_Y)
+            r = int(_DR_SKY_TOP[0]   + (_DR_SKY_HORIZ[0]   - _DR_SKY_TOP[0])   * t)
+            g = int(_DR_SKY_TOP[1]   + (_DR_SKY_HORIZ[1]   - _DR_SKY_TOP[1])   * t)
+            b = int(_DR_SKY_TOP[2]   + (_DR_SKY_HORIZ[2]   - _DR_SKY_TOP[2])   * t)
+            canvas.fill_rect(0, y, 128, 1, (r, g, b))
+
+    def _paint_hills(self, canvas: Canvas) -> None:
+        # Draw silhouetted hills against the sky just above the horizon.
+        offset = int(self._hills_offset) % 256
+        for x in range(128):
+            h = self._hills[(x + offset) % 256]
+            if h <= 0:
+                continue
+            for k in range(h):
+                y = _DR_HORIZON_Y - k
+                if 0 <= y < _DR_HORIZON_Y:
+                    canvas.pixel(x, y, _DR_HILLS)
+
+    def _paint_road(self, canvas: Canvas) -> None:
+        # Trapezoid: at each row below the horizon, compute the road's
+        # half-width and paint the road plus a shoulder on either side.
+        # We interpolate linearly on t = (y - horizon) / (bottom - horizon).
+        for y in range(_DR_HORIZON_Y + 1, _DR_BOTTOM_Y + 1):
+            t = (y - _DR_HORIZON_Y) / (_DR_BOTTOM_Y - _DR_HORIZON_Y)
+            width = _DR_ROAD_TOP_W + (_DR_ROAD_BOTTOM_W - _DR_ROAD_TOP_W) * t
+            half = width / 2.0
+            left = int(round(_DR_VP_X - half))
+            right = int(round(_DR_VP_X + half))
+            # Ground: fill the full row first so shoulders/road overlay cleanly.
+            canvas.fill_rect(0, y, 128, 1, _DR_GROUND)
+            # Shoulder: 2px band on each side of the road.
+            canvas.fill_rect(max(0, left - 2), y, min(128, right + 2) - max(0, left - 2),
+                             1, _DR_SHOULDER)
+            # Road surface.
+            canvas.fill_rect(max(0, left), y, min(128, right) - max(0, left),
+                             1, _DR_ROAD)
+
+    def _project_z_to_y(self, z: float) -> int:
+        """Convert a world-z (0 = horizon, 1 = camera) to a screen row.
+
+        We use a nonlinear projection so dashes rush at the camera --
+        objects close to the horizon move slowly across screen rows,
+        objects close to the camera move fast. Squaring the ratio
+        approximates a real pinhole projection well enough at 32 rows.
+        """
+        # z of 0 -> horizon, z of 1 -> bottom. Perceptual perspective:
+        # square the ratio so early motion is compressed near the
+        # horizon and expanded near the camera.
+        pct = z ** 1.6
+        return _DR_HORIZON_Y + int(round((_DR_BOTTOM_Y - _DR_HORIZON_Y) * pct))
+
+    def _paint_dashes(self, canvas: Canvas) -> None:
+        # Center-line dashes: emit each dash as a short vertical run
+        # projected onto the centreline. The dash's z is fractional
+        # within (0, 1]; as _distance advances, dashes migrate toward
+        # z=1 and are recycled.
+        # Walk world-space z values, spaced by _DASH_SPACING, offset
+        # by the fractional distance so dashes flow smoothly.
+        d = self._distance % self._DASH_SPACING
+        # Enumerate a healthy number of dashes; anything with z outside
+        # (0, 1] falls off-screen and is skipped.
+        for i in range(30):
+            z = d + i * self._DASH_SPACING
+            if z <= 0.02 or z > 1.0:
+                continue
+            y_top = self._project_z_to_y(z)
+            y_bot = self._project_z_to_y(min(1.0, z + self._DASH_LENGTH))
+            if y_top >= _DR_BOTTOM_Y:
+                continue
+            # Dash width scales with perspective: 1 px near the horizon,
+            # up to ~3 px right at the camera.
+            width = max(1, int(round(1 + (y_bot - _DR_HORIZON_Y) * 0.12)))
+            colour = _DR_LANE_EDGE if width == 1 else _DR_LANE_LINE
+            for y in range(y_top, min(y_bot + 1, _DR_BOTTOM_Y)):
+                for dx in range(-(width // 2), (width // 2) + 1):
+                    px = _DR_VP_X + dx
+                    if 0 <= px < 128:
+                        canvas.pixel(px, y, colour)
+
+    def _paint_poles(self, canvas: Canvas) -> None:
+        # Telephone poles on the left and right shoulders. Each pole
+        # is drawn as a thin vertical line rising from the shoulder
+        # up into the sky, with its screen position and height driven
+        # by the same 1/z projection as the dashes.
+        d = self._distance % self._POLE_SPACING
+        # Enumerate poles by an integer slot index anchored to the
+        # current viewing window.
+        base_slot = int(self._distance // self._POLE_SPACING)
+        for i in range(20):
+            slot = base_slot + i
+            z = d + i * self._POLE_SPACING - self._POLE_SPACING
+            if z <= 0.02 or z > 1.0:
+                continue
+            jitter_x, height_scale = self._pole_slot(slot)
+            # Screen y at the base of the pole (where it meets the road).
+            base_y = self._project_z_to_y(z)
+            if base_y >= _DR_BOTTOM_Y:
+                continue
+            # Screen x: poles sit just outside the road shoulders. The
+            # shoulder width at this z is the same as the road width
+            # projection, plus a small offset so the pole stands OFF
+            # the road, not in it.
+            t = (base_y - _DR_HORIZON_Y) / max(1, _DR_BOTTOM_Y - _DR_HORIZON_Y)
+            width = _DR_ROAD_TOP_W + (_DR_ROAD_BOTTOM_W - _DR_ROAD_TOP_W) * t
+            half = width / 2.0 + 3.0    # +3 px past the shoulder
+            for side in (-1, +1):
+                px = int(round(_DR_VP_X + side * half + jitter_x * 128))
+                if not (0 <= px < 128):
+                    continue
+                # Pole height scales inversely with z (close = tall).
+                pole_h = max(2, int(round(8 * (t + 0.15) * height_scale)))
+                for k in range(pole_h):
+                    py = base_y - k
+                    if 0 <= py < 32:
+                        canvas.pixel(px, py, _DR_POLE)
+                # Crossbar near the top of the pole (mini T-shape) --
+                # sells "telephone pole" over "stake in the ground".
+                # Skip when the pole is too far/short to fit a crossbar.
+                if pole_h >= 4:
+                    cross_y = base_y - pole_h + 1
+                    for cdx in (-1, 0, 1):
+                        cpx = px + cdx
+                        if 0 <= cpx < 128 and 0 <= cross_y < 32:
+                            canvas.pixel(cpx, cross_y, _DR_POLE)
+
+    def _paint_headlights(self, canvas: Canvas) -> None:
+        if self._headlight_progress is None:
+            return
+        p = min(1.0, self._headlight_progress)
+        # Project a virtual z from progress. The oncoming car starts
+        # at z = 0 (horizon) and ends at z = 1 (passing the camera).
+        z = p
+        y = self._project_z_to_y(z)
+        # Horizontal position: the oncoming lane is to the LEFT of the
+        # vanishing point (right-hand traffic). Its x also spreads from
+        # near the VP at z=0 to well left of centre at z=1, matching
+        # the road trapezoid.
+        t = (y - _DR_HORIZON_Y) / max(1, _DR_BOTTOM_Y - _DR_HORIZON_Y)
+        width = _DR_ROAD_TOP_W + (_DR_ROAD_BOTTOM_W - _DR_ROAD_TOP_W) * t
+        half = width / 2.0
+        # Headlights sit in the middle of the opposing lane -- half of
+        # the half-width to the left of the centre.
+        cx = int(round(_DR_VP_X - half * 0.5))
+        # Draw a pair of headlights: two bright cores side-by-side,
+        # separated by a distance that scales with perspective.
+        separation = max(1, int(round(3 * t)))
+        for offset in (-separation, +separation):
+            hx = cx + offset
+            if 0 <= hx < 128 and 0 <= y < 32:
+                canvas.pixel(hx, y, _DR_HEADLIGHT)
+                # Halo on the surrounding pixels when the car is close
+                # enough that the halo would be visible.
+                if p > 0.35:
+                    for hdx, hdy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        halo_x, halo_y = hx + hdx, y + hdy
+                        if 0 <= halo_x < 128 and 0 <= halo_y < 32:
+                            canvas.pixel(halo_x, halo_y, _DR_HEADLIGHT_HALO)
+
+    def _paint_dashboard(self, canvas: Canvas) -> None:
+        # Solid strip along the bottom two rows. Top edge is a hair
+        # warmer to hint at reflected dashboard glow.
+        canvas.fill_rect(0, _DR_DASH_Y, 128, 1, _DR_DASH_TRIM)
+        canvas.fill_rect(0, _DR_DASH_Y + 1, 128, 1, _DR_DASH)
+
+    def render(self, canvas: Canvas, tick: int) -> None:
+        self._step(tick)
+        self._paint_sky(canvas)
+        self._paint_hills(canvas)
+        self._paint_road(canvas)
+        # Dashes and poles both use the same 1/z projection. Painting
+        # dashes first, then poles, means a pole in front of a dash
+        # occludes the dash correctly.
+        self._paint_dashes(canvas)
+        self._paint_poles(canvas)
+        # Oncoming headlights compose on top of the road; if a pole
+        # sits between the camera and the headlight, tough luck (at
+        # 32 rows the correct z-sort is imperceptible).
+        self._paint_headlights(canvas)
+        self._paint_dashboard(canvas)
+
+
+# ---------------------------------------------------------------------------
 # Registry + mode wrapper
 # ---------------------------------------------------------------------------
 
@@ -1295,6 +1683,7 @@ _VIBES: dict[str, tuple[str, type]] = {
     "campfire": ("Campfire", _Campfire),
     "rain":     ("Rain",     _Rain),
     "aquarium": ("Aquarium", _Aquarium),
+    "driving":  ("Driving",  _Driving),
 }
 
 DEFAULT_VIBE = "campfire"

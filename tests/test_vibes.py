@@ -61,11 +61,12 @@ def test_vibe_registry_shape_is_frozen() -> None:
     ever rename or reorder a vibe, this test fails and the diff has to
     include a migration story for the persisted vibe.txt values.
     """
-    assert valid_vibes() == ("campfire", "rain", "aquarium")
+    assert valid_vibes() == ("campfire", "rain", "aquarium", "driving")
     assert vibe_labels() == {
         "campfire": "Campfire",
         "rain":     "Rain",
         "aquarium": "Aquarium",
+        "driving":  "Driving",
     }
     assert DEFAULT_VIBE == "campfire"
 
@@ -269,6 +270,29 @@ def test_aquarium_paints_scene_with_fish_and_sand(config) -> None:  # type: igno
     # At least one fish body colour visible.
     body_colors = {sprite[1] for sprite in _FISH_SPRITES}
     assert body_colors & set(pixels), "expected at least one fish body colour visible"
+
+
+def test_driving_paints_dusk_scene_with_road_and_lane_lines(config) -> None:  # type: ignore[no-untyped-def]
+    """Driving renders a full first-person road scene at dusk.
+
+    Assertions target scene identity, not exact pixel positions:
+    every pixel is painted (sky + hills + road cover the panel), the
+    road colour appears, and at least one lane-line dash colour lands
+    on the panel.
+    """
+    from ticker.modes.vibes import _DR_ROAD, _DR_LANE_LINE, _DR_LANE_EDGE
+
+    config.set_vibe("driving")
+    mode = VibesMode(config)
+    canvas = Canvas(config.width, config.height)
+    mode.render(canvas, tick=0)
+
+    pixels = _pixels(canvas)
+    assert all(p != (0, 0, 0) for p in pixels), "driving should paint every pixel"
+    assert _DR_ROAD in pixels, "expected the road colour somewhere on the panel"
+    assert (_DR_LANE_LINE in pixels) or (_DR_LANE_EDGE in pixels), (
+        "expected at least one lane-line dash colour visible"
+    )
 
 
 # ---------------------------------------------------------------------------
