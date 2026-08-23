@@ -56,6 +56,7 @@ MODE_LABELS = {
     "worldclock": "World Clock",
     "youtube": "YouTube",
     "vibes": "Vibes",
+    "sports": "MLB",
 }
 
 
