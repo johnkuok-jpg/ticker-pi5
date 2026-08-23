@@ -39,10 +39,11 @@ like a real weed in a current). Two filter vents in the sand each
 release bubbles on their own cadence -- bubbles wobble sideways as they
 rise (bubbles in water actually do sway) and come in two sizes. Fish
 come and go: a rotating cast of species (tang, angelfish, neon tetra,
-clownfish, yellow tang, butterflyfish, pufferfish, blue chromis, betta)
-spawn just off-screen, drift across with a small triangular y-bob, and
-exit the far side. 2-3 are always on screen; new species stream in on a
-slow cadence so the tank never repeats itself.
+clownfish, yellow tang, butterflyfish, pufferfish, blue chromis, betta,
+shark) spawn just off-screen, drift across with a small triangular
+y-bob, and exit the far side. 2-3 are always on screen; new species
+stream in on a slow cadence so the tank never repeats itself. A crab
+occasionally walks across the sand as a rare cameo.
 """
 
 from __future__ import annotations
@@ -788,20 +789,22 @@ _FISH_SPRITES: tuple[
         (255, 235, 120),  # fin  -- pale yellow
         (10,  10,  15),   # eye
     ),
-    # Butterflyfish -- disc-shaped with a black eye stripe. Silver-white
-    # body with a warm yellow rear half (a schooling reef staple).
+    # Butterflyfish -- disc-shaped with a black eye stripe. Yellow front
+    # half (with the face + eye), silver-white rear half. Drawn facing
+    # right so the eye sits near the leading edge, same as every other
+    # sprite in this catalog.
     (
         "    BBBB    \n"
         "   BBBBBBB  \n"
-        "  BBBBFFFFF \n"
-        "FEBBBBFFFFF \n"
-        "F BBBBFFFFF \n"
-        "  BBBBFFFFF \n"
+        " FFFFFBBBB  \n"
+        " FFFFFBBEBF \n"
+        " FFFFFBBBBF \n"
+        " FFFFFBBBB  \n"
         "   BBBBBBB  \n"
         "    BBBB    ",
-        (230, 230, 235),  # body -- silver white
+        (230, 230, 235),  # body -- silver white (rear half)
         (150, 150, 160),  # dark -- shaded silver
-        (250, 205, 60),   # fin  -- yellow rear half
+        (250, 205, 60),   # fin  -- yellow front half + tail edge
         (10,  10,  15),   # eye
     ),
     # Pufferfish -- nearly circular with tiny fins and a big eye. Sandy
@@ -848,7 +851,45 @@ _FISH_SPRITES: tuple[
         (240, 100, 175),  # fin  -- pink flare
         (10,  10,  15),   # eye
     ),
+    # Shark -- big, sleek, distinctive dorsal fin, forked tail. Grey top,
+    # white belly (the classic countershaded silhouette). ~24 px wide so
+    # it reads as clearly larger than the reef fish above. The ``D``
+    # (dark) palette slot is repurposed here as the WHITE belly since
+    # a shark's shading is inverted vs the other fish -- lighter
+    # underneath.
+    (
+        "           FF                \n"
+        "          FFFF               \n"
+        "F   BBBBBBBBBBBBBBBBBBBB     \n"
+        "FF BBBBBBBBBBBBBBBBBBBBBBBBB \n"
+        "FFFBBBBBBBBBBBBBBBBBBBBBBBEB \n"
+        "FF DDDDDDDDDDDDDDDDDDDDDDD   \n"
+        "F   DDDDDDDDDDDDDDDDDDD      ",
+        (110, 125, 140),  # body -- grey
+        (220, 225, 230),  # dark -- white belly
+        (75,  85,  100),  # fin  -- dark grey (tail + dorsal + pectoral)
+        (10,  10,  15),   # eye
+    ),
 )
+
+# Index of the shark in the sprite catalog. The spawn system uses this to
+# skew the shark's odds down (it should be a rare guest, not resident).
+_SHARK_IDX = len(_FISH_SPRITES) - 1
+
+# Crab sprite -- walks along the sand, doesn't swim. Small, wide, with
+# two claws pointing out to the sides and a small pair of eyes on top.
+# Faces the viewer (crabs walk sideways, so "facing left" vs "right"
+# doesn't matter for orientation -- direction only flips claw asymmetry).
+_CRAB_SPRITE = (
+    "  E   E  \n"
+    " BBBBBBB \n"
+    "FBBBBBBBF\n"
+    " B B B B "
+)
+_CRAB_BODY = (200, 70,  55)   # bright red-orange shell
+_CRAB_DARK = (130, 30,  20)   # shadow (unused for now but kept for parity)
+_CRAB_CLAW = (220, 100, 80)   # claw tip -- lighter than body
+_CRAB_EYE  = (10,  10,  15)
 
 
 class _Aquarium:
@@ -865,7 +906,12 @@ class _Aquarium:
     * A rotating cast of fish that spawn just off-screen, swim across
       the panel, and exit the other side (not the same 4 residents on
       loop). Species are drawn from a catalog of ~10, always keeping
-      2-3 on screen so the tank never looks empty.
+      2-3 on screen so the tank never looks empty. A shark shows up
+      occasionally (~5% of spawns) and cruises slower than the reef
+      fish so it reads as a big animal.
+    * A rare crab cameo: at random intervals (15-45 s) a single crab
+      walks along the sand from one side to the other, then exits.
+      Only one crab on screen at a time.
 
     Everything animates off ``tick`` plus an unseeded RNG for bubble
     spawn jitter so the scene doesn't loop across restarts.
@@ -906,6 +952,21 @@ class _Aquarium:
             self.wobble = wobble  # accumulator for small lateral drift
             self.big = big
 
+    class _Crab:
+        __slots__ = ("x", "direction", "leg_phase")
+
+        def __init__(self, x: float, direction: int) -> None:
+            self.x = x
+            self.direction = direction  # +1 walks right, -1 walks left
+            self.leg_phase = 0          # ticks-since-spawn, drives leg anim
+
+    # Crab pacing: only one crab at a time, and there's a long quiet
+    # window between appearances so it reads as a rare cameo (not a
+    # resident of the tank). 30 fps assumed -> 15-45 seconds.
+    _CRAB_COOLDOWN_MIN = 15 * 30
+    _CRAB_COOLDOWN_MAX = 45 * 30
+    _CRAB_SPEED        = 0.15   # px per tick -- slow scuttle
+
     def __init__(self) -> None:
         seed_rng = random.Random(0xC0FFEEBE)
         self._rng = random.Random()
@@ -923,6 +984,12 @@ class _Aquarium:
                                 for _ in self._BUBBLE_VENTS]
         # Countdown until next fish spawn attempt.
         self._next_spawn = self._rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
+        # Crab: none on screen at start; wait a randomized cooldown before
+        # the first crab cameo so restarts don't all spawn one at t=0.
+        self._crab: _Aquarium._Crab | None = None
+        self._crab_cooldown = self._rng.randint(
+            self._CRAB_COOLDOWN_MIN, self._CRAB_COOLDOWN_MAX,
+        )
 
     def _make_fish(self, rng: random.Random,
                    on_screen: bool = False) -> "_Aquarium._Fish":
@@ -932,8 +999,17 @@ class _Aquarium:
         panel (used only for the initial pre-populate). Otherwise it
         starts just off the panel on the side opposite its swim
         direction, so it slides into frame naturally.
+
+        The shark is a special guest: ~5% of picks, and gets a slower,
+        steadier speed than the reef fish so it reads as a big animal
+        cruising through, not zipping past.
         """
-        idx = rng.randrange(len(_FISH_SPRITES))
+        # Weighted species pick: shark = ~5%, all others uniform.
+        if rng.random() < 0.05:
+            idx = _SHARK_IDX
+        else:
+            # Uniform over non-shark species.
+            idx = rng.randrange(len(_FISH_SPRITES) - 1)
         sprite = _FISH_SPRITES[idx][0]
         rows = sprite.split("\n")
         h = len(rows)
@@ -946,12 +1022,18 @@ class _Aquarium:
         else:
             # Spawn just off-screen on the trailing side.
             x = float(-w - 1) if direction > 0 else float(128 + 1)
+        # Sharks cruise slower than reef fish; big animals read as big
+        # when they move deliberately.
+        if idx == _SHARK_IDX:
+            speed = rng.uniform(0.12, 0.2)
+        else:
+            speed = rng.uniform(0.15, 0.4)
         return _Aquarium._Fish(
             sprite_idx=idx,
             x=x,
             y=float(rng.randint(y_min, y_max)),
             y_phase=rng.random(),
-            speed=rng.uniform(0.15, 0.4),
+            speed=speed,
             direction=direction,
         )
 
@@ -1017,6 +1099,33 @@ class _Aquarium:
             if self._next_spawn <= 0 and len(self._fish) < self._MAX_FISH:
                 self._fish.append(self._make_fish(rng, on_screen=False))
                 self._next_spawn = rng.randint(self._SPAWN_MIN, self._SPAWN_MAX)
+
+        # Crab step. Only one crab at a time. When none is on screen,
+        # tick down the cooldown; when it hits zero, walk a new crab
+        # in from an off-screen side. When the crab exits the far
+        # side, retire it and reset the cooldown.
+        if self._crab is None:
+            self._crab_cooldown -= 1
+            if self._crab_cooldown <= 0:
+                direction = rng.choice((-1, 1))
+                sprite_w = max(len(row) for row in _CRAB_SPRITE.split("\n"))
+                x = float(-sprite_w - 1) if direction > 0 else float(128 + 1)
+                self._crab = _Aquarium._Crab(x=x, direction=direction)
+        else:
+            c = self._crab
+            c.x += self._CRAB_SPEED * c.direction
+            c.leg_phase += 1
+            sprite_w = max(len(row) for row in _CRAB_SPRITE.split("\n"))
+            if c.direction > 0 and c.x > 128 + 1:
+                self._crab = None
+                self._crab_cooldown = rng.randint(
+                    self._CRAB_COOLDOWN_MIN, self._CRAB_COOLDOWN_MAX,
+                )
+            elif c.direction < 0 and c.x + sprite_w < -1:
+                self._crab = None
+                self._crab_cooldown = rng.randint(
+                    self._CRAB_COOLDOWN_MIN, self._CRAB_COOLDOWN_MAX,
+                )
 
     # ------------------------------------------------------------------
     # Draw
@@ -1111,6 +1220,57 @@ class _Aquarium:
                             color = fin
                         canvas.pixel(px, py, color)
 
+    def _paint_crab(self, canvas: Canvas) -> None:
+        c = self._crab
+        if c is None:
+            return
+        rows = _CRAB_SPRITE.split("\n")
+        sprite_h = len(rows)
+        # Sprite sits ON TOP of the sand: bottom row of the crab lies on
+        # the top row of sand (_SAND_Y), so ``base_y`` is sprite_h - 1
+        # rows above the sand top.
+        base_x = int(c.x)
+        base_y = self._SAND_Y - (sprite_h - 1)
+        # Tiny leg animation: the bottom row of the sprite has 4 leg
+        # pixels on alternating columns. Every ~8 ticks flip which
+        # legs are up (drawn) vs down (skipped) so the crab reads as
+        # walking rather than sliding.
+        leg_phase_flip = (c.leg_phase // 8) % 2 == 1
+        for dy, row in enumerate(rows):
+            for dx, ch in enumerate(row):
+                if ch == " ":
+                    continue
+                # Mirror on direction so the crab's leading claw
+                # depends on which way it's walking.
+                if c.direction < 0:
+                    px = base_x + (len(row) - 1 - dx)
+                else:
+                    px = base_x + dx
+                py = base_y + dy
+                if not (0 <= px < 128 and 0 <= py < 32):
+                    continue
+                # Leg-row shuffle: on the bottom row, drop one of the
+                # two alternating leg groups each phase so the legs
+                # visibly move as the crab walks. Legs are at dx =
+                # 1, 3, 5, 7 -- group them by (dx // 2) parity so
+                # every other leg swaps each phase.
+                if dy == sprite_h - 1 and ch == "B":
+                    if leg_phase_flip:
+                        if (dx // 2) % 2 == 0:
+                            continue
+                    else:
+                        if (dx // 2) % 2 == 1:
+                            continue
+                if ch == "B":
+                    color = _CRAB_BODY
+                elif ch == "F":
+                    color = _CRAB_CLAW
+                elif ch == "E":
+                    color = _CRAB_EYE
+                else:
+                    color = _CRAB_DARK
+                canvas.pixel(px, py, color)
+
     def render(self, canvas: Canvas, tick: int) -> None:
         self._step()
         self._paint_background(canvas)
@@ -1119,6 +1279,9 @@ class _Aquarium:
         # Bubbles behind fish so a fish crossing a bubble stream reads
         # as the fish being closer to the glass.
         self._paint_bubbles(canvas)
+        # Crab walks on the sand -- painted before fish so a swimming
+        # fish drifting overhead reads as being in front of the crab.
+        self._paint_crab(canvas)
         self._paint_fish(canvas)
 
 
