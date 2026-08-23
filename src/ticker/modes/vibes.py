@@ -363,12 +363,19 @@ class _Campfire:
                 if 0 <= ex < 128 and 0 <= ey < 32:
                     canvas.pixel(ex, ey, color)
 
+    # Plasma step rate. At 30fps, stepping every frame makes the fire look
+    # like a strobe -- flames whip past too fast to read as fuel burning.
+    # Real fire flickers at ~10-15 Hz, so we step every 3 ticks (10 Hz).
+    # The rendered flame still updates every frame because ember pulse and
+    # log highlights are independent, but the plasma propagation itself
+    # advances at a slower, believable rate.
+    _STEP_EVERY = 3
+
     def render(self, canvas: Canvas, tick: int) -> None:
-        # Step the plasma once per frame. At the panel's 30fps this gives
-        # a flame that visibly flickers without stuttering; at half that
-        # rate (webapp preview strider) it still reads as fire because
-        # each step is a full palette-scale shift.
-        self._step()
+        # Step the plasma on a slower cadence than the frame rate so the
+        # flame reads as fire rather than as a strobe.
+        if tick % self._STEP_EVERY == 0:
+            self._step()
         canvas.clear()
         # Draw flames from the top of the panel down to the log crest.
         # Buffer row 0 == top of visible flame == panel row _FIRE_TOP (=0).
