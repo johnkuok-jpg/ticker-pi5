@@ -697,43 +697,79 @@ _AQ_WEED_LIT  = (35, 110, 55)
 # Sand row along the very bottom.
 _AQ_SAND = (95, 80, 45)
 
-# Fish sprites. Each is a small pixel-art bitmap with two palette slots:
-# ``B`` = body, ``F`` = fin/highlight, space = transparent. Sprites face
-# RIGHT by default; the renderer mirrors them for the left-facing case.
-# Kept short and asymmetric so the flip reads.
-_FISH_SPRITES: tuple[tuple[str, tuple[int, int, int], tuple[int, int, int]], ...] = (
-    # Tang -- classic oval with a triangular tail. Yellow/orange body.
+# Fish sprites. Pixel-art bitmaps with four palette slots:
+#   ``B`` = body (main colour)
+#   ``D`` = body shadow (darker version of body, adds volume)
+#   ``F`` = fin / band / highlight
+#   ``E`` = eye (near-black)
+#   space = transparent
+# Sprites face RIGHT by default; the renderer mirrors them horizontally
+# for the left-facing case. Sizes were bumped from the original 3-5 row
+# sprites to 6-9 rows so they actually read as fish on a 32-row panel
+# instead of coloured smudges.
+_FISH_SPRITES: tuple[
+    tuple[str, tuple[int, int, int], tuple[int, int, int],
+          tuple[int, int, int], tuple[int, int, int]],
+    ...,
+] = (
+    # Tang -- oval body, tall triangular tail on the left, small pectoral
+    # fin, dark eye near the mouth. Warm orange with a shaded belly.
     (
-        " BBB \n"
-        "FBBBB\n"
-        " BBB ",
-        (240, 175, 55),   # body -- warm orange
-        (255, 220, 120),  # fin  -- pale yellow
+        "    BBBBB   \n"
+        "   BBBBBBBB \n"
+        "F BBBBBBBEB \n"
+        "FFBBBBBBBBB \n"
+        "F BBBFBBBBB \n"
+        "   DDDDBBB  \n"
+        "    DDDDD   ",
+        (240, 175, 55),   # body  -- warm orange
+        (170, 100, 25),   # dark  -- shaded belly
+        (255, 220, 120),  # fin   -- pale yellow (tail + pectoral)
+        (10,  10,  15),   # eye
     ),
-    # Angelfish -- taller, triangular. Silver/coral.
+    # Angelfish -- tall diamond with sweeping top+bottom fins, long tail
+    # trailing behind. Coral pink with cream highlights.
     (
-        "  B  \n"
-        " BBBB\n"
-        "FBBBB\n"
-        " BBBB\n"
-        "  B  ",
+        "     F   \n"
+        "    FFF  \n"
+        "    BB   \n"
+        "   BBBB  \n"
+        "FFBBBBBB \n"
+        " FBBBBEB \n"
+        "FFBBBBBB \n"
+        "   BBBB  \n"
+        "    FF   ",
         (225, 130, 130),  # body -- coral
-        (255, 200, 200),  # fin  -- pale pink
+        (160, 80,  85),   # dark -- shaded
+        (255, 210, 195),  # fin  -- cream
+        (10,  10,  15),   # eye
     ),
-    # Neon tetra -- tiny torpedo. Bright cyan.
+    # Neon tetra -- sleek torpedo with a bright lateral stripe (fin
+    # colour) running the length of the body, forked tail.
     (
-        "BBBB\n"
-        " BBF",
-        (80, 220, 235),   # body -- neon cyan
-        (200, 245, 250),  # fin  -- ice
+        "F  BBBBBBB  \n"
+        "FF BFFFFFEB \n"
+        "F  BBBBBBB  \n"
+        "    DDDDD   ",
+        (80,  220, 235),  # body -- neon cyan
+        (30,  120, 140),  # dark -- belly stripe
+        (240, 90,  110),  # fin  -- red neon stripe + tail edge
+        (10,  10,  15),   # eye
     ),
-    # Clownfish -- small, chunky. Orange with white bands (approximated).
+    # Clownfish -- chunky oval with three cream vertical bands, forked
+    # tail, small pectoral fin. Bright clown orange.
     (
-        " BB \n"
-        "FBFB\n"
-        " BB ",
+        "   BFBBFBB  \n"
+        "  BBFBBFBBB \n"
+        "F BBFBBFBEB \n"
+        "FFBBFBBFBBBF\n"
+        "F BBFBBFBBBF\n"
+        "  BBFBBFBBB \n"
+        "   BFBBFBB  ",
         (250, 130, 45),   # body -- clown orange
-        (255, 250, 240),  # fin  -- white band
+        (180, 75,  20),   # dark -- shadow
+        (255, 250, 240),  # fin  -- white bands + tail edge
+        (10,  10,  15),   # eye
     ),
 )
 
@@ -790,13 +826,18 @@ class _Aquarium:
 
         # Spawn one fish per sprite so all four species are on screen at
         # start. Positions and directions are seeded so the first frame
-        # is reproducible.
+        # is reproducible. y range is bounded so the tallest sprite
+        # (9-row angelfish) fits between the caustic band and the sand.
         self._fish: list[_Aquarium._Fish] = []
-        for idx in range(len(_FISH_SPRITES)):
+        for idx, (sprite, *_rest) in enumerate(_FISH_SPRITES):
+            rows = sprite.split("\n")
+            h = len(rows)
+            y_min = 4
+            y_max = max(y_min, self._SAND_Y - h - 1)
             self._fish.append(_Aquarium._Fish(
                 sprite_idx=idx,
                 x=float(seed_rng.randint(10, 110)),
-                y=float(seed_rng.randint(4, 22)),
+                y=float(seed_rng.randint(y_min, y_max)),
                 y_phase=seed_rng.random(),
                 speed=seed_rng.uniform(0.15, 0.35),
                 direction=seed_rng.choice((-1, 1)),
@@ -920,7 +961,7 @@ class _Aquarium:
 
     def _paint_fish(self, canvas: Canvas) -> None:
         for f in self._fish:
-            sprite, body, fin = _FISH_SPRITES[f.sprite_idx]
+            sprite, body, dark, fin, eye = _FISH_SPRITES[f.sprite_idx]
             rows = sprite.split("\n")
             # y-bob: a tiny triangular offset from y_phase (0..1).
             phase = f.y_phase
@@ -940,7 +981,15 @@ class _Aquarium:
                         px = base_x + dx
                     py = base_y + dy
                     if 0 <= px < 128 and 0 <= py < self._SAND_Y:
-                        canvas.pixel(px, py, body if ch == "B" else fin)
+                        if ch == "B":
+                            color = body
+                        elif ch == "D":
+                            color = dark
+                        elif ch == "E":
+                            color = eye
+                        else:  # "F" or any other non-space marker
+                            color = fin
+                        canvas.pixel(px, py, color)
 
     def render(self, canvas: Canvas, tick: int) -> None:
         self._step()
