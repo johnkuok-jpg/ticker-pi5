@@ -40,7 +40,6 @@ end-to-end.
 from __future__ import annotations
 
 import logging
-import math
 import random
 from typing import ClassVar, Protocol
 
@@ -503,16 +502,15 @@ class _Rain:
         move (surface tension holding it in place).
         """
 
-        __slots__ = ("x", "y", "speed", "size", "trail", "pause", "wobble_phase")
+        __slots__ = ("x", "y", "speed", "size", "trail", "pause")
 
-        def __init__(self, x: float, y: float, speed: float, size: int, wobble_phase: float) -> None:
+        def __init__(self, x: float, y: float, speed: float, size: int) -> None:
             self.x = x
             self.y = y
             self.speed = speed
             self.size = size
             self.trail: list[tuple[int, int]] = []
             self.pause = 0
-            self.wobble_phase = wobble_phase
 
     def _new_drop(self, rng: random.Random, y: float = -1.0) -> "_Rain._Drop":
         """Spawn a fresh drop at a random x, given y (or off-panel top)."""
@@ -521,7 +519,6 @@ class _Rain:
             y=y,
             speed=rng.uniform(self._MIN_SPEED, self._MAX_SPEED),
             size=1,
-            wobble_phase=rng.uniform(0.0, 6.283),
         )
 
     # ------------------------------------------------------------------
@@ -568,11 +565,12 @@ class _Rain:
                         drop.trail.pop(0)
             # Advance. Speed scales with size (bigger drops fall faster).
             drop.y += drop.speed * (1.0 + 0.3 * (drop.size - 1))
-            # Wobble x with a slow sine + small jitter so drops don't
-            # slide in ruler-straight lines. Amplitude is <1 px so the
-            # drop stays roughly in its column on a 128 px panel.
-            drop.wobble_phase += 0.15
-            drop.x += 0.35 * math.sin(drop.wobble_phase) + rng.uniform(-0.15, 0.15)
+            # Real drops on glass don't slalom -- they mostly go straight
+            # down, occasionally lurching one pixel sideways when they
+            # unstick from a pin point on the surface. Model that with a
+            # rare discrete horizontal step, not a continuous sine wave.
+            if rng.random() < 0.02:
+                drop.x += rng.choice((-1.0, 1.0))
 
         # Merges: any two drops whose heads occupy the same or adjacent
         # cell fuse. Iterating an index pair is O(n^2) but n <= 20.
