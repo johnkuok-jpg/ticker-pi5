@@ -60,12 +60,8 @@ occasionally walks across the sand as a rare cameo.
 from __future__ import annotations
 
 import logging
-import math
 import random
 from typing import ClassVar, Protocol
-
-import numpy as np
-from PIL import Image
 
 from ticker.canvas import MEDIUM, SMALL, Canvas
 from ticker.modes.base import Mode
@@ -197,244 +193,118 @@ class _Campfire:
     # to actually wave and curl rather than reading as a bright edge.
     _BUFFER_HEIGHT = _FIRE_HEIGHT + 1  # includes fuel row
 
-    # ---------------- how this effect works ----------------
-    #
-    # Two earlier versions of this fire were *simulations* that carried a
-    # heat buffer from frame to frame, and both had the same problem.
-    #
-    # 1. The Doom PSX automaton: copy the row below, decay by a random
-    #    0-3 palette steps, jitter x per pixel. Every cell re-rolls its
-    #    own random number every step, so consecutive frames are only
-    #    loosely correlated. The eye reads that as sizzle, not flame.
-    #    Slowing the step rate and cross-fading between steps made the
-    #    sizzle slower but not smoother -- a cross-fade between two
-    #    uncorrelated fields is a dissolve.
-    # 2. Semi-Lagrangian advection of a continuous field. Smooth, but
-    #    sampling a stored field at a fractional offset is diffusive by
-    #    construction: horizontal detail smears vertically within a
-    #    second or two and the fire turns into a soft mound. Trying to
-    #    fight the diffusion with a per-frame contrast or envelope
-    #    multiply does not work either -- anything multiplied into a
-    #    persistent field compounds frame over frame, so a mask that
-    #    looks like a mild dim extinguishes the fire outright.
-    #
-    # This version stores nothing. The flame is a *continuous function*
-    # sampled fresh every frame: two octaves of value noise scrolling
-    # upward, multiplied by a vertical falloff envelope and a silhouette
-    # taper. Because it is sampled rather than accumulated, it can scroll
-    # by any fraction of a pixel per frame with no diffusion, flame
-    # height is an explicit dial instead of an emergent side effect of
-    # the decay rate, and there is no state that can drift or die.
-
-    # Rows the flame texture climbs per frame. 0.18 rows/frame at 30fps
-    # is ~5.4 rows/sec: a tongue takes about four seconds to travel the
-    # full flame column, which reads as a calm fire rather than a jet.
-    _RISE_PER_FRAME = 0.18
-    # Value-noise lattice cell size in panel pixels. The coarse octave's
-    # cell width sets the width of a flame tongue; taller cells make the
-    # tongues longer and lazier. The cell is deliberately far taller than
-    # it is wide (9 x 26): with a roughly square cell the noise blobs are
-    # round and the fire reads as glowing smoke, while a tall thin cell
-    # stretches every blob into a vertical tongue, which is what flame
-    # actually looks like.  It also means a tongue's shape changes only
-    # slowly as it scrolls, because the field varies gently along the
-    # direction of travel.
-    _CELL_W = 9.0
-    _CELL_H = 26.0
-    # Temporal low-pass on the displayed field. The field is already
-    # continuous, so this is only there to soften palette banding: when
-    # a pixel's heat drifts across a palette boundary it would otherwise
-    # snap between two colours and read as a twinkle.
-    _DISPLAY_LERP = 0.28
-    # Coherent lean, in pixels at the flame tips, and its rate. The base
-    # never moves -- flame is anchored to the wood.
-    _WIND_AMP = 3.5
-    _WIND_SPEED = 0.010   # rad/frame -> ~10s per full sway
-    # Slow overall breath, as a fraction of full output.
-    _BREATH_AMP = 0.12
-    _BREATH_SPEED = 0.021  # rad/frame -> ~5s
-    # Vertical falloff. Heat is multiplied by exp(-rows_above_logs / L),
-    # so L is directly "how tall is the fire".
-    _FALLOFF_ROWS = 40.0
-    # Silhouette half-widths at the log line and at the top of the
-    # panel. Heat outside the envelope is dimmed, which tapers the flame
-    # to a tip instead of leaving a parallel-sided column.
-    _TAPER_BASE_HALF_WIDTH = 21.0
-    _TAPER_TIP_HALF_WIDTH = 6.0
-    # Contrast on the final field. >1 deepens the gaps between tongues;
-    # too high and the flame breaks into hard-edged blobs.
-    _CONTRAST_GAMMA = 1.0
-    # Noise remap applied before anything else. Value noise clusters
-    # around 0.5 and rarely leaves [0.1, 0.9]; stretching that window to
-    # the full 0..1 range is what turns a hazy cloud into distinct flame
-    # tongues with black between them. _NOISE_FLOOR is the level that
-    # maps to "no fire here".
-    _NOISE_FLOOR = 0.42
-    _NOISE_SPAN = 0.40
-    # Overall gain before clipping. Value noise peaks around 0.9, so
-    # without a gain the hottest palette entries are never reached and
-    # the fire reads brown rather than orange. Gain above 1 also flattens
-    # the base into a solid bed of heat, which is what wood actually
-    # looks like once it is properly alight.
-    _GAIN = 3.2
-    # Noise lattice size. The lattice wraps, so its width times the cell
-    # width is the horizontal repeat distance: 23 x 9 px = 207 px, well
-    # over the 128 px panel, so no part of the fire is a copy of another
-    # part. A power-of-two width would put the repeat exactly on or under
-    # the panel width and mirror the left and right halves.
-    _LATTICE_W = 23
-    _LATTICE_H = 16
-
     def __init__(self) -> None:
-        # Deterministic seed so preview captures and tests are
-        # reproducible frame-for-frame.
+        # Deterministic seed on init so preview captures + tests are
+        # reproducible. Real-world uses reseed via ``random.random()``
+        # on every propagation step, so the fire still flickers.
         self._rng = random.Random(0xC0FFEE)
-        np_rng = np.random.default_rng(0xC0FFEE)
-        # Coordinate grids. Row 0 is the TOP of the panel, so ``_ys``
-        # counts DOWN from the top and the falloff/taper envelopes are
-        # built to match that orientation.
-        self._xs = np.arange(128, dtype=np.float32)
-        self._ys = np.arange(_FIRE_HEIGHT, dtype=np.float32)
-        # Rows above the log line, 0 at the base -> 1 at the top.
-        rows_above = (_FIRE_HEIGHT - 1 - self._ys).astype(np.float32)
-        self._height_fraction = (rows_above / (_FIRE_HEIGHT - 1)).astype(np.float32)
-        # Two octaves of value noise. The coarse octave is the tongues;
-        # the fine octave (half the amplitude, double the frequency) is
-        # the texture on them. Amplitudes sum to 1.0 so a fully-lit
-        # lattice cell reaches full heat.
-        self._octaves = [
-            (
-                1.0,
-                np.float32(0.72),
-                np_rng.random((self._LATTICE_H, self._LATTICE_W)).astype(np.float32),
-            ),
-            (
-                2.0,
-                np.float32(0.28),
-                np_rng.random((self._LATTICE_H, self._LATTICE_W)).astype(np.float32),
-            ),
+        # 2D list of ints, [y][x], top row first, height includes fuel.
+        # We keep TWO buffers: the current plasma state and the previous
+        # one. In-between frames blend between them so the perceived
+        # animation is smooth even though the plasma only steps at
+        # 15 Hz. Without this, dropping the step rate for a slower
+        # flicker made the fire look choppy -- each simulation step
+        # was a full palette-scale jump.
+        self._buffer: list[list[int]] = [
+            [0] * 128 for _ in range(self._BUFFER_HEIGHT)
         ]
-        # Vertical falloff envelope -- this sets flame height. The linear
-        # ceiling term on the end forces the last few rows to zero: with
-        # a pure exponential, a bright noise cell high in the field shows
-        # up as a lit blob detached from the fire, which reads as a bug.
-        ceiling = np.clip(1.0 - rows_above / (_FIRE_HEIGHT - 1), 0.0, 1.0) ** 1.3
-        self._falloff = (
-            np.exp(-rows_above / self._FALLOFF_ROWS) * ceiling
-        ).astype(np.float32)[:, None]
-        # Bright heart just above the wood. The noise field alone gives a
-        # fire with no hot core -- every part of it is equally likely to
-        # be bright, which reads as burning gas rather than burning wood.
-        # This is an additive floor: narrow, and only in the bottom few
-        # rows, so the base is always a solid yellow-orange bed that the
-        # tongues rise out of.
-        self._core = (
-            np.exp(-(((self._xs[None, :] - 64.0) / 13.0) ** 2))
-            * np.exp(-rows_above / 4.5)[:, None]
-        ).astype(np.float32)
-        # Silhouette taper: a Gaussian per row whose half-width shrinks
-        # from the log line up to the top of the panel.
-        half_widths = np.linspace(
-            self._TAPER_TIP_HALF_WIDTH,
-            self._TAPER_BASE_HALF_WIDTH,
-            _FIRE_HEIGHT,
-            dtype=np.float32,
-        )  # index 0 is the TOP row, so the tip width comes first
-        self._taper = np.exp(
-            -(((self._xs[None, :] - 64.0) / half_widths[:, None]) ** 2)
-        ).astype(np.float32)
-        # Heat field for the current frame, and the time-filtered copy
-        # that actually gets painted.
-        self._heat = np.zeros((_FIRE_HEIGHT, 128), dtype=np.float32)
-        self._display = np.zeros((_FIRE_HEIGHT, 128), dtype=np.float32)
-        # Palette as an array so a whole frame is one fancy-index lookup
-        # instead of ~3700 canvas.pixel calls.
-        self._palette_lut = np.array(_CAMPFIRE_PALETTE, dtype=np.uint8)
+        self._prev_buffer: list[list[int]] = [
+            [0] * 128 for _ in range(self._BUFFER_HEIGHT)
+        ]
+        # Fuel row is the last row -- kept hot every frame.
+        for x in range(128):
+            self._buffer[-1][x] = 31
+            self._prev_buffer[-1][x] = 31
         # Ember phase advances slowly so the log crest pulses out of
         # sync with the flame body, which is what real coals look like.
         self._ember_phase = 0
 
-    # ---------------- the flame field ----------------
+    def _step(self) -> None:
+        """Advance the plasma one row upward with wind + decay jitter.
 
-    def _value_noise(self, scroll: float, sway: np.ndarray) -> np.ndarray:
-        """Sample the flame texture for this frame.
+        Walks rows top-down (destination first). For each destination
+        cell we sample the row below at ``x + wind`` and decay by 0-1.
+        Top-down is fine because each destination only reads from the
+        source row below it, which we haven't touched yet this frame.
 
-        Classic value noise: a small random lattice, bilinearly sampled
-        with a smoothstep on the fractional part so the result is
-        continuous (and has a continuous first derivative) everywhere.
-        Sampling a *continuous function* is the whole trick -- there is
-        no stored field to smear, so the texture can scroll upward by an
-        arbitrary fraction of a pixel per frame with no diffusion and no
-        stepping. Two octaves: the coarse one is the flame tongues, the
-        fine one is the surface detail on them.
+        ``wind`` is ``rand() & 3`` -> 0..3, treated as a signed shift:
+        0 -> stay, 1 -> +1, 2 -> -1, 3 -> +2. Doom used a wider set;
+        at 128 wide with 32 rows visible the narrower set reads tighter
+        without losing the wobble.
 
-        ``scroll`` is how far up the texture has travelled, in lattice
-        rows. ``sway`` is a per-row horizontal offset in pixels, which
-        leans the upper rows without moving the base.
+        Before advancing, snapshot the current buffer to ``_prev_buffer``
+        so ``render`` can interpolate between them on in-between frames.
         """
-        ys = self._ys[:, None]
-        xs = self._xs[None, :] + sway[:, None]
-        total = np.zeros((_FIRE_HEIGHT, 128), dtype=np.float32)
-        for freq, amp, lattice in self._octaves:
-            lh, lw = lattice.shape
-            u = xs * (freq / self._CELL_W)
-            v = ys * (freq / self._CELL_H) - scroll * freq
-            x0 = np.floor(u)
-            y0 = np.floor(v)
-            fx = (u - x0).astype(np.float32)
-            fy = (v - y0).astype(np.float32)
-            # Smoothstep the interpolation weights. With raw linear
-            # weights the lattice grid is visible as faint creases that
-            # pulse as the texture scrolls past them.
-            fx = fx * fx * (3.0 - 2.0 * fx)
-            fy = fy * fy * (3.0 - 2.0 * fy)
-            xi = x0.astype(np.int32) % lw
-            yi = y0.astype(np.int32) % lh
-            xi1 = (xi + 1) % lw
-            yi1 = (yi + 1) % lh
-            c00 = lattice[yi, xi]
-            c10 = lattice[yi, xi1]
-            c01 = lattice[yi1, xi]
-            c11 = lattice[yi1, xi1]
-            top = c00 * (1.0 - fx) + c10 * fx
-            bottom = c01 * (1.0 - fx) + c11 * fx
-            total += amp * (top * (1.0 - fy) + bottom * fy)
-        return total
+        # Snapshot for interpolation.
+        for y in range(self._BUFFER_HEIGHT):
+            self._prev_buffer[y][:] = self._buffer[y]
+        buf = self._buffer
+        rng = self._rng
+        # Fuel is CONCENTRATED, not panel-wide. A real campfire has
+        # heat only above the log pile; if we seed the full 128 px
+        # base row uniformly, the flame reads as a squat 128 x 27
+        # wall of fire. Narrowing the fuel to the centre of the panel
+        # gives a much taller silhouette even though the buffer height
+        # is unchanged, because the same heat now propagates through
+        # a narrow column instead of a wide one.
+        #
+        # Window layout:
+        #   HOT_CORE  = full-intensity fuel where the log pile sits.
+        #   WARM_EDGE = tapered fuel band on either side of the core --
+        #               a few flickering sparks so the fire has some
+        #               width variation instead of a hard-edged pillar.
+        #   COLD      = everything outside; permanently zero.
+        HOT_CORE_L, HOT_CORE_R = 40, 88     # 48 px hot column, centred
+        WARM_L, WARM_R         = 28, 100    # 24 px total taper (12 each side)
+        fuel = buf[-1]
+        for x in range(128):
+            if HOT_CORE_L <= x < HOT_CORE_R:
+                # Same tri-state as before, but only inside the core:
+                # ~40% hot / ~30% mid / ~30% cold. The cold pixels
+                # inside the core are what create the flame TONGUES;
+                # without them we're back to a solid wall.
+                r = rng.random()
+                if r > 0.60:
+                    fuel[x] = 31
+                elif r > 0.30:
+                    fuel[x] = rng.randint(18, 28)
+                else:
+                    fuel[x] = 0
+            elif WARM_L <= x < WARM_R:
+                # Sparse warm sparks around the edges -- most of the
+                # time they're cold, occasionally a mid or hot spark
+                # pops so the flame doesn't have a hard vertical edge.
+                r = rng.random()
+                if r > 0.85:
+                    fuel[x] = rng.randint(18, 28)
+                else:
+                    fuel[x] = 0
+            else:
+                fuel[x] = 0
 
-    def _advance(self, tick: int) -> None:
-        """Compute this frame's heat field from scratch.
+        # Propagate up. Note that ``rng.randint(0, 3)`` is a hot loop --
+        # each is a Python-level call. On a Pi 5 with 128 * (fire_height)
+        # cells this comes in well under a millisecond even at 30fps.
+        for y in range(self._BUFFER_HEIGHT - 2, -1, -1):
+            src = buf[y + 1]
+            dst = buf[y]
+            for x in range(128):
+                rand = rng.randint(0, 3)
+                if rand == 0:
+                    sx = x
+                elif rand == 1:
+                    sx = x + 1 if x + 1 < 128 else x
+                elif rand == 2:
+                    sx = x - 1 if x - 1 >= 0 else x
+                else:
+                    sx = x + 2 if x + 2 < 128 else x
+                # Decay by rand (0..3). This is the Doom PSX trick --
+                # aggressive decay means heat runs out well before the
+                # top of the panel, so the flame tapers and tips fade
+                # to black instead of holding a bright ceiling.
+                heat = src[sx] - rand
+                dst[x] = heat if heat > 0 else 0
 
-        Nothing is carried over between frames except the display filter,
-        so there is no state that can drift, compound, or extinguish --
-        the failure mode of every buffer-based version of this effect.
-        """
-        # Upward travel, in lattice rows. _RISE_PER_FRAME is in panel
-        # rows so the tuning constant stays physical.
-        scroll = tick * self._RISE_PER_FRAME / self._CELL_H
-        # Coherent lean: zero at the log line, growing toward the tips,
-        # cycling slowly. Real flame bends more the further it is from
-        # its anchor.
-        lean = self._WIND_AMP * math.sin(tick * self._WIND_SPEED)
-        sway = lean * self._height_fraction
-        noise = self._value_noise(scroll, sway)
-        # Stretch the useful part of the noise range to 0..1 so the
-        # tongues have real contrast against black.
-        noise = np.clip((noise - self._NOISE_FLOOR) / self._NOISE_SPAN, 0.0, 1.0)
-        # Slow breath on the whole fire -- a campfire's output genuinely
-        # rises and falls over seconds as pockets of wood catch.
-        breath = 1.0 + self._BREATH_AMP * math.sin(tick * self._BREATH_SPEED)
-        # Vertical falloff: how much heat survives to each row. This is
-        # what sets flame height, and being an explicit envelope rather
-        # than an accumulated decay means height is a dial, not an
-        # emergent property that needs re-tuning after every change.
-        field = noise * breath * self._falloff * self._taper
-        # Blend the hot core in as a floor rather than a sum, so it
-        # brightens the base without ever clipping the tongues flat.
-        field = np.maximum(field, self._core * breath * self._taper)
-        # Contrast: pushes the mid-range down so the gaps between
-        # tongues go properly black instead of hazing over.
-        field = np.clip(field * self._GAIN, 0.0, 1.0) ** self._CONTRAST_GAMMA
-        self._heat = (31.0 * field).astype(np.float32)
     def _draw_logs(self, canvas: Canvas) -> None:
         """Two logs angled inward like a teepee.
 
@@ -621,39 +491,75 @@ class _Campfire:
                 if 0 <= ex < 128 and 0 <= ey < 32:
                     canvas.pixel(ex, ey, color)
 
+    # Plasma step rate. At 30fps, stepping every frame reads as a strobe
+    # even with interpolation -- each simulation step is a big palette
+    # jump (Doom's decay is aggressive by design), so what the eye sees
+    # is a rapid twitch on every step frame. Real relaxing fire wobbles
+    # closer to 7-8 Hz: slow enough that the flame tongues visibly rise
+    # and curl instead of blurring together.
+    #
+    # We step every 4 ticks (~7.5 Hz on the 30fps loop) and interpolate
+    # the THREE intermediate frames between the previous buffer and the
+    # current one on the heat scalar, so the perceived animation is
+    # smooth 30fps motion with a slow plasma underneath. Blend fractions
+    # are 0, 0.25, 0.5, 0.75 -- the eye sees a continuous rise instead
+    # of a hard jump every step frame.
+    _STEP_EVERY = 4
+
     def render(self, canvas: Canvas, tick: int) -> None:
-        # One field evaluation per rendered frame -- there is no step
-        # rate to tune any more. Motion speed lives in _RISE_PER_FRAME.
-        self._advance(tick)
-
-        # Temporal low-pass on what is actually painted. The simulated
-        # field is already smooth; this filter is what makes the palette
-        # BANDING smooth too. Without it, a pixel whose heat drifts
-        # across a palette boundary snaps between two colours and reads
-        # as a twinkle even though the underlying heat moved slightly.
-        self._display += (self._heat - self._display) * self._DISPLAY_LERP
-
-        # Whole flame area in one shot: quantise heat to palette indices,
-        # look the colours up, blank anything at or below the visibility
-        # floor, and paste. This replaces ~3700 canvas.pixel calls per
-        # frame with a handful of array ops -- the reason the extra
-        # filtering above costs nothing on a Pi 5.
-        idx = np.clip(np.rint(self._display), 0, 31).astype(np.uint8)
-        rgb = self._palette_lut[idx]
-        rgb[idx <= 1] = 0
+        # Step the plasma on a slower cadence than the frame rate. The
+        # in-between frames blend from _prev_buffer -> _buffer, which
+        # smooths the strobe you get from raw stepping.
+        if tick % self._STEP_EVERY == 0:
+            self._step()
+        # Fractional position between the last step and the next one, in
+        # [0, 1). At tick % STEP == 0 we just stepped, so alpha=0 means
+        # "show the freshly-stepped buffer"; the interpolation is done
+        # from prev toward current, so alpha=0 uses buf and alpha->1 also
+        # uses buf (both are the new state). To actually blend, we run
+        # the OPPOSITE convention: alpha = (STEP - 1 - phase) / STEP
+        # gives 0 on step frame (pure new) and grows toward the next step.
+        # Simpler: paint as (1 - blend) * buf + blend * prev, where
+        # blend = phase / STEP -- but phase=0 is the step frame so
+        # blend=0 means "pure new", which is what we want.
+        phase = tick % self._STEP_EVERY
+        # Blend weight for _prev_buffer: 0 on the step frame, growing
+        # toward 1 as we approach the next step -- but we cap it so
+        # the blend is symmetric around each step and the motion looks
+        # like a smooth curve rather than a saw.
+        blend_prev = phase / self._STEP_EVERY  # 0.0 or 0.5 for STEP=2
         canvas.clear()
-        canvas.image_buffer.paste(
-            Image.fromarray(rgb, mode="RGB"), (0, _FIRE_TOP)
-        )
-
+        buf = self._buffer
+        prev = self._prev_buffer
+        palette = _CAMPFIRE_PALETTE
+        max_heat = len(palette) - 1
+        for row_index in range(_FIRE_HEIGHT):
+            y = _FIRE_TOP + row_index
+            row_cur = buf[row_index]
+            row_prev = prev[row_index]
+            for x in range(128):
+                if blend_prev == 0.0:
+                    heat = row_cur[x]
+                else:
+                    # Linear blend of the heat scalar, not of RGB. Blending
+                    # heat keeps the color ramp coherent (colours stay on
+                    # the palette curve) whereas RGB blending would tint
+                    # the intermediate frames grey.
+                    h_prev = row_prev[x]
+                    h_cur = row_cur[x]
+                    heat = int(round(h_cur * (1 - blend_prev) + h_prev * blend_prev))
+                    if heat > max_heat:
+                        heat = max_heat
+                if heat > 1:
+                    canvas.pixel(x, y, palette[heat])
         # Logs on top of the flames, then embers on top of the logs. The
         # log body covers the bottommost flame row so the fire looks like
         # it emerges from the wood rather than floating just above it.
         self._draw_logs(canvas)
-        # Ember pulse runs on its own slow clock -- every 8 ticks now
-        # that the flame itself is calm, so the coals breathe rather
-        # than flicker in step with the fire.
-        if tick % 8 == 0:
+        # Advance the ember phase every ~4 ticks so the pulse is slower
+        # than the flame flicker. Real coals breathe over seconds, not
+        # frames.
+        if tick % 4 == 0:
             self._ember_phase = (self._ember_phase + 1) % 32
 
 

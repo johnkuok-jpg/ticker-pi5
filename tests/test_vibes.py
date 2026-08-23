@@ -210,53 +210,33 @@ def test_campfire_draws_logs_in_the_bottom_rows(config) -> None:  # type: ignore
     assert dark_hits > 60, f"expected >60 log-body pixels, got {dark_hits}"
 
 
-def test_campfire_field_is_a_pure_function_of_the_tick() -> None:
-    """The flame carries no simulation state between frames.
+def test_campfire_holds_its_buffer_between_steps(config) -> None:  # type: ignore[no-untyped-def]
+    """The plasma is a simulation, and the cross-fade depends on that.
 
-    Two earlier campfires stored a heat buffer and stepped it, and both
-    died the same way: whatever we multiplied into the buffer compounded
-    frame over frame until the fire either smeared into a mound or went
-    out. This version samples a continuous noise field, so a fresh
-    instance jumped straight to tick N must produce exactly the field an
-    instance that has been running since tick 0 produces at tick N. If
-    someone reintroduces a persistent buffer, this fails.
-    """
-    running = _Campfire()
-    for t in range(200):
-        running._advance(t)
-
-    cold = _Campfire()
-    cold._advance(199)
-
-    assert running._heat.tolist() == cold._heat.tolist()
-
-
-def test_campfire_changes_far_less_per_frame_than_per_second() -> None:
-    """Motion is calm: the fire evolves over seconds, not per frame.
-
-    The user-visible bug this pins is jarring animation. A per-pixel
-    automaton re-rolls randomness every step, so consecutive frames are
-    only loosely correlated and the eye reads sizzle. Here the field
-    scrolls a fifth of a row per frame, so one frame of change must be a
-    small fraction of a second's worth of change.
+    A rewrite replaced the buffer with a stateless noise field. It moved
+    beautifully and looked like a blob: the tongues that make this read
+    as fire come from the automaton's per-cell decay and x-jitter, and no
+    smooth envelope reproduces them. This pins the mechanism so the trade
+    is made deliberately -- the buffer must persist across frames, only
+    advancing on a step boundary, with the in-between frames blending
+    from the snapshot in ``_prev_buffer``.
     """
     fire = _Campfire()
-    fields = []
-    for t in range(120):
-        fire._advance(t)
-        fields.append(fire._heat.copy())
+    canvas = Canvas(config.width, config.height)
 
-    def mean_abs_diff(a, b) -> float:
-        return float(abs(a - b).mean())
+    fire.render(canvas, tick=0)
+    after_step = [row[:] for row in fire._buffer]
 
-    per_frame = mean_abs_diff(fields[-1], fields[-2])
-    per_second = mean_abs_diff(fields[-1], fields[-31])  # 30 frames back
+    # A frame between step boundaries only moves the cross-fade; the
+    # simulation state must be untouched.
+    fire.render(canvas, tick=1)
+    assert fire._buffer == after_step
 
-    assert per_second > 0.2, f"fire looks frozen: {per_second} over one second"
-    assert per_frame * 8 < per_second, (
-        f"per-frame change {per_frame} is too close to per-second change "
-        f"{per_second} -- the animation will read as jittery"
-    )
+    fire.render(canvas, tick=_Campfire._STEP_EVERY)
+    assert fire._buffer != after_step, "buffer never advanced at a step boundary"
+    # The snapshot is what the in-between frames blend from, so it has to
+    # hold the state we just left behind.
+    assert fire._prev_buffer == after_step
 
 
 def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyped-def]
