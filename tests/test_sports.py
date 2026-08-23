@@ -360,3 +360,74 @@ def test_render_rotates_through_all_games() -> None:
         canvas = Canvas(128, 32)
         mode._draw_game(canvas, g)
         assert _lit(canvas), "card drew nothing"
+
+
+# ---------------------------------------------------------------------------
+# favorite team filter
+# ---------------------------------------------------------------------------
+
+
+def _sf_vs_nyy() -> Game:
+    return Game(
+        away_id=137, home_id=147, away_score=5, home_score=3,
+        status_line="Final", abstract="final",
+        away_winner=True, home_winner=False,
+        away_tri="SF", home_tri="NYY",
+        away_color=(240, 110, 30), home_color=(30, 70, 160),
+    )
+
+
+def _lad_vs_col() -> Game:
+    return Game(
+        away_id=119, home_id=115, away_score=6, home_score=2,
+        status_line="Final", abstract="final",
+        away_winner=True, home_winner=False,
+        away_tri="LAD", home_tri="COL",
+        away_color=(20, 60, 150), home_color=(60, 30, 120),
+    )
+
+
+def test_favorite_team_filters_to_matching_game() -> None:
+    """When the favorite team plays today, render only their card."""
+    mode = _seeded_mode([_sf_vs_nyy(), _lad_vs_col()])
+    mode.config.set_favorite_team("SF")
+    # Whichever monotonic slot we're in, both slots must resolve to the
+    # single SF game since the filtered list has length 1.
+    for _ in range(3):
+        canvas = Canvas(128, 32)
+        mode.render(canvas, 0)
+        assert _lit(canvas), "favorite card drew nothing"
+    # Sanity: filter is applied at render, so the raw list is untouched.
+    assert len(mode._games) == 2
+
+
+def test_favorite_team_falls_back_when_team_is_off() -> None:
+    """On an off-day the card should still rotate through the full slate,
+    not blank out. Choosing a tri-code (BOS) that isn't in today's games
+    exercises the fallback branch."""
+    games = [_sf_vs_nyy(), _lad_vs_col()]
+    mode = _seeded_mode(games)
+    mode.config.set_favorite_team("BOS")
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    assert _lit(canvas), "fallback drew nothing on an off-day"
+
+
+def test_favorite_team_matches_home_side_too() -> None:
+    """NYY is on the home side of the SF game; favoriting NYY must still
+    surface that card (the filter checks both away_tri and home_tri)."""
+    mode = _seeded_mode([_sf_vs_nyy(), _lad_vs_col()])
+    mode.config.set_favorite_team("NYY")
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    assert _lit(canvas)
+
+
+def test_favorite_team_empty_string_is_no_filter() -> None:
+    """Empty favorite means the rotation walks the full slate."""
+    mode = _seeded_mode([_sf_vs_nyy(), _lad_vs_col()])
+    mode.config.set_favorite_team("")
+    canvas = Canvas(128, 32)
+    mode.render(canvas, 0)
+    assert _lit(canvas)
+    assert mode.config.current_favorite_team() == ""

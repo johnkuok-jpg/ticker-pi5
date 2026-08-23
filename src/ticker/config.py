@@ -497,6 +497,14 @@ class Config:
         return self.state_dir / "stocks_lock_symbol"
 
     @property
+    def sports_favorite_team_file(self) -> Path:
+        """When present + non-empty, the MLB sports card filters to games
+        involving this team's tri-code (SF, LAD, NYY, ...). If the team
+        isn't playing today the card falls back to the full slate rather
+        than blanking, so the panel stays useful on off-days."""
+        return self.state_dir / "sports_favorite_team"
+
+    @property
     def nametag_name_file(self) -> Path:
         return self.state_dir / "nametag_name"
 
@@ -1509,6 +1517,32 @@ class Config:
         # the same thing to current_stocks_lock_symbol() and the write is
         # atomic-ish either way.
         self.stocks_lock_symbol_file.write_text(value + "\n", encoding="utf-8")
+        return value
+
+    def current_favorite_team(self) -> str:
+        """MLB tri-code the sports card is favoring, or empty for the full slate."""
+        try:
+            raw = self.sports_favorite_team_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        return raw.upper()
+
+    def set_favorite_team(self, tri: str) -> str:
+        """Persist an MLB favorite team. Empty string clears the favorite.
+
+        Validated against the 30-team tri-code set from ``_MLB_TEAMS`` so a
+        typo never persists and blanks the card on days the (nonexistent)
+        team "isn't playing". Local import avoids pulling the sports module
+        into every consumer of Config.
+        """
+        value = "".join(str(tri).split()).upper()
+        if value:
+            from ticker.modes.sports import _MLB_TEAMS
+            valid = {info[0] for info in _MLB_TEAMS.values()}
+            if value not in valid:
+                raise ValueError(f"{value} is not an MLB tri-code")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.sports_favorite_team_file.write_text(value + "\n", encoding="utf-8")
         return value
 
     def set_bart_station(self, station: str) -> None:

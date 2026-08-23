@@ -261,6 +261,39 @@
       {% endif %}
       <p id="commute-note" class="schedule">One tap = one Google Directions call. Nothing refreshes on its own.</p>
     </section>
+    <section class="flight" data-for="sports">
+      <label>Favorite MLB team</label>
+      {# 30 clubs arranged by division so the grid still reads like a
+         standings page even when the tiles are just tri-codes. Each
+         tile posts to /sports/favorite; the server validates against
+         the same tri-code set the mode uses to render, so a typo is
+         impossible. Off-days fall back to the full slate rather than
+         blanking, so favoriting is safe to leave on. #}
+      <p class="fx-hint">Tap a team to dwell on their game. Off-days show the full slate. Tap again to clear.</p>
+      {% set mlb_divisions = [
+        ("AL East",    ["BAL", "BOS", "NYY", "TB",  "TOR"]),
+        ("AL Central", ["CWS", "CLE", "DET", "KC",  "MIN"]),
+        ("AL West",   ["HOU", "LAA", "OAK", "SEA", "TEX"]),
+        ("NL East",   ["ATL", "MIA", "NYM", "PHI", "WSH"]),
+        ("NL Central",["CHC", "CIN", "MIL", "PIT", "STL"]),
+        ("NL West",   ["ARI", "COL", "LAD", "SD",  "SF"])
+      ] %}
+      <div id="mlb-team-grid" class="fx-grid" aria-label="MLB favorite team">
+        {% for division, teams in mlb_divisions %}
+        {% for tri in teams %}
+        <button type="button"
+                class="fx-tile mlb-team-tile{% if tri == sports_favorite %} is-selected{% endif %}"
+                data-tri="{{ tri }}"
+                aria-pressed="{% if tri == sports_favorite %}true{% else %}false{% endif %}"
+                title="{{ division }}">
+          <span class="fx-tile-code">{{ tri }}</span>
+          <span class="fx-tile-base">{{ division.split()[0] }}</span>
+        </button>
+        {% endfor %}
+        {% endfor %}
+      </div>
+      <p id="mlb-favorite-note" class="schedule">Cards rotate every 6 s. Games refresh every 30 s from MLB's public schedule.</p>
+    </section>
     <section class="flight" data-for="flights">
       <label for="flight-input">Flight to track</label>
       <form id="flight-form" class="flight-row">
@@ -1241,6 +1274,45 @@
       }
     });
     renderSymbols();
+
+    /* MLB favorite: 30 tri-code tiles arranged by division. Tapping a tile
+       posts to /sports/favorite (the server also switches mode to sports).
+       Tapping the currently-selected tile clears the favorite. If the team
+       isn't playing today the sports mode itself falls back to the full
+       slate, so tapping is always safe -- there is no "blank card" state. */
+    let sportsFavorite = {{ sports_favorite | tojson }};
+    const mlbGrid = document.getElementById('mlb-team-grid');
+    const mlbNote = document.getElementById('mlb-favorite-note');
+    function paintMlbGrid() {
+      mlbGrid.querySelectorAll('.mlb-team-tile').forEach(tile => {
+        const on = tile.dataset.tri === sportsFavorite;
+        tile.classList.toggle('is-selected', on);
+        tile.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    async function setMlbFavorite(tri) {
+      const target = (tri === sportsFavorite) ? '' : tri;
+      const response = await fetch('/sports/favorite', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({team: target})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        mlbNote.textContent = data.error || 'Could not update the favorite.';
+        return;
+      }
+      sportsFavorite = data.sports_favorite || '';
+      paintMlbGrid();
+      mlbNote.textContent = sportsFavorite
+        ? `Favoriting ${sportsFavorite}. Off-days fall back to the full slate.`
+        : 'Cards rotate every 6 s through today\u2019s slate.';
+      refreshStatus();
+    }
+    mlbGrid.querySelectorAll('.mlb-team-tile').forEach(tile => {
+      tile.addEventListener('click', () => setMlbFavorite(tile.dataset.tri));
+    });
+
     /* Currency card: one-tap quick-pick grid + custom-pair fallback. Each
        tile shows a flag SVG + code and toggles that currency in/out of the
        watchlist. USD/JPY, EUR/GBP etc. are treated as "the JPY tile, base

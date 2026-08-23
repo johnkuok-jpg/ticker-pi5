@@ -475,9 +475,21 @@ class SportsMode(Mode):
             self._draw_placeholder(canvas)
             return
 
+        # Favorite team filter: if the user has pinned a tri-code and it
+        # actually plays today, dwell on just that game (or both halves of
+        # a doubleheader). If it's an off-day, fall back to the full slate
+        # rather than blanking the panel -- "MLB" on an off-day should still
+        # show baseball, just not the wrong baseball.
+        games = self._games
+        favorite = self.config.current_favorite_team()
+        if favorite:
+            filtered = [g for g in games if favorite in (g.away_tri, g.home_tri)]
+            if filtered:
+                games = filtered
+
         # Card rotation: ``CARD_SECONDS`` per game, walk through
         # today's slate. Using wall-clock seconds (not tick count)
         # means the rotation cadence is stable regardless of the
         # renderer's frame rate.
-        idx = int(time.monotonic() // self.CARD_SECONDS) % len(self._games)
-        self._draw_game(canvas, self._games[idx])
+        idx = int(time.monotonic() // self.CARD_SECONDS) % len(games)
+        self._draw_game(canvas, games[idx])
