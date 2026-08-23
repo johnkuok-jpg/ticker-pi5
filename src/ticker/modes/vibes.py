@@ -31,10 +31,16 @@ a single-frame lightning strike screen-blends bright silver across the
 whole panel and decays over ~4 frames, no branching bolts (they read as
 noise on 32 rows).
 
-**Aquarium.** Still stubbed with a light animation and a "COMING SOON"
-label. It exists so the picker isn't a two-item menu today and so a future
-PR only has to fill in ``render`` rather than plumb the mode selection
-end-to-end.
+**Aquarium.** Underwater tank diorama. A vertical blue gradient stands
+in for water depth, with a broken caustic ripple animated across the
+top 3 rows. Along the bottom a two-row sand strip anchors six swaying
+seaweed fronds (top of each frond wobbles more than the base, exactly
+like a real weed in a current). Two filter vents in the sand each
+release bubbles on their own cadence -- bubbles wobble sideways as they
+rise (bubbles in water actually do sway) and come in two sizes. Four
+fish sprites (tang, angelfish, neon tetra, clownfish) drift horizontally
+with a small triangular y-bob and reflect off the tank walls; they
+never wrap through the glass.
 """
 
 from __future__ import annotations
@@ -667,62 +673,284 @@ class _Rain:
                     img.putpixel((x, y), (nr, ng, nb))
 
 
+# ---------------------------------------------------------------------------
+# Aquarium palette + fish sprites
+# ---------------------------------------------------------------------------
+
+# Water gradient: light near the surface (sunlight coming through), dark
+# at the abyss. Cooler blue-teal so the fish colours pop against it.
+_AQ_BG_TOP    = (10, 40, 75)
+_AQ_BG_BOTTOM = (2,  8,  20)
+
+# Caustic ripple colour -- a hair brighter than the surface, painted in
+# broken segments across the top few rows.
+_AQ_CAUSTIC = (60, 110, 150)
+
+# Bubble palette: two shades so bubbles read as tiny spheres, not dots.
+_AQ_BUBBLE_LIGHT = (170, 210, 235)
+_AQ_BUBBLE_DARK  = (90, 140, 180)
+
+# Seaweed: dark green fronds that sway. Two shades for shape.
+_AQ_WEED_DARK = (12, 55, 25)
+_AQ_WEED_LIT  = (35, 110, 55)
+
+# Sand row along the very bottom.
+_AQ_SAND = (95, 80, 45)
+
+# Fish sprites. Each is a small pixel-art bitmap with two palette slots:
+# ``B`` = body, ``F`` = fin/highlight, space = transparent. Sprites face
+# RIGHT by default; the renderer mirrors them for the left-facing case.
+# Kept short and asymmetric so the flip reads.
+_FISH_SPRITES: tuple[tuple[str, tuple[int, int, int], tuple[int, int, int]], ...] = (
+    # Tang -- classic oval with a triangular tail. Yellow/orange body.
+    (
+        " BBB \n"
+        "FBBBB\n"
+        " BBB ",
+        (240, 175, 55),   # body -- warm orange
+        (255, 220, 120),  # fin  -- pale yellow
+    ),
+    # Angelfish -- taller, triangular. Silver/coral.
+    (
+        "  B  \n"
+        " BBBB\n"
+        "FBBBB\n"
+        " BBBB\n"
+        "  B  ",
+        (225, 130, 130),  # body -- coral
+        (255, 200, 200),  # fin  -- pale pink
+    ),
+    # Neon tetra -- tiny torpedo. Bright cyan.
+    (
+        "BBBB\n"
+        " BBF",
+        (80, 220, 235),   # body -- neon cyan
+        (200, 245, 250),  # fin  -- ice
+    ),
+    # Clownfish -- small, chunky. Orange with white bands (approximated).
+    (
+        " BB \n"
+        "FBFB\n"
+        " BB ",
+        (250, 130, 45),   # body -- clown orange
+        (255, 250, 240),  # fin  -- white band
+    ),
+)
+
+
 class _Aquarium:
-    """Placeholder: a couple of drifting fish shapes + COMING SOON."""
+    """Underwater tank: fish drift, bubbles rise, seaweed sways.
+
+    Composition mirrors a real aquarium diorama:
+
+    * A vertical blue gradient for water depth.
+    * A single row of caustic ripples along the top few rows -- broken
+      segments animated with a slow phase so the surface shimmers.
+    * A sand strip and swaying seaweed silhouettes at the bottom.
+    * Rising bubbles from a couple of fixed vents in the sand -- real
+      bubbles come from filter outlets, not random floor tiles.
+    * ~4 fish drifting horizontally with slow y-bob, each mirrored when
+      they hit the tank edge (they never wrap through the wall).
+
+    Everything animates off ``tick`` plus an unseeded RNG for bubble
+    spawn jitter so the scene doesn't loop across restarts.
+    """
+
+    _MAX_BUBBLES  = 30
+    _BUBBLE_VENTS = (28, 92)      # x positions of the two sand vents
+    _WEED_XS      = (10, 20, 44, 78, 108, 118)  # seaweed frond bases
+    _SAND_Y       = 30            # top row of sand (rows 30, 31)
+
+    class _Fish:
+        __slots__ = ("sprite_idx", "x", "y", "y_phase", "speed", "direction")
+
+        def __init__(self, sprite_idx: int, x: float, y: float,
+                     y_phase: float, speed: float, direction: int) -> None:
+            self.sprite_idx = sprite_idx
+            self.x = x
+            self.y = y
+            self.y_phase = y_phase   # 0..1 progress through a sine bob cycle
+            self.speed = speed       # px per tick, always positive
+            self.direction = direction  # +1 = swim right, -1 = swim left
+
+    class _Bubble:
+        __slots__ = ("x", "y", "speed", "wobble", "big")
+
+        def __init__(self, x: float, y: float, speed: float,
+                     wobble: float, big: bool) -> None:
+            self.x = x
+            self.y = y
+            self.speed = speed
+            self.wobble = wobble  # accumulator for small lateral drift
+            self.big = big
 
     def __init__(self) -> None:
-        # Two "fish" as (x, y, direction). Direction is +1 or -1.
-        self._fish: list[list[int]] = [
-            [10, 8, 1],
-            [100, 20, -1],
-        ]
+        seed_rng = random.Random(0xC0FFEEBE)
+        self._rng = random.Random()
+
+        # Spawn one fish per sprite so all four species are on screen at
+        # start. Positions and directions are seeded so the first frame
+        # is reproducible.
+        self._fish: list[_Aquarium._Fish] = []
+        for idx in range(len(_FISH_SPRITES)):
+            self._fish.append(_Aquarium._Fish(
+                sprite_idx=idx,
+                x=float(seed_rng.randint(10, 110)),
+                y=float(seed_rng.randint(4, 22)),
+                y_phase=seed_rng.random(),
+                speed=seed_rng.uniform(0.15, 0.35),
+                direction=seed_rng.choice((-1, 1)),
+            ))
+
+        self._bubbles: list[_Aquarium._Bubble] = []
+        # Countdown until each vent next spawns a bubble.
+        self._vent_cooldowns = [self._rng.randint(4, 14)
+                                for _ in self._BUBBLE_VENTS]
+
+    # ------------------------------------------------------------------
+    # Physics step
+    # ------------------------------------------------------------------
+
+    def _step(self) -> None:
+        rng = self._rng
+
+        # Bubble spawn from each vent on its own cadence.
+        for i, vent_x in enumerate(self._BUBBLE_VENTS):
+            self._vent_cooldowns[i] -= 1
+            if self._vent_cooldowns[i] <= 0 and len(self._bubbles) < self._MAX_BUBBLES:
+                # Small jitter around the vent x so the stream isn't a
+                # single column of pixels.
+                self._bubbles.append(_Aquarium._Bubble(
+                    x=vent_x + rng.uniform(-1.5, 1.5),
+                    y=float(self._SAND_Y - 1),
+                    speed=rng.uniform(0.35, 0.7),
+                    wobble=rng.uniform(0.0, 6.283),
+                    big=rng.random() < 0.25,
+                ))
+                self._vent_cooldowns[i] = rng.randint(4, 18)
+
+        # Move bubbles up with small horizontal drift.
+        for b in self._bubbles:
+            b.y -= b.speed
+            b.wobble += 0.25
+            # A gentle sideways drift is realistic for bubbles rising
+            # through moving water -- unlike drops on glass, bubbles do
+            # sway. Amplitude stays well under 1 px per frame.
+            b.x += 0.15 * (1.0 if (b.wobble % 6.283) < 3.1415 else -1.0) \
+                   + rng.uniform(-0.05, 0.05)
+        self._bubbles = [b for b in self._bubbles if b.y > 1 and 0 <= b.x < 128]
+
+        # Move fish: horizontal drift plus a slow sine y-bob.
+        for f in self._fish:
+            f.x += f.speed * f.direction
+            f.y_phase = (f.y_phase + 0.008) % 1.0
+            # y-bob rides on top of the fish's home row; amplitude ~1 px
+            # keeps the fish inside the tank interior.
+            # (Home row is captured via ``y`` at spawn; we shift by a
+            # cheap triangular wave that avoids importing math.sin.)
+            # Reflect at tank walls with a small margin so the sprite
+            # doesn't clip the border.
+            sprite = _FISH_SPRITES[f.sprite_idx][0]
+            sprite_w = max(len(row) for row in sprite.split("\n"))
+            if f.direction > 0 and f.x + sprite_w >= 126:
+                f.direction = -1
+            elif f.direction < 0 and f.x <= 2:
+                f.direction = 1
+
+    # ------------------------------------------------------------------
+    # Draw
+    # ------------------------------------------------------------------
+
+    def _paint_background(self, canvas: Canvas) -> None:
+        for y in range(32):
+            t = y / 31.0
+            r = int(_AQ_BG_TOP[0] + (_AQ_BG_BOTTOM[0] - _AQ_BG_TOP[0]) * t)
+            g = int(_AQ_BG_TOP[1] + (_AQ_BG_BOTTOM[1] - _AQ_BG_TOP[1]) * t)
+            b = int(_AQ_BG_TOP[2] + (_AQ_BG_BOTTOM[2] - _AQ_BG_TOP[2]) * t)
+            canvas.fill_rect(0, y, 128, 1, (r, g, b))
+
+    def _paint_caustics(self, canvas: Canvas, tick: int) -> None:
+        # Broken-line caustics across the top 3 rows. Each row uses a
+        # different phase so the ripples look independent, and we skip
+        # pixels on a slow-moving offset to draw dashes rather than a
+        # solid streak.
+        for row in range(3):
+            phase = (tick // 2 + row * 5) % 32
+            for x in range(0, 128, 4):
+                lit_x = (x + phase) % 128
+                # Dash pattern -- 2 lit, 2 skipped, staggered per row.
+                if (lit_x + row * 3) % 8 < 2:
+                    canvas.pixel(lit_x, row, _AQ_CAUSTIC)
+
+    def _paint_sand_and_weed(self, canvas: Canvas, tick: int) -> None:
+        # Sand: two rows of muted olive-tan.
+        canvas.fill_rect(0, self._SAND_Y, 128, 2, _AQ_SAND)
+        # Seaweed: each frond is a vertical strand of 6-10 pixels that
+        # sways in x by 1 based on a slow phase; alternating shades
+        # give the fronds a little dimension.
+        for i, base_x in enumerate(self._WEED_XS):
+            height = 6 + (i % 3) * 2   # varies 6, 8, 10
+            sway_phase = (tick // 6 + i * 3) % 8
+            for k in range(height):
+                # Sway increases with height (top wobbles more than base).
+                sway = 0
+                if k >= height // 2:
+                    sway = 1 if sway_phase < 4 else -1
+                if k >= height - 2:
+                    sway *= 2
+                px = (base_x + sway) % 128
+                py = self._SAND_Y - 1 - k
+                color = _AQ_WEED_LIT if k % 2 == 0 else _AQ_WEED_DARK
+                canvas.pixel(px, py, color)
+
+    def _paint_bubbles(self, canvas: Canvas) -> None:
+        for b in self._bubbles:
+            ix, iy = int(b.x), int(b.y)
+            if not (0 <= ix < 128 and 0 <= iy < 32):
+                continue
+            canvas.pixel(ix, iy, _AQ_BUBBLE_LIGHT)
+            if b.big:
+                # 2x2 bubble with a dark rim so it reads as a sphere.
+                if ix + 1 < 128:
+                    canvas.pixel(ix + 1, iy, _AQ_BUBBLE_DARK)
+                if iy + 1 < 32:
+                    canvas.pixel(ix, iy + 1, _AQ_BUBBLE_DARK)
+                if ix + 1 < 128 and iy + 1 < 32:
+                    canvas.pixel(ix + 1, iy + 1, _AQ_BUBBLE_DARK)
+
+    def _paint_fish(self, canvas: Canvas) -> None:
+        for f in self._fish:
+            sprite, body, fin = _FISH_SPRITES[f.sprite_idx]
+            rows = sprite.split("\n")
+            # y-bob: a tiny triangular offset from y_phase (0..1).
+            phase = f.y_phase
+            if phase < 0.5:
+                bob = int(phase * 4) - 1  # -1, 0, 0, 1
+            else:
+                bob = 1 - int((phase - 0.5) * 4)  # 1, 0, 0, -1
+            base_x, base_y = int(f.x), int(f.y) + bob
+            for dy, row in enumerate(rows):
+                for dx, ch in enumerate(row):
+                    if ch == " ":
+                        continue
+                    # Mirror when swimming left.
+                    if f.direction < 0:
+                        px = base_x + (len(row) - 1 - dx)
+                    else:
+                        px = base_x + dx
+                    py = base_y + dy
+                    if 0 <= px < 128 and 0 <= py < self._SAND_Y:
+                        canvas.pixel(px, py, body if ch == "B" else fin)
 
     def render(self, canvas: Canvas, tick: int) -> None:
-        # Dim blue water: draw a soft top-to-bottom gradient of two
-        # colors so the background reads as water even at this size.
-        for y in range(32):
-            if y < 16:
-                color = (5, 15, 45)
-            else:
-                color = (5, 20, 60)
-            canvas.fill_rect(0, y, 128, 1, color)
-        # Occasional bubble rising from the bottom (deterministic modulo
-        # tick so the preview builder stays reproducible).
-        if tick % 12 == 0:
-            bx = (tick * 7) % 128
-            canvas.pixel(bx, 31 - ((tick // 12) % 20), (140, 190, 230))
-        # Fish are 5x3 pixel silhouettes; direction determines which
-        # end holds the tail. Simple bit-pattern draw -- kept inline
-        # rather than reused from a bitmap because there are only two.
-        for fish in self._fish:
-            x, y, direction = fish
-            if direction == 1:
-                # Head right: >==<
-                pattern = (
-                    " xxx>",
-                    "xxxxx",
-                    " xxx>",
-                )
-            else:
-                pattern = (
-                    "<xxx ",
-                    "xxxxx",
-                    "<xxx ",
-                )
-            for dy, row in enumerate(pattern):
-                for dx, ch in enumerate(row):
-                    if ch != " ":
-                        canvas.pixel(
-                            (x + dx) % 128,
-                            (y + dy) % 32,
-                            (180, 130, 60) if ch in "<>" else (220, 160, 80),
-                        )
-            # Advance every other frame so the fish drift instead of
-            # zooming across.
-            if tick % 2 == 0:
-                fish[0] = (x + direction) % 128
-        canvas.text_centered(2, "AQUARIUM", (170, 200, 235), SMALL)
-        canvas.text_centered(24, "COMING SOON", (110, 140, 180), SMALL)
+        self._step()
+        self._paint_background(canvas)
+        self._paint_caustics(canvas, tick)
+        self._paint_sand_and_weed(canvas, tick)
+        # Bubbles behind fish so a fish crossing a bubble stream reads
+        # as the fish being closer to the glass.
+        self._paint_bubbles(canvas)
+        self._paint_fish(canvas)
 
 
 # ---------------------------------------------------------------------------

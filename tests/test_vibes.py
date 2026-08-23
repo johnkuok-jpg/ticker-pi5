@@ -5,8 +5,7 @@ The vibes mode is a full-screen screensaver that dispatches to one of
 several sub-vibes (Campfire, Rain, Aquarium). These tests cover the
 dispatch contract, the config persistence, and enough per-vibe pixel
 sampling to catch a regression that turns the campfire cold, freezes
-the rain drops in place, or removes the "COMING SOON" placeholder from
-the Aquarium stub.
+the rain drops in place, or empties the aquarium of fish.
 """
 
 from __future__ import annotations
@@ -247,16 +246,29 @@ def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyp
     assert seen_bg_bottom, "expected the bottom gradient colour on the panel"
 
 
-def test_aquarium_shows_coming_soon(config) -> None:  # type: ignore[no-untyped-def]
-    """Aquarium is also a stub -- animating fish plus a label."""
+def test_aquarium_paints_scene_with_fish_and_sand(config) -> None:  # type: ignore[no-untyped-def]
+    """Aquarium renders a full tank: gradient sky, sand strip, fish body colors.
+
+    Assertions target scene identity rather than exact pixel positions so
+    the test tolerates small physics tweaks: no black pixels (bg covers
+    everything), sand row present, and at least one fish body colour
+    from the sprite palette lands on the panel.
+    """
+    from ticker.modes.vibes import _AQ_SAND, _FISH_SPRITES
+
     config.set_vibe("aquarium")
     mode = VibesMode(config)
     canvas = Canvas(config.width, config.height)
     mode.render(canvas, tick=0)
 
     pixels = _pixels(canvas)
-    lit = sum(1 for p in pixels if p != (0, 0, 0))
-    assert lit > 60, f"aquarium vibe drew almost nothing ({lit} lit pixels)"
+    # Background gradient covers the whole panel.
+    assert all(p != (0, 0, 0) for p in pixels), "aquarium should paint every pixel"
+    # Sand strip lit along the bottom rows.
+    assert _AQ_SAND in pixels, "expected the sand colour somewhere on the panel"
+    # At least one fish body colour visible.
+    body_colors = {sprite[1] for sprite in _FISH_SPRITES}
+    assert body_colors & set(pixels), "expected at least one fish body colour visible"
 
 
 # ---------------------------------------------------------------------------
