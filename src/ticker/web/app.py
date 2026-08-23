@@ -27,6 +27,18 @@ from ticker.modes.youtube import (
 # Acronyms and multi-word display names for the mode grid + settings page.
 # Anything not listed falls through to a plain capitalize() in the templates,
 # which is fine for single-word modes like "stocks" or "news".
+# Vibe key -> display name for the picker on the Vibes card. Derived once
+# at import time so a fresh import doesn't cost a module round-trip on every
+# request. Populated lazily inside the function so ``ticker.modes.vibes`` is
+# imported alongside the rest of the mode registry, not before.
+def _load_vibe_labels() -> dict[str, str]:
+    from ticker.modes.vibes import vibe_labels
+    return vibe_labels()
+
+
+_VIBE_LABELS_FOR_TEMPLATE = _load_vibe_labels()
+
+
 MODE_LABELS = {
     "bart": "BART",
     "muni": "Muni",
@@ -43,6 +55,7 @@ MODE_LABELS = {
     "pihealth": "Pi Health",
     "worldclock": "World Clock",
     "youtube": "YouTube",
+    "vibes": "Vibes",
 }
 
 
@@ -253,6 +266,8 @@ def create_app() -> Flask:
             youtube_selection=config.current_youtube_playlist(),
             worldclock_cities=config.current_worldclock_cities(),
             worldclock_view=config.current_worldclock_view(),
+            vibe=config.current_vibe(),
+            vibe_labels=_VIBE_LABELS_FOR_TEMPLATE,
             quake_alert_enabled=config.quake_alert_enabled,
             quake_min_mag=config.current_quake_alert_min_mag(),
             quake_region=config.current_quake_alert_region(),
@@ -1112,6 +1127,28 @@ def create_app() -> Flask:
             ), 400
         config.set_mode("worldclock")
         return jsonify(cities=saved, current_mode=config.current_mode())
+
+    @app.post("/vibes/vibe")
+    def set_vibe_endpoint():  # type: ignore[no-untyped-def]
+        """Change the active vibe and switch the panel to Vibes mode.
+
+        Distinct from worldclock's view toggle, which is a preference-
+        only change: a vibe pick is the whole reason the user opened
+        the card, so we auto-flip to the vibes mode so they see the
+        result immediately.
+        """
+        payload = request.get_json(silent=True) or {}
+        vibe = str(payload.get("vibe", "")).strip()
+        config = load_config()
+        try:
+            saved = config.set_vibe(vibe)
+        except ValueError as err:
+            return jsonify(
+                error=str(err),
+                vibe=config.current_vibe(),
+            ), 400
+        config.set_mode("vibes")
+        return jsonify(vibe=saved, current_mode="vibes")
 
     @app.post("/worldclock/view")
     def set_worldclock_view():  # type: ignore[no-untyped-def]

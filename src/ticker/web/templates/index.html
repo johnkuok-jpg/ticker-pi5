@@ -683,6 +683,20 @@
       </div>
       <p id="worldclock-note" class="schedule"></p>
     </section>
+    <section class="flight worldclock-card" data-for="vibes">
+      <label>Vibes</label>
+      <p class="schedule">Full-screen ambient scenes. Pick one and it stays until you switch. Campfire is the flagship; rain and aquarium are placeholders while I build them out.</p>
+      <div class="worldclock-view" role="group" aria-label="Vibe picker">
+        <span class="worldclock-view-label">Vibe</span>
+        <div class="worldclock-view-toggle">
+          {% for key, label in vibe_labels.items() %}
+          <button type="button" class="worldclock-view-btn vibe-btn{% if vibe == key %} is-active{% endif %}"
+                  data-vibe="{{ key }}" aria-pressed="{{ 'true' if vibe == key else 'false' }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <p id="vibe-note" class="schedule"></p>
+    </section>
     {# Shown only while the ticker is on its own setup hotspot, which is the one
        situation where the network is the only thing worth doing on this page. #}
     <a id="net-banner" class="netbanner hidden" href="/settings">
@@ -2338,6 +2352,44 @@
         }
       });
     }
+
+    // Vibes picker. Same optimistic-flip pattern as the world clock view
+    // toggle: swap the active button on tap, roll back if the server
+    // rejects it. Server flips the panel to Vibes mode on success so
+    // the user's next glance at the panel is the vibe they picked.
+    const vibeBtns = document.querySelectorAll('.vibe-btn');
+    const vibeNote = document.getElementById('vibe-note');
+    vibeBtns.forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const target = btn.dataset.vibe;
+        const previous = document.querySelector('.vibe-btn.is-active');
+        if (previous === btn) return;
+        vibeBtns.forEach((b) => {
+          b.classList.toggle('is-active', b === btn);
+          b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+        });
+        try {
+          const resp = await fetch('/vibes/vibe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vibe: target }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'bad response');
+          if (vibeNote) vibeNote.textContent = 'Now showing: ' + btn.textContent + '.';
+          const status = document.getElementById('status');
+          if (status && data.current_mode) status.textContent = data.current_mode;
+        } catch (err) {
+          if (previous) {
+            vibeBtns.forEach((b) => {
+              b.classList.toggle('is-active', b === previous);
+              b.setAttribute('aria-pressed', b === previous ? 'true' : 'false');
+            });
+          }
+          if (vibeNote) vibeNote.textContent = 'Change failed.';
+        }
+      });
+    });
 
     // World clock view toggle: analog vs digital.
     //

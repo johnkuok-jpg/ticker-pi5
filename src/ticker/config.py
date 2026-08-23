@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "pihealth", "worldclock", "youtube", "costco", "commute")
+VALID_MODES = ("stocks", "news", "weather", "flights", "market", "crypto", "currency", "quakes", "bart", "muni", "aqi", "bikes", "nametag", "spotify", "pokemon", "focus", "net", "pihealth", "worldclock", "youtube", "costco", "commute", "vibes")
 
 # Text color for the nametag mode when the wearer hasn't picked one yet.
 _DEFAULT_NAMETAG_HEX = "#FFFFFF"
@@ -1792,6 +1792,43 @@ class Config:
     @property
     def worldclock_file(self) -> Path:
         return self.state_dir / "worldclock.json"
+
+    @property
+    def vibe_file(self) -> Path:
+        return self.state_dir / "vibe.txt"
+
+    def current_vibe(self) -> str:
+        """Return the persisted vibe key, defaulting to the campfire.
+
+        Vibes are read from a tiny separate text file rather than a
+        shared mode-config JSON so a hand-edit on the Pi is trivial and
+        a corrupt vibe value can never taint another mode's state. The
+        read is defensive: an unknown or unreadable value falls back to
+        the default so the panel keeps rendering.
+
+        The valid list is imported lazily inside the function to avoid a
+        circular import (``config`` is imported by the mode registry,
+        which imports every mode including ``vibes``).
+        """
+        from ticker.modes.vibes import DEFAULT_VIBE, valid_vibes
+        try:
+            value = self.vibe_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return DEFAULT_VIBE
+        return value if value in valid_vibes() else DEFAULT_VIBE
+
+    def set_vibe(self, vibe: str) -> str:
+        """Persist the active vibe. Raises ``ValueError`` on unknown keys."""
+        from ticker.modes.vibes import valid_vibes
+        if vibe not in valid_vibes():
+            raise ValueError(
+                f"vibe must be one of {valid_vibes()}"
+            )
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.vibe_file.with_suffix(".txt.tmp")
+        tmp.write_text(vibe, encoding="utf-8")
+        os.replace(tmp, self.vibe_file)
+        return vibe
 
     @property
     def worldclock_view_file(self) -> Path:
