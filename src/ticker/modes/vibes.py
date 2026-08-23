@@ -138,8 +138,8 @@ _CAMPFIRE_PALETTE: tuple[tuple[int, int, int], ...] = (
 # The Doom PSX fire needs vertical room to look like fire: with only 4-5
 # rows the flame reads as a bright edge, not a flame. Twenty-plus rows
 # is where the tips start visibly waving and the classic wobble emerges.
-_LOG_ROWS = 5
-_LOG_TOP = 32 - _LOG_ROWS   # y = 27
+_LOG_ROWS = 7
+_LOG_TOP = 32 - _LOG_ROWS   # y = 25
 # Flame buffer covers rows 0..26 (27 rows visible + 1 hidden fuel row).
 # The fuel row is fed in just above the log crest so heat drives up the
 # whole panel, letting the tips lick the top edge.
@@ -150,8 +150,14 @@ _FIRE_HEIGHT = _LOG_TOP - _FIRE_TOP  # rows of *visible* flame (0..26)
 # rather than competing with the flames for attention. The "ember" colour
 # is what the automaton pulses along the log crest to sell the "burning"
 # read; without it the logs look like a dead prop.
-_LOG_DARK = (55, 30, 15)   # deep brown -- log body
-_LOG_MID = (95, 55, 25)    # highlight along the top of each log
+_LOG_SHADOW = (28, 14, 6)   # deep shadow under the log / underside
+_LOG_DARK   = (55, 30, 15)  # log body
+_LOG_MID    = (95, 55, 25)  # highlight along the top of each log
+_LOG_LIGHT  = (150, 92, 44) # fire-lit crest rim -- catches the flame
+# End-grain palette: the sawn face of the log, concentric rings.
+_END_OUTER  = (72, 40, 18)  # outer bark ring on the end face
+_END_MID    = (128, 78, 38) # sap-wood ring
+_END_INNER  = (185, 118, 60) # bright inner ring (heartwood, fire-lit)
 _EMBER = (215, 87, 15)     # pulsing coal on the crest
 _EMBER_HOT = (231, 143, 31)  # brief brighter flash
 
@@ -300,49 +306,94 @@ class _Campfire:
         # toward the high inner corner, meeting the other log near the
         # centre of the panel a couple rows above the panel floor.
         #
-        # Panel is 128x32. Logs sit in the bottom 8 rows so there's
-        # room for a real diagonal to develop -- a 5-row-tall log at
-        # ~30 degrees only slopes 3 px, which reads as a jaggy horizontal.
-        # A steeper drop (8 rows over ~40 px of run) reads unmistakably
-        # as "leaning inward".
+        # Panel is 128x32. Logs sit in the bottom 7 rows. Two logs
+        # cross like a teepee: LEFT log runs low-left to high-right,
+        # RIGHT log runs high-left to low-right. They overlap near the
+        # centre; the LEFT log is painted second so it appears to sit
+        # ON TOP of the right one, which sells the cross more than any
+        # amount of shading (a stack has a definite over/under; two
+        # bands that just intersect read as a plus sign).
+        #
+        # Each log carries three shading rows across its 7 px thickness:
+        #   row 0 (crest): fire-lit rim -- LIGHT
+        #   row 1        : normal highlight -- MID
+        #   rows 2-5     : body -- DARK
+        #   row 6 (base) : ground shadow -- SHADOW
+        # Plus an end-cap disc at the OUTER end of each log showing the
+        # sawn face's concentric rings. The inner end is buried by the
+        # other log so no cap is needed there.
+        # Outer end starts 6 px inside the panel edge so the end-cap disc
+        # can render fully. Logs are longer than the buffer would suggest
+        # -- they cross well past the centre so the overlap region is
+        # substantial (no black gap between them). The RIGHT-facing log
+        # (drawn second) sits on top of the LEFT-facing log at the cross.
         log_specs = (
-            # x_lo, y_lo, x_hi, y_hi, thickness
-            (2,   31, 58, 24, 4),  # left  log: low-left to high-right
-            (70,  24, 126, 31, 4), # right log: high-left  to low-right
+            # (x_outer, y_outer, x_inner, y_inner, thickness)
+            # y_outer=29 keeps the 3-px-radius end cap fully on-panel.
+            (7,   29, 78, 22, 7),   # left log:  outer left,  crosses right of centre
+            (120, 29, 50, 22, 7),   # right log: outer right, crosses left  of centre (on top)
         )
 
-        for x_lo, y_lo, x_hi, y_hi, thickness in log_specs:
-            dx = x_hi - x_lo
-            dy = y_hi - y_lo
-            # Walk the longer axis in unit steps and interpolate the
-            # other. dx dominates for these near-horizontal logs.
+        for x_o, y_o, x_i, y_i, thickness in log_specs:
+            dx = x_i - x_o
+            dy = y_i - y_o
             steps = max(abs(dx), abs(dy))
             for i in range(steps + 1):
                 t = i / steps
-                cx = int(round(x_lo + dx * t))
-                cy = int(round(y_lo + dy * t))
-                # Paint a short vertical stripe of ``thickness`` px
-                # centred on (cx, cy). Vertical stripes stack cleanly
-                # for a mostly-horizontal log; a fully rotated stripe
-                # would need proper line-drawing math for what buys
-                # nothing at 128x32.
+                cx = int(round(x_o + dx * t))
+                cy = int(round(y_o + dy * t))
+                # Paint the vertical stripe of ``thickness`` px centred
+                # around (cx, cy). k=0 is the crest (top of the stripe).
+                top = cy - thickness // 2
                 for k in range(thickness):
-                    py = cy - thickness // 2 + k
-                    if 0 <= py < 32 and 0 <= cx < 128:
-                        # Top pixel of the stripe is the crest -- paint
-                        # it in the highlight colour so the firelight
-                        # line runs along the top edge of the log.
-                        colour = _LOG_MID if k == 0 else _LOG_DARK
-                        canvas.pixel(cx, py, colour)
+                    py = top + k
+                    if not (0 <= py < 32 and 0 <= cx < 128):
+                        continue
+                    if k == 0:
+                        colour = _LOG_LIGHT
+                    elif k == 1:
+                        colour = _LOG_MID
+                    elif k == thickness - 1:
+                        colour = _LOG_SHADOW
+                    else:
+                        colour = _LOG_DARK
+                    canvas.pixel(cx, py, colour)
+
+            # End cap: 3-px-radius disc centred on the OUTER end,
+            # showing the sawn face with concentric rings. Drawn last for
+            # this log so it sits on top of the body pixels.
+            cap_r = 3
+            cap_cx = x_o
+            cap_cy = y_o - thickness // 2 + thickness // 2  # centre of the stripe at outer end
+            # ...which is just y_o for a stripe centred on y_o. Use y_o directly.
+            cap_cy = y_o
+            for oy in range(-cap_r, cap_r + 1):
+                for ox in range(-cap_r, cap_r + 1):
+                    d2 = ox * ox + oy * oy
+                    if d2 > cap_r * cap_r:
+                        continue
+                    px = cap_cx + ox
+                    py = cap_cy + oy
+                    if not (0 <= px < 128 and 0 <= py < 32):
+                        continue
+                    if d2 <= 1:
+                        colour = _END_INNER
+                    elif d2 <= 4:
+                        colour = _END_MID
+                    else:
+                        colour = _END_OUTER
+                    canvas.pixel(px, py, colour)
+
+
 
         # Ember dots along each log's crest. Positions are deterministic
         # (seeded RNG separate from the plasma) so a given ember stays
         # in one spot and pulses in place, like a real coal.
         ember_rng = random.Random(0xE1BE12)
         embers_per_log = 6
-        for x_lo, y_lo, x_hi, y_hi, thickness in log_specs:
-            dx = x_hi - x_lo
-            dy = y_hi - y_lo
+        for x_o, y_o, x_i, y_i, thickness in log_specs:
+            dx = x_i - x_o
+            dy = y_i - y_o
             steps = max(abs(dx), abs(dy))
             crest_dy = -(thickness // 2)
             # Choose a handful of ``t`` values along the log's length,
@@ -350,8 +401,8 @@ class _Campfire:
             # rounded log tips.
             for _ in range(embers_per_log):
                 t = ember_rng.uniform(0.2, 0.8)
-                ex = int(round(x_lo + dx * t))
-                ey = int(round(y_lo + dy * t)) + crest_dy
+                ex = int(round(x_o + dx * t))
+                ey = int(round(y_o + dy * t)) + crest_dy
                 offset = ember_rng.randint(0, 15)
                 phase = (self._ember_phase + offset) % 32
                 if phase == 0:
