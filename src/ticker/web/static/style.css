@@ -1106,6 +1106,37 @@ input[type=range]::-moz-range-thumb {
   font-weight: 600;
 }
 .checkline input { width: 16px; height: 16px; accent-color: var(--accent); }
+/* ----- Panel calibration ------------------------------------------------- */
+
+/* Label and readout are fixed-width so the two sliders line up with each other
+   and the track doesn't shift as the percentage goes from 2 to 3 digits. */
+.calib-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.calib-row input[type=range] {
+  flex: 1;
+  min-width: 0;
+}
+.calib-label {
+  flex: 0 0 42px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+.calib-value {
+  flex: 0 0 46px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
 .wide { width: 100%; }
 .backlink {
   color: var(--accent);

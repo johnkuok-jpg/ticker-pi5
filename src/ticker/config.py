@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -378,6 +379,27 @@ class Config:
     @property
     def brightness_file(self) -> Path:
         return self.state_dir / "brightness"
+
+    @property
+    def panel_calibration_file(self) -> Path:
+        """Per-half brightness gains, as ``"<left> <right>"``.
+
+        Two chained 64x32 panels rarely match: different production batches,
+        different cable lengths, and a shared 5V rail that sags toward the far
+        end all make one half read brighter than the other. The fix is a
+        multiplier per half applied after the global brightness scale.
+        """
+        return self.state_dir / "panel_calibration"
+
+    @property
+    def panel_calibration_test_file(self) -> Path:
+        """Timestamp of the last request for the flat-grey calibration target.
+
+        Stored as a timestamp rather than a boolean so the pattern expires on
+        its own. A boolean flag left set by a closed browser tab would strand
+        the panel on a grey rectangle with no obvious way back.
+        """
+        return self.state_dir / "panel_calibration_test"
 
     @property
     def flight_file(self) -> Path:
@@ -1614,6 +1636,80 @@ class Config:
         value = max(0.05, min(1.0, float(brightness)))
         stamp = self.now().timestamp()
         self.brightness_file.write_text(f"{value:.2f} {stamp:.0f}\n", encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # Panel calibration
+    #
+    # A gain per 64px half, multiplied in after the global brightness scale.
+    # Purely a display trim: it never changes what a mode draws, so no mode
+    # needs to know it exists.
+    PANEL_GAIN_MIN = 0.5
+    PANEL_GAIN_MAX = 1.5
+    # How long the flat-grey target stays up after the last request. Long
+    # enough to eyeball the seam and drag a slider, short enough that walking
+    # away from a phone restores the panel on its own.
+    PANEL_TEST_TTL_SEC = 600
+
+    def current_panel_calibration(self) -> tuple[float, float]:
+        """Gains for the left and right halves. ``(1.0, 1.0)`` when unset."""
+        try:
+            raw = self.panel_calibration_file.read_text(encoding="utf-8").split()
+        except OSError:
+            return (1.0, 1.0)
+        if len(raw) != 2:
+            return (1.0, 1.0)
+        try:
+            left, right = float(raw[0]), float(raw[1])
+        except ValueError:
+            return (1.0, 1.0)
+        return (self._clamp_gain(left), self._clamp_gain(right))
+
+    def _clamp_gain(self, value: float) -> float:
+        return max(self.PANEL_GAIN_MIN, min(self.PANEL_GAIN_MAX, float(value)))
+
+    def set_panel_calibration(self, left: float, right: float) -> tuple[float, float]:
+        """Persist per-half gains, clamped into the supported range.
+
+        Raises ``ValueError`` on values that aren't numbers at all; silently
+        clamps ones that are merely out of range, so a slider that overshoots
+        by a rounding step doesn't 400 back at the user.
+        """
+        try:
+            pair = (float(left), float(right))
+        except (TypeError, ValueError) as error:
+            raise ValueError("gains must be numbers") from error
+        if not all(math.isfinite(gain) for gain in pair):
+            raise ValueError("gains must be finite")
+        clamped = (self._clamp_gain(pair[0]), self._clamp_gain(pair[1]))
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.panel_calibration_file.write_text(
+            f"{clamped[0]:.3f} {clamped[1]:.3f}\n", encoding="utf-8"
+        )
+        return clamped
+
+    def current_panel_calibration_test(self) -> bool:
+        """True while the flat-grey calibration target should be displayed."""
+        try:
+            raw = self.panel_calibration_test_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        if not raw:
+            return False
+        try:
+            stamp = float(raw)
+        except ValueError:
+            return False
+        return (self.now().timestamp() - stamp) < self.PANEL_TEST_TTL_SEC
+
+    def set_panel_calibration_test(self, enabled: bool) -> bool:
+        """Turn the flat-grey target on (refreshing its TTL) or off."""
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        if enabled:
+            stamp = self.now().timestamp()
+            self.panel_calibration_test_file.write_text(f"{stamp:.0f}\n", encoding="utf-8")
+            return True
+        self.panel_calibration_test_file.write_text("\n", encoding="utf-8")
+        return False
 
     # ------------------------------------------------------------------
     # YouTube skip counter

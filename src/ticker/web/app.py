@@ -1211,6 +1211,7 @@ def create_app() -> Flask:
         codes on the panel (and any bookmarks) keep working.
         """
         config = load_config()
+        left_gain, right_gain = config.current_panel_calibration()
         return render_template(
             "settings.html",
             available=net.available(),
@@ -1218,6 +1219,9 @@ def create_app() -> Flask:
             all_modes=VALID_MODES,
             hidden_modes=config.current_hidden_modes(),
             mode_labels=MODE_LABELS,
+            panel_left_gain=left_gain,
+            panel_right_gain=right_gain,
+            panel_test=config.current_panel_calibration_test(),
         )
 
     @app.get("/wifi")
@@ -1247,6 +1251,32 @@ def create_app() -> Flask:
                 hidden=config.current_hidden_modes(),
             ), 400
         return jsonify(hidden=saved)
+
+    @app.post("/settings/calibration")
+    def set_panel_calibration_endpoint():  # type: ignore[no-untyped-def]
+        """Persist per-half panel gains and the flat-grey test target.
+
+        Body: ``{"left": 1.0, "right": 0.92, "test": false}``. Every key is
+        optional so the test toggle and the sliders can post independently;
+        omitting a gain leaves it at its stored value rather than resetting it.
+        """
+        payload = request.get_json(silent=True) or {}
+        config = load_config()
+        stored = config.current_panel_calibration()
+        left = payload.get("left", stored[0])
+        right = payload.get("right", stored[1])
+        try:
+            saved = config.set_panel_calibration(left, right)
+        except ValueError as err:
+            return jsonify(
+                error=str(err),
+                left=stored[0],
+                right=stored[1],
+            ), 400
+        test = config.current_panel_calibration_test()
+        if "test" in payload:
+            test = config.set_panel_calibration_test(bool(payload["test"]))
+        return jsonify(left=saved[0], right=saved[1], test=test)
 
     @app.get("/api/wifi")
     def wifi_state():  # type: ignore[no-untyped-def]

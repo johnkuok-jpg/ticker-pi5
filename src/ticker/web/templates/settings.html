@@ -40,6 +40,38 @@
       <p id="modules-note" class="schedule">Changes save as you tap.</p>
     </section>
 
+    <h2 class="section-heading">Panel calibration</h2>
+
+    <section class="flight" aria-labelledby="calib-heading">
+      <label id="calib-heading">Half brightness</label>
+      <p class="schedule">The display is two 64&times;32 panels chained together. If one
+        half reads brighter than the other, trim it here. Turn on the test pattern to
+        judge the seam against a flat grey field.</p>
+
+      <label class="checkline">
+        <input id="calib-test" type="checkbox" {% if panel_test %}checked{% endif %}>
+        Show test pattern
+      </label>
+      <p class="schedule">Turns itself off after ten minutes.</p>
+
+      <div class="calib-row">
+        <span class="calib-label">Left</span>
+        <input id="calib-left" type="range" min="50" max="150" step="1"
+               value="{{ (panel_left_gain * 100) | round | int }}" aria-label="Left panel brightness">
+        <span id="calib-left-value" class="calib-value">{{ (panel_left_gain * 100) | round | int }}%</span>
+      </div>
+
+      <div class="calib-row">
+        <span class="calib-label">Right</span>
+        <input id="calib-right" type="range" min="50" max="150" step="1"
+               value="{{ (panel_right_gain * 100) | round | int }}" aria-label="Right panel brightness">
+        <span id="calib-right-value" class="calib-value">{{ (panel_right_gain * 100) | round | int }}%</span>
+      </div>
+
+      <button id="calib-reset" type="button" class="flight-go wide">Reset both to 100%</button>
+      <p id="calib-note" class="schedule">Changes apply within a second.</p>
+    </section>
+
     <h2 class="section-heading">Wi-Fi</h2>
 
     {% if not available %}
@@ -295,6 +327,82 @@
         }
       });
     });
+
+    /* ---- Panel calibration ---- */
+    const calibLeft = document.getElementById('calib-left');
+    const calibRight = document.getElementById('calib-right');
+    const calibLeftValue = document.getElementById('calib-left-value');
+    const calibRightValue = document.getElementById('calib-right-value');
+    const calibTest = document.getElementById('calib-test');
+    const calibReset = document.getElementById('calib-reset');
+    const calibNote = document.getElementById('calib-note');
+
+    function paintCalibValues() {
+      calibLeftValue.textContent = calibLeft.value + '%';
+      calibRightValue.textContent = calibRight.value + '%';
+    }
+
+    /* Coalesce slider drags into one request per 150ms. A range input fires
+       continuously while dragging and each post writes a state file the
+       renderer reads, so unthrottled this would be hundreds of writes. */
+    let calibTimer = null;
+    function postCalibration(extra) {
+      if (calibTimer) clearTimeout(calibTimer);
+      calibTimer = setTimeout(async () => {
+        const body = Object.assign({
+          left: Number(calibLeft.value) / 100,
+          right: Number(calibRight.value) / 100,
+        }, extra || {});
+        try {
+          const resp = await fetch('/settings/calibration', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            calibNote.textContent = data.error || 'Save failed.';
+            return;
+          }
+          calibNote.textContent = 'Saved.';
+        } catch (err) {
+          calibNote.textContent = 'Save failed.';
+        }
+      }, 150);
+    }
+
+    [calibLeft, calibRight].forEach((slider) => {
+      slider.addEventListener('input', () => {
+        paintCalibValues();
+        postCalibration();
+      });
+    });
+
+    calibTest.addEventListener('change', () => {
+      calibNote.textContent = calibTest.checked
+        ? 'Test pattern on — compare the two halves.'
+        : 'Test pattern off.';
+      postCalibration({ test: calibTest.checked });
+    });
+
+    calibReset.addEventListener('click', () => {
+      calibLeft.value = 100;
+      calibRight.value = 100;
+      paintCalibValues();
+      postCalibration();
+    });
+
+    /* Clear the test pattern on the way out rather than waiting for the TTL,
+       so navigating back to the panel shows the real mode immediately. */
+    window.addEventListener('pagehide', () => {
+      if (!calibTest.checked) return;
+      navigator.sendBeacon(
+        '/settings/calibration',
+        new Blob([JSON.stringify({ test: false })], { type: 'application/json' })
+      );
+    });
+
+    paintCalibValues();
   </script>
 </body>
 </html>

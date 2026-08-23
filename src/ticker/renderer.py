@@ -29,6 +29,11 @@ _last_mode_error_at: dict[str, float] = {}
 # unbidden.
 SETUP_BRIGHTNESS_FLOOR = 0.45
 
+# Level of the flat field shown while calibrating the two panel halves. Mid-grey
+# rather than white: at full white both halves clip against the same ceiling and
+# a mismatch disappears, which is exactly the wrong behaviour for a test target.
+_PANEL_TEST_LEVEL = 128.0
+
 
 def _open_matrix(config: Config) -> tuple[Any, np.ndarray]:
     """Create the Pi 5 PIO display object using the official PioMatter pattern.
@@ -111,6 +116,15 @@ def run() -> None:
     # from 75% to off is a startling flash to black when applied in one frame.
     ramp = 1.0 / (1.5 * config.fps)
 
+    # Per-half panel gains, on the same once-a-second cadence as brightness.
+    # Applied unramped: these move only when someone is dragging a slider on
+    # the settings page and watching the seam, where the lag of a ramp reads
+    # as the control being broken.
+    panel_gains = config.current_panel_calibration()
+    panel_test = config.current_panel_calibration_test()
+    # The seam sits at the boundary between the two chained 64x32 panels.
+    seam = canvas.width // 2
+
     # Resolve the channel permutation once. Panels that wire green and blue the
     # other way round render every color wrong but raise nothing, so this is a
     # display setting rather than an error condition. "rgb" costs nothing since
@@ -169,6 +183,8 @@ def run() -> None:
                 # brightness for every other screen.
                 if notice:
                     target_brightness = max(target_brightness, SETUP_BRIGHTNESS_FLOOR)
+                panel_gains = config.current_panel_calibration()
+                panel_test = config.current_panel_calibration_test()
             canvas.clear()
             try:
                 current_mode.render(canvas, tick)
@@ -193,7 +209,22 @@ def run() -> None:
             pixels = np.asarray(canvas.image_buffer, dtype=np.float32)
             if reorder_channels:
                 pixels = pixels[:, :, channel_index]
-            framebuffer[:] = (pixels * brightness).astype(np.uint8)
+            if panel_test:
+                # Flat mid-grey across both halves. Text and graphics make a
+                # brightness mismatch almost impossible to judge -- the eye
+                # latches onto the shapes instead of the level -- so matching
+                # the halves needs a uniform field to compare.
+                pixels = np.full_like(pixels, _PANEL_TEST_LEVEL)
+            pixels = pixels * brightness
+            left_gain, right_gain = panel_gains
+            if left_gain != 1.0:
+                pixels[:, :seam] *= left_gain
+            if right_gain != 1.0:
+                pixels[:, seam:] *= right_gain
+            # Clip before the cast: a gain above 1.0 can push a bright pixel
+            # past 255, and uint8 wraps rather than saturates, which would turn
+            # white into near-black speckle.
+            framebuffer[:] = np.clip(pixels, 0, 255).astype(np.uint8)
             matrix.show()
             tick += 1
             time.sleep(max(0.0, (1 / config.fps) - (time.monotonic() - started)))
