@@ -192,12 +192,22 @@ class _Campfire:
         # on every propagation step, so the fire still flickers.
         self._rng = random.Random(0xC0FFEE)
         # 2D list of ints, [y][x], top row first, height includes fuel.
+        # We keep TWO buffers: the current plasma state and the previous
+        # one. In-between frames blend between them so the perceived
+        # animation is smooth even though the plasma only steps at
+        # 15 Hz. Without this, dropping the step rate for a slower
+        # flicker made the fire look choppy -- each simulation step
+        # was a full palette-scale jump.
         self._buffer: list[list[int]] = [
+            [0] * 128 for _ in range(self._BUFFER_HEIGHT)
+        ]
+        self._prev_buffer: list[list[int]] = [
             [0] * 128 for _ in range(self._BUFFER_HEIGHT)
         ]
         # Fuel row is the last row -- kept hot every frame.
         for x in range(128):
             self._buffer[-1][x] = 31
+            self._prev_buffer[-1][x] = 31
         # Ember phase advances slowly so the log crest pulses out of
         # sync with the flame body, which is what real coals look like.
         self._ember_phase = 0
@@ -214,7 +224,13 @@ class _Campfire:
         0 -> stay, 1 -> +1, 2 -> -1, 3 -> +2. Doom used a wider set;
         at 128 wide with 32 rows visible the narrower set reads tighter
         without losing the wobble.
+
+        Before advancing, snapshot the current buffer to ``_prev_buffer``
+        so ``render`` can interpolate between them on in-between frames.
         """
+        # Snapshot for interpolation.
+        for y in range(self._BUFFER_HEIGHT):
+            self._prev_buffer[y][:] = self._buffer[y]
         buf = self._buffer
         rng = self._rng
         # Fuel is CONCENTRATED, not panel-wide. A real campfire has
@@ -327,6 +343,49 @@ class _Campfire:
         # -- they cross well past the centre so the overlap region is
         # substantial (no black gap between them). The RIGHT-facing log
         # (drawn second) sits on top of the LEFT-facing log at the cross.
+        # Vertical kindling piece: a shorter, slimmer log standing upright
+        # behind the crossed pair. Drawn FIRST so the horizontal logs
+        # cover its base -- reads as "stood into the fire behind the
+        # stack." Leans a hair to the right so it doesn't look robotic.
+        # Its top is inside the flame area; the crest gets the fire-lit
+        # LIGHT colour and the sides fade to DARK, giving it volume.
+        vert_x_bot, vert_y_bot = 64, 27  # base sits inside the log cross
+        vert_x_top, vert_y_top = 66, 12  # top pokes into the flames
+        vert_thick = 4
+        vdx = vert_x_top - vert_x_bot
+        vdy = vert_y_top - vert_y_bot
+        vsteps = max(abs(vdx), abs(vdy))
+        for i in range(vsteps + 1):
+            t = i / vsteps
+            cy = int(round(vert_y_bot + vdy * t))
+            cx = int(round(vert_x_bot + vdx * t))
+            # Paint a horizontal stripe of vert_thick px across (cx, cy).
+            # Left edge is the shaded side, right edge catches highlight.
+            left = cx - vert_thick // 2
+            for k in range(vert_thick):
+                px = left + k
+                if not (0 <= px < 128 and 0 <= cy < 32):
+                    continue
+                if k == 0:
+                    colour = _LOG_SHADOW
+                elif k == vert_thick - 1:
+                    colour = _LOG_MID
+                else:
+                    colour = _LOG_DARK
+                canvas.pixel(px, cy, colour)
+        # Top-of-kindling cap: a tiny 3-px-wide TOP RING so the upright
+        # piece also shows an end grain like the horizontal logs. Uses
+        # the same inner/mid/outer palette but at a smaller scale.
+        top_ring = [
+            (vert_x_top - 1, vert_y_top,     _END_OUTER),
+            (vert_x_top + 1, vert_y_top,     _END_OUTER),
+            (vert_x_top,     vert_y_top - 1, _END_OUTER),
+            (vert_x_top,     vert_y_top,     _END_INNER),
+        ]
+        for px, py, colour in top_ring:
+            if 0 <= px < 128 and 0 <= py < 32:
+                canvas.pixel(px, py, colour)
+
         log_specs = (
             # (x_outer, y_outer, x_inner, y_inner, thickness)
             # y_outer=29 keeps the 3-px-radius end cap fully on-panel.
@@ -415,32 +474,58 @@ class _Campfire:
                     canvas.pixel(ex, ey, color)
 
     # Plasma step rate. At 30fps, stepping every frame makes the fire look
-    # like a strobe -- flames whip past too fast to read as fuel burning.
-    # Real fire flickers at ~10-15 Hz, so we step every 3 ticks (10 Hz).
-    # The rendered flame still updates every frame because ember pulse and
-    # log highlights are independent, but the plasma propagation itself
-    # advances at a slower, believable rate.
-    _STEP_EVERY = 3
+    # like a strobe. Real fire flickers at ~15 Hz. We step every 2 ticks
+    # (15 Hz) and INTERPOLATE the intermediate frame between the previous
+    # and current buffers, so the perceived animation is smooth 30 fps
+    # motion with a 15 Hz plasma underneath.
+    _STEP_EVERY = 2
 
     def render(self, canvas: Canvas, tick: int) -> None:
-        # Step the plasma on a slower cadence than the frame rate so the
-        # flame reads as fire rather than as a strobe.
+        # Step the plasma on a slower cadence than the frame rate. The
+        # in-between frames blend from _prev_buffer -> _buffer, which
+        # smooths the strobe you get from raw stepping.
         if tick % self._STEP_EVERY == 0:
             self._step()
+        # Fractional position between the last step and the next one, in
+        # [0, 1). At tick % STEP == 0 we just stepped, so alpha=0 means
+        # "show the freshly-stepped buffer"; the interpolation is done
+        # from prev toward current, so alpha=0 uses buf and alpha->1 also
+        # uses buf (both are the new state). To actually blend, we run
+        # the OPPOSITE convention: alpha = (STEP - 1 - phase) / STEP
+        # gives 0 on step frame (pure new) and grows toward the next step.
+        # Simpler: paint as (1 - blend) * buf + blend * prev, where
+        # blend = phase / STEP -- but phase=0 is the step frame so
+        # blend=0 means "pure new", which is what we want.
+        phase = tick % self._STEP_EVERY
+        # Blend weight for _prev_buffer: 0 on the step frame, growing
+        # toward 1 as we approach the next step -- but we cap it so
+        # the blend is symmetric around each step and the motion looks
+        # like a smooth curve rather than a saw.
+        blend_prev = phase / self._STEP_EVERY  # 0.0 or 0.5 for STEP=2
         canvas.clear()
-        # Draw flames from the top of the panel down to the log crest.
-        # Buffer row 0 == top of visible flame == panel row _FIRE_TOP (=0).
-        # Buffer row _FIRE_HEIGHT - 1 == panel row _LOG_TOP - 1 (just above
-        # the logs). Row _FIRE_HEIGHT is the hidden fuel row; we don't
-        # paint it because the log crest covers that row.
         buf = self._buffer
+        prev = self._prev_buffer
+        palette = _CAMPFIRE_PALETTE
+        max_heat = len(palette) - 1
         for row_index in range(_FIRE_HEIGHT):
             y = _FIRE_TOP + row_index
-            row = buf[row_index]
+            row_cur = buf[row_index]
+            row_prev = prev[row_index]
             for x in range(128):
-                heat = row[x]
+                if blend_prev == 0.0:
+                    heat = row_cur[x]
+                else:
+                    # Linear blend of the heat scalar, not of RGB. Blending
+                    # heat keeps the color ramp coherent (colours stay on
+                    # the palette curve) whereas RGB blending would tint
+                    # the intermediate frames grey.
+                    h_prev = row_prev[x]
+                    h_cur = row_cur[x]
+                    heat = int(round(h_cur * (1 - blend_prev) + h_prev * blend_prev))
+                    if heat > max_heat:
+                        heat = max_heat
                 if heat > 1:
-                    canvas.pixel(x, y, _CAMPFIRE_PALETTE[heat])
+                    canvas.pixel(x, y, palette[heat])
         # Logs on top of the flames, then embers on top of the logs. The
         # log body covers the bottommost flame row so the fire looks like
         # it emerges from the wood rather than floating just above it.
