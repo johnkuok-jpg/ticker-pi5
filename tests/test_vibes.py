@@ -239,6 +239,71 @@ def test_campfire_holds_its_buffer_between_steps(config) -> None:  # type: ignor
     assert fire._prev_buffer == after_step
 
 
+def test_campfire_smoothing_is_asymmetric_and_cuts_the_worst_frame_jump(config) -> None:  # type: ignore[no-untyped-def]
+    """The display filter must smooth the sizzle without flattening a tongue.
+
+    Two failure modes bracket this. Raw stepping strobes: the buffer holds
+    for three frames then jumps a whole palette step, and that peak jump
+    is what reads as jarring. A symmetric low-pass fixes the strobe by
+    rounding off every leading edge, which is how the fire turns into a
+    blob. So the filter has to be asymmetric -- fast up, slow down -- and
+    it has to measurably reduce the WORST single-frame jump, not just the
+    average.
+    """
+    assert _Campfire._ATTACK > _Campfire._RELEASE, "filter must rise faster than it falls"
+
+    def peak_frame_jump(attack: float, release: float) -> float:
+        original = (_Campfire._ATTACK, _Campfire._RELEASE)
+        _Campfire._ATTACK, _Campfire._RELEASE = attack, release
+        try:
+            fire = _Campfire()
+            warm = Canvas(config.width, config.height)
+            for tick in range(60):
+                fire.render(warm, tick=tick)
+            frames = []
+            for tick in range(60, 120):
+                canvas = Canvas(config.width, config.height)
+                fire.render(canvas, tick=tick)
+                frames.append(list(canvas.image_buffer.convert("RGB").getdata()))
+        finally:
+            _Campfire._ATTACK, _Campfire._RELEASE = original
+        jumps = []
+        for a, b in zip(frames, frames[1:]):
+            total = sum(
+                abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2])
+                for p, q in zip(a, b)
+            )
+            jumps.append(total / (len(a) * 3))
+        return max(jumps)
+
+    unfiltered = peak_frame_jump(1.0, 1.0)
+    filtered = peak_frame_jump(_Campfire._ATTACK, _Campfire._RELEASE)
+    assert filtered < unfiltered * 0.8, (
+        f"filter barely helps: peak jump {filtered:.2f} vs unfiltered {unfiltered:.2f}"
+    )
+
+
+def test_campfire_display_filter_never_feeds_back_into_the_plasma(config) -> None:  # type: ignore[no-untyped-def]
+    """Smoothed output must stay downstream of the simulation.
+
+    An earlier fire died because the thing being displayed was also the
+    thing being stepped, so every multiplication compounded until the
+    flame either smeared or went out. ``_shown`` follows ``_buffer``; it
+    must never be the source the automaton reads.
+    """
+    fire = _Campfire()
+    canvas = Canvas(config.width, config.height)
+    for tick in range(40):
+        fire.render(canvas, tick=tick)
+
+    poisoned = [row[:] for row in fire._buffer]
+    for row in fire._shown:
+        for x in range(len(row)):
+            row[x] = 0.0
+    fire.render(canvas, tick=41)  # not a step boundary
+    assert fire._buffer == poisoned, "clearing the display field disturbed the plasma"
+
+
 def test_rain_draws_drops_and_gradient(config) -> None:  # type: ignore[no-untyped-def]
     """Rain paints a night gradient sky plus visible drop heads.
 

@@ -215,6 +215,13 @@ class _Campfire:
         for x in range(128):
             self._buffer[-1][x] = 31
             self._prev_buffer[-1][x] = 31
+        # Displayed heat, as floats. This is what actually gets painted:
+        # a smoothed follower of ``_buffer`` (see ``_ATTACK``/``_RELEASE``).
+        # Kept separate from the simulation so the filter never feeds back
+        # into the plasma -- an earlier fire died exactly that way.
+        self._shown: list[list[float]] = [
+            [0.0] * 128 for _ in range(self._BUFFER_HEIGHT)
+        ]
         # Ember phase advances slowly so the log crest pulses out of
         # sync with the flame body, which is what real coals look like.
         self._ember_phase = 0
@@ -506,50 +513,57 @@ class _Campfire:
     # of a hard jump every step frame.
     _STEP_EVERY = 4
 
+    # Temporal smoothing (attack / release) on the DISPLAYED heat field.
+    #
+    # The automaton is what makes this read as fire -- each cell re-rolls
+    # its own decay and x-jitter every step, which is exactly what carves
+    # the tongues. It is also why the raw output sizzles: a pixel can go
+    # bright -> dark -> bright in three steps, and 3700 pixels doing that
+    # independently reads as static.
+    #
+    # A symmetric low-pass fixes the sizzle and destroys the shape,
+    # because a tongue's leading edge is a step function and averaging it
+    # rounds it off. So the filter is ASYMMETRIC, the way a real flame
+    # behaves: brightening is nearly instant (combustion), dimming is
+    # slow (the gas is still glowing as it cools). Per frame, for every
+    # pixel:
+    #
+    #     shown += (target - shown) * (_ATTACK if rising else _RELEASE)
+    #
+    # _ATTACK near 1.0 keeps new tongues crisp; a low _RELEASE turns the
+    # flicker-out into a fade, so the eye reads motion instead of noise.
+    # This replaces the old prev/current cross-fade -- the filter already
+    # supplies the in-between frames, and running both just double-blurs.
+    _ATTACK = 0.85
+    _RELEASE = 0.22
+
     def render(self, canvas: Canvas, tick: int) -> None:
-        # Step the plasma on a slower cadence than the frame rate. The
-        # in-between frames blend from _prev_buffer -> _buffer, which
-        # smooths the strobe you get from raw stepping.
+        # Step the plasma on a slower cadence than the frame rate, then
+        # let the display filter carry the in-between frames.
         if tick % self._STEP_EVERY == 0:
             self._step()
-        # Fractional position between the last step and the next one, in
-        # [0, 1). At tick % STEP == 0 we just stepped, so alpha=0 means
-        # "show the freshly-stepped buffer"; the interpolation is done
-        # from prev toward current, so alpha=0 uses buf and alpha->1 also
-        # uses buf (both are the new state). To actually blend, we run
-        # the OPPOSITE convention: alpha = (STEP - 1 - phase) / STEP
-        # gives 0 on step frame (pure new) and grows toward the next step.
-        # Simpler: paint as (1 - blend) * buf + blend * prev, where
-        # blend = phase / STEP -- but phase=0 is the step frame so
-        # blend=0 means "pure new", which is what we want.
-        phase = tick % self._STEP_EVERY
-        # Blend weight for _prev_buffer: 0 on the step frame, growing
-        # toward 1 as we approach the next step -- but we cap it so
-        # the blend is symmetric around each step and the motion looks
-        # like a smooth curve rather than a saw.
-        blend_prev = phase / self._STEP_EVERY  # 0.0 or 0.5 for STEP=2
         canvas.clear()
         buf = self._buffer
-        prev = self._prev_buffer
+        shown = self._shown
+        attack = self._ATTACK
+        release = self._RELEASE
         palette = _CAMPFIRE_PALETTE
         max_heat = len(palette) - 1
         for row_index in range(_FIRE_HEIGHT):
             y = _FIRE_TOP + row_index
-            row_cur = buf[row_index]
-            row_prev = prev[row_index]
+            row_target = buf[row_index]
+            row_shown = shown[row_index]
             for x in range(128):
-                if blend_prev == 0.0:
-                    heat = row_cur[x]
-                else:
-                    # Linear blend of the heat scalar, not of RGB. Blending
-                    # heat keeps the color ramp coherent (colours stay on
-                    # the palette curve) whereas RGB blending would tint
-                    # the intermediate frames grey.
-                    h_prev = row_prev[x]
-                    h_cur = row_cur[x]
-                    heat = int(round(h_cur * (1 - blend_prev) + h_prev * blend_prev))
-                    if heat > max_heat:
-                        heat = max_heat
+                target = row_target[x]
+                value = row_shown[x]
+                # Rising and falling get different time constants; see the
+                # class comment above.
+                coeff = attack if target > value else release
+                value += (target - value) * coeff
+                row_shown[x] = value
+                heat = int(value + 0.5)
+                if heat > max_heat:
+                    heat = max_heat
                 if heat > 1:
                     canvas.pixel(x, y, palette[heat])
         # Logs on top of the flames, then embers on top of the logs. The
