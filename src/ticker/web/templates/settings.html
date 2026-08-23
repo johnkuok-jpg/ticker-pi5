@@ -42,6 +42,16 @@
 
     <h2 class="section-heading">Panel calibration</h2>
 
+    {# Every value on this page is defaulted rather than assumed. This page is
+       the Wi-Fi recovery screen -- the one screen someone reaches while the
+       ticker is joined to its own setup hotspot with nothing else working --
+       so it must never fail to render. It can also be rendered by an older
+       Python process than the one this file shipped with: `git pull` replaces
+       templates on disk immediately, but a gunicorn worker keeps the old
+       route code until ticker-web is restarted, and Jinja loads a template
+       from disk the first time it is asked for. A missing variable in that
+       window would take out Wi-Fi recovery, so a stale worker degrades to a
+       card showing 100% instead. #}
     <section class="flight" aria-labelledby="calib-heading">
       <label id="calib-heading">Half brightness</label>
       <p class="schedule">The display is two 64&times;32 panels chained together. If one
@@ -49,7 +59,7 @@
         judge the seam against a flat grey field.</p>
 
       <label class="checkline">
-        <input id="calib-test" type="checkbox" {% if panel_test %}checked{% endif %}>
+        <input id="calib-test" type="checkbox" {% if panel_test | default(false) %}checked{% endif %}>
         Show test pattern
       </label>
       <p class="schedule">Turns itself off after ten minutes.</p>
@@ -57,15 +67,15 @@
       <div class="calib-row">
         <span class="calib-label">Left</span>
         <input id="calib-left" type="range" min="50" max="150" step="1"
-               value="{{ (panel_left_gain * 100) | round | int }}" aria-label="Left panel brightness">
-        <span id="calib-left-value" class="calib-value">{{ (panel_left_gain * 100) | round | int }}%</span>
+               value="{{ (panel_left_gain | default(1.0) * 100) | round | int }}" aria-label="Left panel brightness">
+        <span id="calib-left-value" class="calib-value">{{ (panel_left_gain | default(1.0) * 100) | round | int }}%</span>
       </div>
 
       <div class="calib-row">
         <span class="calib-label">Right</span>
         <input id="calib-right" type="range" min="50" max="150" step="1"
-               value="{{ (panel_right_gain * 100) | round | int }}" aria-label="Right panel brightness">
-        <span id="calib-right-value" class="calib-value">{{ (panel_right_gain * 100) | round | int }}%</span>
+               value="{{ (panel_right_gain | default(1.0) * 100) | round | int }}" aria-label="Right panel brightness">
+        <span id="calib-right-value" class="calib-value">{{ (panel_right_gain | default(1.0) * 100) | round | int }}%</span>
       </div>
 
       <button id="calib-reset" type="button" class="flight-go wide">Reset both to 100%</button>

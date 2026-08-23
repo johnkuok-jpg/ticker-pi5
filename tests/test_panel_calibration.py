@@ -37,6 +37,40 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 # -- config layer ----------------------------------------------------------
 
 
+def test_settings_page_renders_without_the_calibration_context() -> None:
+    """The settings page must render even when the route omits the gains.
+
+    This is not hypothetical. ``git pull`` replaces the template on disk the
+    moment it lands, but a running gunicorn worker keeps serving the old
+    route code until ticker-web is restarted -- and Jinja reads a template
+    from disk the first time it is asked for it. So a worker that predates
+    this feature can be handed the template that ships with it, and a bare
+    ``{{ panel_left_gain }}`` raises UndefinedError: HTTP 500 on the one
+    page that is also the Wi-Fi recovery screen, which is exactly the screen
+    someone needs when the ticker is unreachable any other way. Defaults in
+    the template turn that into a card showing 100%.
+    """
+    from flask import render_template
+
+    from ticker import net as net_module
+    from ticker.config import VALID_MODES
+
+    app = create_app()
+    with app.test_request_context("/settings"):
+        html = render_template(
+            "settings.html",
+            available=net_module.available(),
+            setup_ssid=net_module.HOTSPOT_SSID,
+            all_modes=VALID_MODES,
+            hidden_modes=[],
+            mode_labels={},
+        )
+
+    assert "Panel calibration" in html
+    # Both sliders fall back to unity gain rather than blowing up.
+    assert html.count('value="100"') >= 2, "expected both gains to default to 100%"
+
+
 def test_calibration_defaults_to_unity(config) -> None:  # type: ignore[no-untyped-def]
     assert config.current_panel_calibration() == (1.0, 1.0)
 
