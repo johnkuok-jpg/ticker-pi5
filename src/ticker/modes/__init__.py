@@ -14,10 +14,14 @@ from ticker.modes.earthquakes import EarthquakesMode
 from ticker.modes.flights import FlightsMode
 from ticker.modes.focus import FocusMode
 from ticker.modes.market import MarketMode
+from ticker.modes.mlb import MLBMode
 from ticker.modes.muni import MuniMode
 from ticker.modes.nametag import NametagMode
+from ticker.modes.nba import NBAMode
 from ticker.modes.network import NetworkMode
 from ticker.modes.news import NewsMode
+from ticker.modes.nfl import NFLMode
+from ticker.modes.nhl import NHLMode
 from ticker.modes.pihealth import PiHealthMode
 from ticker.modes.pokemon import PokemonMode
 from ticker.modes.spotify import SpotifyMode
@@ -53,6 +57,14 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "youtube": YouTubeMode,
     "vibes": VibesMode,
     "sports": SportsMode,
+    # Per-league constructors aren't separate top-level mode slots (the
+    # "sports" umbrella above is the only one a user picks from the
+    # rotation/settings UI) -- kept here so tests and any future direct
+    # construction don't need a private import path.
+    "mlb": MLBMode,
+    "nhl": NHLMode,
+    "nfl": NFLMode,
+    "nba": NBAMode,
 }
 
 
@@ -95,6 +107,10 @@ __all__ = [
     "FocusMode",
     "SpotifyMode",
     "SportsMode",
+    "MLBMode",
+    "NHLMode",
+    "NFLMode",
+    "NBAMode",
     "VibesMode",
     "WorldClockMode",
     "YouTubeMode",

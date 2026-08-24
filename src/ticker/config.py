@@ -519,12 +519,19 @@ class Config:
         return self.state_dir / "stocks_lock_symbol"
 
     @property
-    def sports_favorite_team_file(self) -> Path:
-        """When present + non-empty, the MLB sports card filters to games
-        involving this team's tri-code (SF, LAD, NYY, ...). If the team
-        isn't playing today the card falls back to the full slate rather
-        than blanking, so the panel stays useful on off-days."""
-        return self.state_dir / "sports_favorite_team"
+    def sports_favorite_team_files(self) -> dict[str, Path]:
+        """When present + non-empty, a league's sports card filters to
+        games involving this team's tri-code (SF, LAD, NYY, ...). If the
+        team isn't playing today the card falls back to the full slate
+        rather than blanking, so the panel stays useful on off-days.
+
+        One file per league (mlb/nhl/nfl/nba) -- favoriting the Giants
+        shouldn't also have an opinion on who your NFL team is.
+        """
+        return {
+            league: self.state_dir / f"sports_favorite_team_{league}"
+            for league in ("mlb", "nhl", "nfl", "nba")
+        }
 
     @property
     def nametag_name_file(self) -> Path:
@@ -1541,31 +1548,68 @@ class Config:
         self.stocks_lock_symbol_file.write_text(value + "\n", encoding="utf-8")
         return value
 
-    def current_favorite_team(self) -> str:
-        """MLB tri-code the sports card is favoring, or empty for the full slate."""
+    _SPORTS_TEAM_TABLE_IMPORTS = {
+        "mlb": ("ticker.modes.mlb", "_MLB_TEAMS"),
+        "nhl": ("ticker.modes.nhl", "_NHL_TEAMS"),
+        "nfl": ("ticker.modes.nfl", "_NFL_TEAMS"),
+        "nba": ("ticker.modes.nba", "_NBA_TEAMS"),
+    }
+
+    def _current_favorite_team(self, league: str) -> str:
         try:
-            raw = self.sports_favorite_team_file.read_text(encoding="utf-8").strip()
+            raw = self.sports_favorite_team_files[league].read_text(encoding="utf-8").strip()
         except OSError:
             return ""
         return raw.upper()
 
-    def set_favorite_team(self, tri: str) -> str:
-        """Persist an MLB favorite team. Empty string clears the favorite.
+    def _set_favorite_team(self, league: str, tri: str) -> str:
+        """Persist a favorite team for *league*. Empty string clears it.
 
-        Validated against the 30-team tri-code set from ``_MLB_TEAMS`` so a
-        typo never persists and blanks the card on days the (nonexistent)
-        team "isn't playing". Local import avoids pulling the sports module
-        into every consumer of Config.
+        Validated against that league's own tri-code set so a typo never
+        persists and blanks the card on days the (nonexistent) team
+        "isn't playing". Local import avoids pulling all four league
+        modules into every consumer of Config.
         """
         value = "".join(str(tri).split()).upper()
         if value:
-            from ticker.modes.sports import _MLB_TEAMS
-            valid = {info[0] for info in _MLB_TEAMS.values()}
+            import importlib
+
+            module_name, table_name = self._SPORTS_TEAM_TABLE_IMPORTS[league]
+            table = getattr(importlib.import_module(module_name), table_name)
+            valid = {info[0] for info in table.values()}
             if value not in valid:
-                raise ValueError(f"{value} is not an MLB tri-code")
+                raise ValueError(f"{value} is not a {league.upper()} tri-code")
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.sports_favorite_team_file.write_text(value + "\n", encoding="utf-8")
+        self.sports_favorite_team_files[league].write_text(value + "\n", encoding="utf-8")
         return value
+
+    def current_favorite_team_mlb(self) -> str:
+        """MLB tri-code the sports card is favoring, or empty for the full slate."""
+        return self._current_favorite_team("mlb")
+
+    def set_favorite_team_mlb(self, tri: str) -> str:
+        return self._set_favorite_team("mlb", tri)
+
+    def current_favorite_team_nhl(self) -> str:
+        """NHL tri-code the sports card is favoring, or empty for the full slate."""
+        return self._current_favorite_team("nhl")
+
+    def set_favorite_team_nhl(self, tri: str) -> str:
+        return self._set_favorite_team("nhl", tri)
+
+    def current_favorite_team_nfl(self) -> str:
+        """NFL tri-code the sports card is favoring, or empty for the full slate."""
+        return self._current_favorite_team("nfl")
+
+    def set_favorite_team_nfl(self, tri: str) -> str:
+        return self._set_favorite_team("nfl", tri)
+
+    def current_favorite_team_nba(self) -> str:
+        """NBA tri-code the sports card is favoring, or empty for the full slate."""
+        return self._current_favorite_team("nba")
+
+    def set_favorite_team_nba(self, tri: str) -> str:
+        return self._set_favorite_team("nba", tri)
 
     def set_bart_station(self, station: str) -> None:
         """Persist the chosen BART station.

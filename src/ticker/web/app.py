@@ -60,7 +60,7 @@ MODE_LABELS = {
     "worldclock": "World Clock",
     "youtube": "YouTube",
     "vibes": "Vibes",
-    "sports": "MLB",
+    "sports": "Sports",
 }
 
 
@@ -260,7 +260,12 @@ def create_app() -> Flask:
             symbols=config.current_symbols(),
             max_symbols=MAX_SYMBOLS,
             stocks_lock=config.current_stocks_lock_symbol(),
-            sports_favorite=config.current_favorite_team(),
+            sports_favorites={
+                "mlb": config.current_favorite_team_mlb(),
+                "nhl": config.current_favorite_team_nhl(),
+                "nfl": config.current_favorite_team_nfl(),
+                "nba": config.current_favorite_team_nba(),
+            },
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),
             nametag_font=config.current_nametag_font(),
@@ -606,25 +611,38 @@ def create_app() -> Flask:
             config.set_mode("stocks")
         return jsonify(stocks_lock=value, current_mode=config.current_mode())
 
-    @app.post("/sports/favorite")
-    def set_sports_favorite():  # type: ignore[no-untyped-def]
-        """Pin the MLB card on one team, or clear the pin.
+    _SPORTS_FAVORITE_SETTERS = {
+        "mlb": ("set_favorite_team_mlb", "current_favorite_team_mlb"),
+        "nhl": ("set_favorite_team_nhl", "current_favorite_team_nhl"),
+        "nfl": ("set_favorite_team_nfl", "current_favorite_team_nfl"),
+        "nba": ("set_favorite_team_nba", "current_favorite_team_nba"),
+    }
 
-        Body: ``{"team": "SF"}`` to favorite, ``{"team": ""}`` to clear.
-        Also switches to the sports mode when a team is being set -- same
-        rationale as ``/stocks/lock``: tapping a team is a request to go
-        look at their game now, not on the next rotation.
+    @app.post("/sports/favorite/<league>")
+    def set_sports_favorite(league: str):  # type: ignore[no-untyped-def]
+        """Pin one league's card on one team, or clear the pin.
+
+        ``league`` is one of mlb/nhl/nfl/nba. Body: ``{"team": "SF"}`` to
+        favorite, ``{"team": ""}`` to clear. Also switches to the sports
+        mode when a team is being set -- same rationale as
+        ``/stocks/lock``: tapping a team is a request to go look at their
+        game now, not on the next rotation.
         """
+        setters = _SPORTS_FAVORITE_SETTERS.get(league)
+        if setters is None:
+            return jsonify(error=f"unknown league {league!r}"), 404
+        setter_name, getter_name = setters
         payload = request.get_json(silent=True) or {}
         requested = payload.get("team", request.form.get("team", ""))
         config = load_config()
+        getter = getattr(config, getter_name)
         try:
-            value = config.set_favorite_team(str(requested))
+            value = getattr(config, setter_name)(str(requested))
         except ValueError as error:
-            return jsonify(error=str(error), sports_favorite=config.current_favorite_team()), 400
+            return jsonify(error=str(error), sports_favorite=getter()), 400
         if value:
             config.set_mode("sports")
-        return jsonify(sports_favorite=value, current_mode=config.current_mode())
+        return jsonify(sports_favorite=value, league=league, current_mode=config.current_mode())
 
     @app.post("/currency/add")
     def add_currency_pair():  # type: ignore[no-untyped-def]

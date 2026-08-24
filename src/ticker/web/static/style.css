@@ -621,6 +621,15 @@ input[type=range]::-moz-range-thumb {
   text-transform: uppercase;
   color: var(--dimmer);
 }
+.fx-league-label {
+  margin: 14px 0 6px 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.fx-league-label:first-of-type { margin-top: 4px; }
 
 /* Custom pair drops behind a native <details> expando so the primary
    flow (tile grid) isn't crowded. The summary keeps the same accent/font
