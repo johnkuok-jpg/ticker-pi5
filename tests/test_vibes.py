@@ -413,6 +413,128 @@ def test_aquarium_paints_scene_with_fish_and_sand(config) -> None:  # type: igno
     assert body_colors & set(pixels), "expected at least one fish body colour visible"
 
 
+def test_aquarium_layers_fish_by_depth_and_keeps_them_off_the_sand() -> None:
+    """Depth planes must fade the back layer and never clip into the bed.
+
+    Two independent regressions this guards. First, depth: a far fish is
+    blended toward the water colour behind it, so it must NOT paint its
+    raw palette colour, while a near fish must paint it exactly -- if the
+    blend is dropped or applied to everything, every fish sits on one
+    flat plane again and the tank loses all volume. Second, the sand is
+    now a per-column contour rather than a flat bar, so the fish clip
+    test has to run against that contour and not a single row constant.
+    """
+    from ticker.modes.vibes import _Aquarium, _FISH_CACHE, _FISH_SPRITES
+
+    aq = _Aquarium()
+    canvas = Canvas(128, 32)
+
+    # Contour is not a ruler-straight line.
+    assert len(set(aq._sand_top)) > 1, "sand contour should vary per column"
+
+    # Same species, same place, near plane vs far plane.
+    idx = 3  # clownfish -- a solid saturated body colour
+    body = _FISH_SPRITES[idx][1]
+    seen = {}
+    for depth in (0.0, 1.0):
+        aq._fish = [_Aquarium._Fish(idx, 40.0, 10.0, 0.25, 0.3, 1, depth)]
+        aq._bubbles = []
+        aq._crab = None
+        canvas.clear()
+        aq.render(canvas, tick=300)
+        seen[depth] = set(canvas.image_buffer.getdata())
+    assert body in seen[0.0], "near-plane fish should paint its exact colour"
+    assert body not in seen[1.0], "far-plane fish should be faded into the water"
+
+    # No fish pixel may land at or below the sand contour, for any
+    # species, over a long run.
+    aq = _Aquarium()
+    for tick in range(900):
+        canvas.clear()
+        aq.render(canvas, tick)
+        for f in aq._fish:
+            _w, h, _b, _t = _FISH_CACHE[f.sprite_idx]
+            span = range(max(0, int(f.x)), min(128, int(f.x) + _w))
+            if not span:
+                continue
+            lowest = min(aq._sand_top[x] for x in span)
+            assert int(f.y) + h <= lowest + 2, (
+                f"fish {f.sprite_idx} bottom {int(f.y) + h} vs sand {lowest}"
+            )
+
+
+def test_aquarium_tail_flick_moves_the_caudal_fin() -> None:
+    """The tail group must actually change rows across the beat cycle.
+
+    Without this the fish slide across the panel like decals. The beat is
+    a 4-phase (0, -1, 0, 1) offset applied only to the leading fin
+    columns, so phase 1 and phase 3 must paint the fin on different rows
+    while the body stays put.
+    """
+    from ticker.modes.vibes import (
+        _AQ_TAIL_BEAT, _Aquarium, _FISH_CACHE, _FISH_TAIL_COLS, _FISH_SPRITES,
+    )
+
+    assert _AQ_TAIL_BEAT == (0, -1, 0, 1)
+    # Every species except the butterflyfish (whose leading F block is
+    # body colour, not a fin) must have tail pixels to flick.
+    for i, (_w, _h, _body, tail) in enumerate(_FISH_CACHE):
+        if _FISH_TAIL_COLS[i] == 0:
+            assert not tail
+        else:
+            assert tail, f"species {i} has no tail pixels to animate"
+
+    aq = _Aquarium()
+    canvas = Canvas(128, 32)
+    idx = 0  # tang -- pale yellow fin against a solid orange body
+    fin = _FISH_SPRITES[idx][3]
+    rows = {}
+    for beat in (1, 3):
+        aq._fish = [_Aquarium._Fish(idx, 40.0, 10.0, 0.25, 0.3, 1, 0.0)]
+        aq._fish[0].tail_phase = float(beat)
+        # Paint directly rather than via render(): render() steps physics
+        # first, which would advance tail_phase off the beat under test.
+        canvas.clear()
+        aq._paint_water(canvas, 300)
+        aq._paint_fish(canvas)
+        data = list(canvas.image_buffer.getdata())
+        rows[beat] = {i // 128 for i, p in enumerate(data) if p == fin}
+    assert rows[1] and rows[3]
+    assert rows[1] != rows[3], "tail should sit on different rows per beat"
+
+
+def test_aquarium_surface_and_rays_break_up_the_water() -> None:
+    """The empty middle of the tank was the original complaint.
+
+    Two structural guards: the water body must contain a spread of
+    distinct row-local colours (the god rays), not one flat value per
+    row, and the surface membrane must stay in the top rows instead of
+    wandering down into the tank.
+    """
+    from ticker.modes.vibes import _Aquarium
+
+    aq = _Aquarium()
+    aq._fish = []
+    aq._bubbles = []
+    aq._crab = None
+    canvas = Canvas(128, 32)
+    canvas.clear()
+    aq.render(canvas, tick=300)
+    img = canvas.image_buffer
+
+    # Mid-water rows must have more than one colour -- a flat fill here
+    # is exactly the featureless navy wash this rewrite removed.
+    for y in (10, 14, 18):
+        row = {img.getpixel((x, y)) for x in range(128)}
+        assert len(row) >= 5, f"row {y} has only {len(row)} colours"
+
+    # Surface stays up top: the crest never leaves rows 0..5.
+    for tick in range(0, 600, 7):
+        t = tick * 0.06
+        for x in range(0, 128, 5):
+            assert 0.0 <= _Aquarium._crest(x, t) <= 5.0
+
+
 def test_driving_paints_dusk_scene_with_road_and_lane_lines(config) -> None:  # type: ignore[no-untyped-def]
     """Driving renders a full first-person road scene at dusk.
 

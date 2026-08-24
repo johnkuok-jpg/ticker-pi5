@@ -2,8 +2,8 @@
 """Full-screen ambient "vibes" -- a screensaver-style mode for the panel.
 
 ``vibes`` owns the whole 128x32 canvas: no clock, no header, no ticker.
-It picks a single sub-vibe (currently campfire, rain, aquarium) driven
-by the webapp picker and renders that scene every frame. Adding a vibe
+It picks a single sub-vibe (currently campfire, rain, aquarium, driving)
+driven by the webapp picker and renders that scene every frame. Adding one
 means writing a class with ``render(canvas, tick)`` and dropping it in
 ``_VIBES``.
 
@@ -70,19 +70,45 @@ supersampling costs more than a pure-Python rasterizer can afford at
 30fps. No fixed loop: speed, curve, and prop jitter come from an
 unseeded RNG. See ``scripts/bench_driving.py`` for the per-frame cost.
 
-**Aquarium.** Underwater tank diorama. A vertical blue gradient stands
-in for water depth, with a broken caustic ripple animated across the
-top 3 rows. Along the bottom a two-row sand strip anchors six swaying
-seaweed fronds (top of each frond wobbles more than the base, exactly
-like a real weed in a current). Two filter vents in the sand each
-release bubbles on their own cadence -- bubbles wobble sideways as they
-rise (bubbles in water actually do sway) and come in two sizes. Fish
-come and go: a rotating cast of species (tang, angelfish, neon tetra,
-clownfish, yellow tang, butterflyfish, pufferfish, blue chromis, betta,
-shark) spawn just off-screen, drift across with a small triangular
-y-bob, and exit the far side. 2-3 are always on screen; new species
-stream in on a slow cadence so the tank never repeats itself. A crab
-occasionally walks across the sand as a rare cameo.
+**Aquarium.** Underwater tank diorama, composed in explicit depth
+layers because that is the only way to get volume out of 32 rows. Water
+is a three-stop vertical gradient -- bright just under the surface,
+falling off fast, then flat toward the bed -- crossed by three slanted
+god-ray shafts with a parabolic cross-section that fade with depth. The
+shafts matter: an earlier version was a two-stop linear ramp and 85% of
+the panel was one featureless navy wash. The surface is the underside of
+the water seen from below, a crest built from three summed sines with a
+specular highlight driven by the crest's own derivative, so only the
+stretches angled toward the light glint; the crest is antialiased across
+its sub-pixel position because integer row rounding turned it into a
+stepped concrete ledge. The bed is sand with a per-column contour on a
+random walk (rows 27-29), grain speckle, a shadowed base, and bright
+caustic bands thrown down by the surface -- a flat two-row bar with a
+ruler-straight top edge reads as a wooden shelf. Three fixed rocks are
+shaded by surface normal along the whole upper-left arc. Seaweed is two
+layers: a dim rear silhouette layer, and a front layer painted *over*
+the fish so the tank has a real foreground. Each frond has its own
+static lean, sway phase, rate and amplitude plus hanging leaf blades;
+sway grows as ``(k/h) ** 1.6``, which is roughly how a flexible
+cantilever in slow current bends. Two filter vents release bubbles on
+their own cadence -- they wobble sideways as they rise (bubbles in water
+actually do sway), big ones are drawn as a 2x2 sphere, and all of them
+pop at the surface crest. Fish live on three discrete depth planes: the
+back planes move slower (parallax) and blend toward the water colour of
+the row behind them (aerial perspective, real over even a foot of tank
+water), and painting far-to-near means a near fish occludes a far one
+instead of the two turning into mush. Discrete planes beat a continuous
+random depth here -- three clean layers read as depth, twenty slightly
+different saturations just read as inconsistent colour. Every fish's
+caudal fin flicks on a 4-phase beat whose rate scales with its own
+speed, so it swims instead of sliding across like a decal. The cast
+rotates through ~10 species (tang, angelfish, neon tetra, clownfish,
+yellow tang, butterflyfish, pufferfish, blue chromis, betta, shark)
+spawning just off-screen and exiting the far side, 2-3 always on screen.
+Sprites are flattened once at import into ``_FISH_CACHE`` so the render
+loop never re-splits a sprite string. A crab occasionally walks the
+sand as a rare cameo, following the contour rather than clipping through
+it.
 """
 
 from __future__ import annotations
@@ -1316,25 +1342,63 @@ class _Rain:
 # Aquarium palette + fish sprites
 # ---------------------------------------------------------------------------
 
-# Water gradient: light near the surface (sunlight coming through), dark
-# at the abyss. Cooler blue-teal so the fish colours pop against it.
-_AQ_BG_TOP    = (10, 40, 75)
-_AQ_BG_BOTTOM = (2,  8,  20)
+def _mix(c0, c1, t: float):
+    """Linear blend between two RGB tuples. ``t`` 0 -> c0, 1 -> c1."""
+    if t <= 0.0:
+        return c0
+    if t >= 1.0:
+        return c1
+    return (
+        int(c0[0] + (c1[0] - c0[0]) * t),
+        int(c0[1] + (c1[1] - c0[1]) * t),
+        int(c0[2] + (c1[2] - c0[2]) * t),
+    )
 
-# Caustic ripple colour -- a hair brighter than the surface, painted in
-# broken segments across the top few rows.
-_AQ_CAUSTIC = (60, 110, 150)
 
-# Bubble palette: two shades so bubbles read as tiny spheres, not dots.
-_AQ_BUBBLE_LIGHT = (170, 210, 235)
-_AQ_BUBBLE_DARK  = (90, 140, 180)
+# Water gradient. Three stops rather than two: real tank water falls off
+# fast just under the surface and then flattens out, so a single linear
+# ramp from top to bottom reads as one uniform navy wash. The mid stop
+# sits at row 12 and puts most of the visible change in the top third.
+_AQ_BG_TOP    = (14, 54, 96)
+_AQ_BG_MID    = (7,  30, 62)
+_AQ_BG_BOTTOM = (2,  10, 26)
+_AQ_BG_MID_Y  = 12
 
-# Seaweed: dark green fronds that sway. Two shades for shape.
-_AQ_WEED_DARK = (12, 55, 25)
-_AQ_WEED_LIT  = (35, 110, 55)
+# God rays: shafts of sunlight angling down through the water. This is
+# what breaks up the empty middle of the tank.
+_AQ_SHAFT = (120, 200, 240)
 
-# Sand row along the very bottom.
-_AQ_SAND = (95, 80, 45)
+# Surface membrane seen from underneath -- a bright wobbling line with a
+# lit side above it and a darker lip below.
+_AQ_SURFACE    = (185, 230, 250)
+_AQ_SURFACE_HI = (60,  120, 170)
+_AQ_SURFACE_D  = (34,  86,  132)
+
+# Caustic ripple colour -- used for the bright bands that the surface
+# throws onto the sand.
+_AQ_CAUSTIC = (70, 130, 170)
+
+# Bubble palette: three shades so a big bubble reads as a tiny sphere.
+_AQ_BUBBLE_LIGHT = (200, 235, 250)
+_AQ_BUBBLE_MID   = (140, 190, 220)
+_AQ_BUBBLE_DARK  = (70,  120, 160)
+
+# Seaweed: a dark back layer for depth plus a lit front layer.
+_AQ_WEED_BACK = (14, 52, 38)
+_AQ_WEED_DARK = (16, 66, 34)
+_AQ_WEED_LIT  = (52, 132, 66)
+
+# Sand bed. ``_AQ_SAND`` stays the nominal mid tone; lit/dark shades give
+# the bed grain and let the surface caustics land on it.
+_AQ_SAND      = (98, 84, 52)
+_AQ_SAND_LIT  = (140, 122, 76)
+_AQ_SAND_DARK = (58, 48, 30)
+
+# Rocks sitting on the substrate -- cool grey-blue so they read as stone
+# against the warm sand.
+_AQ_ROCK      = (46, 53, 68)
+_AQ_ROCK_LIT  = (88, 100, 122)
+_AQ_ROCK_DARK = (24, 28, 38)
 
 # Fish sprites. Pixel-art bitmaps with four palette slots:
 #   ``B`` = body (main colour)
@@ -1494,13 +1558,14 @@ _FISH_SPRITES: tuple[
     # a shark's shading is inverted vs the other fish -- lighter
     # underneath.
     (
-        "           FF                \n"
-        "          FFFF               \n"
-        "F   BBBBBBBBBBBBBBBBBBBB     \n"
-        "FF BBBBBBBBBBBBBBBBBBBBBBBBB \n"
-        "FFFBBBBBBBBBBBBBBBBBBBBBBBEB \n"
-        "FF DDDDDDDDDDDDDDDDDDDDDDD   \n"
-        "F   DDDDDDDDDDDDDDDDDDD      ",
+        "F            FF              \n"
+        "FF          FFFFF            \n"
+        " FF     BBBBBBBBBBBBBBBBBB   \n"
+        "  FF BBBBBBBBBBBBBBBBBBBBBBB \n"
+        "   FBBBBBBBBBBBBBBBBBBBBBEBBB\n"
+        "  FFDDDDDDDDDDDDDDDDDDDDDDDD \n"
+        " FF   DDDDDDDDDDDDDFFFFDD    \n"
+        " F         FFFDDDDDDFFF      ",
         (110, 125, 140),  # body -- grey
         (220, 225, 230),  # dark -- white belly
         (75,  85,  100),  # fin  -- dark grey (tail + dorsal + pectoral)
@@ -1511,6 +1576,57 @@ _FISH_SPRITES: tuple[
 # Index of the shark in the sprite catalog. The spawn system uses this to
 # skew the shark's odds down (it should be a rare guest, not resident).
 _SHARK_IDX = len(_FISH_SPRITES) - 1
+
+# How many leading sprite columns count as the caudal fin, per species,
+# in the same order as ``_FISH_SPRITES``. Those pixels get flicked up and
+# down each beat so a fish crossing the panel swims instead of sliding.
+# The butterflyfish is 0 on purpose: its leading ``F`` block is the
+# yellow front half of the body seen mirrored, not a tail, so flicking it
+# would shear the fish in half.
+_FISH_TAIL_COLS = (2, 2, 2, 2, 2, 0, 2, 2, 3, 4)
+assert len(_FISH_TAIL_COLS) == len(_FISH_SPRITES)
+
+# Vertical offset applied to the tail group, cycled per beat.
+_AQ_TAIL_BEAT = (0, -1, 0, 1)
+
+
+def _aq_build_sprite(entry, tail_cols: int):
+    """Flatten a sprite string into ``(w, h, body_px, tail_px)``.
+
+    Each pixel list holds ``(dx, dy, colour)`` triples with the palette
+    already resolved, so the render loop never re-splits or re-scans the
+    sprite string. ``tail_px`` holds the fin pixels in the leading
+    ``tail_cols`` columns -- they are painted with a per-beat y offset.
+    """
+    sprite, body, dark, fin, eye = entry
+    rows = sprite.split("\n")
+    h = len(rows)
+    w = max(len(r) for r in rows)
+    body_px: list[tuple[int, int, tuple[int, int, int]]] = []
+    tail_px: list[tuple[int, int, tuple[int, int, int]]] = []
+    for dy, row in enumerate(rows):
+        for dx, ch in enumerate(row):
+            if ch == " ":
+                continue
+            if ch == "B":
+                colour = body
+            elif ch == "D":
+                colour = dark
+            elif ch == "E":
+                colour = eye
+            else:
+                colour = fin
+            if ch == "F" and dx < tail_cols:
+                tail_px.append((dx, dy, colour))
+            else:
+                body_px.append((dx, dy, colour))
+    return (w, h, tuple(body_px), tuple(tail_px))
+
+
+_FISH_CACHE = tuple(
+    _aq_build_sprite(entry, _FISH_TAIL_COLS[i])
+    for i, entry in enumerate(_FISH_SPRITES)
+)
 
 # Crab sprite -- walks along the sand, doesn't swim. Small, wide, with
 # two claws pointing out to the sides and a small pair of eyes on top.
@@ -1531,32 +1647,51 @@ _CRAB_EYE  = (10,  10,  15)
 class _Aquarium:
     """Underwater tank: fish drift, bubbles rise, seaweed sways.
 
-    Composition mirrors a real aquarium diorama:
+    The scene is built in explicit depth layers, back to front, because
+    a 128x32 panel gives you no room for detail -- the only way to read
+    volume is layering:
 
-    * A vertical blue gradient for water depth.
-    * A single row of caustic ripples along the top few rows -- broken
-      segments animated with a slow phase so the surface shimmers.
-    * A sand strip and swaying seaweed silhouettes at the bottom.
-    * Rising bubbles from a couple of fixed vents in the sand -- real
-      bubbles come from filter outlets, not random floor tiles.
-    * A rotating cast of fish that spawn just off-screen, swim across
-      the panel, and exit the other side (not the same 4 residents on
-      loop). Species are drawn from a catalog of ~10, always keeping
-      2-3 on screen so the tank never looks empty. A shark shows up
-      occasionally (~5% of spawns) and cruises slower than the reef
-      fish so it reads as a big animal.
-    * A rare crab cameo: at random intervals (15-45 s) a single crab
-      walks along the sand from one side to the other, then exits.
-      Only one crab on screen at a time.
+    * **Water.** A three-stop vertical gradient (bright just under the
+      surface, falling off fast, then flat toward the bed) with three
+      slanted god-ray shafts crossing it. The shafts are the whole
+      reason the middle of the tank has anything to look at; a plain
+      gradient reads as one flat navy wash.
+    * **Surface.** A wobbling bright membrane along the top rows, seen
+      from underneath: a lit band above the crest, the crest itself,
+      and a darker lip below. Driven by two summed sines so the crest
+      never repeats on a short cycle.
+    * **Bed.** Sand with a per-column contour (rows 27-29) rather than
+      a ruler-straight edge, grain speckle, a darker base, and bright
+      caustic bands thrown onto the top rows by the surface above.
+    * **Furniture.** Three fixed rocks sitting on the substrate, lit on
+      the upper-left arc so they read as stone rather than holes.
+    * **Seaweed.** A dark back layer plus a lit front layer painted
+      *over* the fish, so fish pass behind the fronds. Each frond has
+      its own phase, rate and amplitude, and sways more toward the tip.
+    * **Fish.** Three discrete depth planes. Far fish move slower and
+      are blended toward the water colour behind them; near fish are
+      full saturation and painted last. Every fish's caudal fin flicks
+      on a beat that scales with its own speed, so it swims instead of
+      sliding across like a decal.
+    * **Bubbles** from two vents in the sand, big ones drawn as a 2x2
+      sphere, culled when they reach the surface crest.
+    * A rotating cast drawn from a catalog of ~10 species, always
+      keeping 2-3 on screen. A shark shows up occasionally (~5% of
+      spawns) and cruises slower so it reads as a big animal.
+    * A rare crab cameo every 15-45 s, walking the sand and exiting.
 
-    Everything animates off ``tick`` plus an unseeded RNG for bubble
-    spawn jitter so the scene doesn't loop across restarts.
+    Everything animates off ``tick`` plus an unseeded RNG for spawn
+    jitter so the scene doesn't loop across restarts. All of the static
+    geometry (row colours, sand contour, grain, rock pixels, frond
+    parameters, shaft parameters, flattened sprites) is precomputed in
+    ``__init__``; the per-frame work is gradient fills plus the moving
+    parts.
     """
 
     _MAX_BUBBLES  = 30
     _BUBBLE_VENTS = (28, 92)      # x positions of the two sand vents
-    _WEED_XS      = (10, 20, 44, 78, 108, 118)  # seaweed frond bases
-    _SAND_Y       = 30            # top row of sand (rows 30, 31)
+    _SAND_Y       = 28            # nominal top row of sand
+    _SAND_MIN_Y   = 27            # highest the contour ever reaches
     # Fish spawn pacing. Keep at least this many fish on screen so the
     # tank never looks abandoned, and never more than _MAX_FISH so the
     # panel doesn't turn into a fish pile-up.
@@ -1565,17 +1700,30 @@ class _Aquarium:
     _SPAWN_MIN    = 30   # frames between spawn attempts once above min
     _SPAWN_MAX    = 150
 
+    # Depth planes. 0.0 = pressed against the glass, 1.0 = back wall.
+    # Discrete planes beat a continuous random depth here: three clean
+    # layers read as depth, a smear of 20 slightly-different saturations
+    # just reads as inconsistent colour.
+    _DEPTHS       = (0.0, 0.5, 1.0)
+    _DEPTH_WEIGHT = (0.40, 0.35, 0.25)
+    _DEPTH_FADE   = 0.55   # how far a back-plane fish blends into water
+    _DEPTH_SLOW   = 0.45   # how much slower the back plane moves
+
     class _Fish:
-        __slots__ = ("sprite_idx", "x", "y", "y_phase", "speed", "direction")
+        __slots__ = ("sprite_idx", "x", "y", "y_phase", "speed",
+                     "direction", "depth", "tail_phase")
 
         def __init__(self, sprite_idx: int, x: float, y: float,
-                     y_phase: float, speed: float, direction: int) -> None:
+                     y_phase: float, speed: float, direction: int,
+                     depth: float) -> None:
             self.sprite_idx = sprite_idx
             self.x = x
             self.y = y
             self.y_phase = y_phase   # 0..1 progress through a sine bob cycle
             self.speed = speed       # px per tick, always positive
             self.direction = direction  # +1 = swim right, -1 = swim left
+            self.depth = depth       # 0 = near the glass, 1 = back wall
+            self.tail_phase = 0.0    # advances with speed, drives the flick
 
     class _Bubble:
         __slots__ = ("x", "y", "speed", "wobble", "big")
@@ -1607,12 +1755,19 @@ class _Aquarium:
         seed_rng = random.Random(0xC0FFEEBE)
         self._rng = random.Random()
 
-        # Pre-populate: seed 3 random fish at random x positions inside
-        # the tank so the first frame isn't empty water. Everything
-        # after that comes from the spawn system.
+        self._build_water()
+        self._build_bed(seed_rng)
+        self._build_rocks()
+        self._build_weed(seed_rng)
+
+        # Pre-populate: seed one fish per depth plane so the first frame
+        # already shows the layering (and so the near plane, which is the
+        # only one drawn at full saturation, is always represented).
         self._fish: list[_Aquarium._Fish] = []
-        for _ in range(3):
-            self._fish.append(self._make_fish(seed_rng, on_screen=True))
+        for depth in self._DEPTHS:
+            self._fish.append(
+                self._make_fish(seed_rng, on_screen=True, depth=depth),
+            )
 
         self._bubbles: list[_Aquarium._Bubble] = []
         # Countdown until each vent next spawns a bubble.
@@ -1627,9 +1782,176 @@ class _Aquarium:
             self._CRAB_COOLDOWN_MIN, self._CRAB_COOLDOWN_MAX,
         )
 
-    def _make_fish(self, rng: random.Random,
-                   on_screen: bool = False) -> "_Aquarium._Fish":
-        """Build a fish -- randomly picked species, y row, direction.
+    # ------------------------------------------------------------------
+    # Static geometry, built once
+    # ------------------------------------------------------------------
+
+    def _build_water(self) -> None:
+        """Precompute the 32 water row colours and the god-ray shafts."""
+        bg: list[tuple[int, int, int]] = []
+        for y in range(32):
+            if y <= _AQ_BG_MID_Y:
+                t = y / float(_AQ_BG_MID_Y)
+                bg.append(_mix(_AQ_BG_TOP, _AQ_BG_MID, t))
+            else:
+                t = (y - _AQ_BG_MID_Y) / float(31 - _AQ_BG_MID_Y)
+                bg.append(_mix(_AQ_BG_MID, _AQ_BG_BOTTOM, t))
+        self._bg: tuple[tuple[int, int, int], ...] = tuple(bg)
+
+        # Three near-parallel shafts leaning right as they go down --
+        # parallel because the sun is effectively at infinity, and the
+        # small slant spread is refraction through the moving surface.
+        # (x0, slant, halfw, gain, wob_phase, wob_amp, wob_rate)
+        self._shafts = (
+            (14.0, 0.58, 3.2, 0.34, 0.0, 1.1, 0.021),
+            (52.0, 0.52, 4.1, 0.30, 2.1, 1.4, 0.017),
+            (96.0, 0.61, 2.6, 0.26, 4.2, 0.9, 0.025),
+        )
+
+    def _build_bed(self, rng: random.Random) -> None:
+        """Per-column sand contour plus grain, precomputed.
+
+        A flat two-row bar with a ruler-straight top edge reads as a
+        wooden shelf, not a sand bed. The contour wanders 27..29 on a
+        slow random walk, and every column below it gets grain speckle
+        that darkens toward the base.
+        """
+        top: list[int] = []
+        y = self._SAND_Y
+        for _ in range(128):
+            y += rng.choice((-1, 0, 0, 0, 1))
+            y = max(self._SAND_MIN_Y, min(29, y))
+            top.append(y)
+        self._sand_top: tuple[int, ...] = tuple(top)
+
+        # Column pixel colours from the contour top down to row 31.
+        cols: list[tuple[tuple[int, int, int], ...]] = []
+        for x in range(128):
+            col: list[tuple[int, int, int]] = []
+            t0 = self._sand_top[x]
+            for py in range(t0, 32):
+                # Depth into the bed: the surface is lit, the base is
+                # in shadow under the substrate.
+                d = (py - t0) / max(1.0, float(31 - t0))
+                base = _mix(_AQ_SAND, _AQ_SAND_DARK, 0.75 * d)
+                r = rng.random()
+                if r < 0.12:
+                    base = _mix(base, _AQ_SAND_LIT, 0.5)
+                elif r < 0.26:
+                    base = _mix(base, _AQ_SAND_DARK, 0.45)
+                col.append(base)
+            cols.append(tuple(col))
+        self._sand_cols: tuple[tuple[tuple[int, int, int], ...], ...] = tuple(cols)
+
+    def _build_rocks(self) -> None:
+        """Flatten three fixed rocks into pixel lists.
+
+        Half-ellipses sitting on the contour, lit on the upper-left arc
+        so the light direction agrees with the god rays coming down from
+        the left. Without the highlight a dark blob on dark water reads
+        as a dead pixel cluster.
+        """
+        specs = ((17, 13, 5), (62, 9, 4), (104, 15, 6))
+        px: list[tuple[int, int, tuple[int, int, int]]] = []
+        for cx, w, h in specs:
+            hw = w / 2.0
+            base = min(self._sand_top[max(0, min(127, x))]
+                       for x in range(cx - w // 2, cx + w // 2 + 1))
+            for dx in range(-(w // 2), w // 2 + 1):
+                frac = 1.0 - (dx / hw) ** 2
+                if frac <= 0.0:
+                    continue
+                col_h = max(1, int(round(h * math.sqrt(frac))))
+                for k in range(col_h):
+                    x = cx + dx
+                    y = base - k
+                    if not (0 <= x < 128 and 0 <= y < 32):
+                        continue
+                    # Shade by surface normal, not by a single crown
+                    # pixel: the whole upper-left arc catches the light
+                    # coming down from the left, the lower-right falls
+                    # away into shadow. One highlight pixel on a dark
+                    # blob just reads as a stuck LED.
+                    on_arc = k >= col_h - 1
+                    if on_arc and dx <= 0:
+                        colour = _AQ_ROCK_LIT
+                    elif on_arc or dx < 0:
+                        colour = _mix(_AQ_ROCK, _AQ_ROCK_LIT, 0.35)
+                    elif dx > hw * 0.4 and k <= 1:
+                        colour = _AQ_ROCK_DARK
+                    else:
+                        colour = _AQ_ROCK
+                    px.append((x, y, colour))
+        self._rock_px: tuple[tuple[int, int, tuple[int, int, int]], ...] = tuple(px)
+
+    def _build_weed(self, rng: random.Random) -> None:
+        """Frond parameters: base x, height, phase, amplitude, rate, layer.
+
+        The old version drew six 1-pixel dotted squiggles that all swayed
+        on the same phase family -- they read as wires. Fronds are now
+        2 px wide tapering to 1 px at the tip, each with its own sway,
+        and there is a dim back layer for depth.
+        """
+        fronds = []
+        # Front layer: chunky, lit, swaying, and each one gets a static
+        # ``lean`` on top of the animated sway. Without the lean every
+        # frond is a plumb-straight 2 px column and the whole bed reads
+        # as green pipes. Leaves are (k, side, length) blades hanging off
+        # the stalk -- that is what turns a stalk into a plant.
+        for base_x in (9, 21, 45, 79, 108, 119):
+            h = rng.randint(9, 15)
+            leaves = []
+            k = rng.randint(2, 4)
+            side = rng.choice((-1, 1))
+            while k < h - 1:
+                leaves.append((k, side, rng.randint(1, 2)))
+                side = -side
+                k += rng.randint(2, 4)
+            fronds.append({
+                "x": base_x,
+                "h": h,
+                "phase": rng.uniform(0.0, 6.283),
+                "amp": rng.uniform(2.0, 3.8),
+                "rate": rng.uniform(0.020, 0.038),
+                "lean": rng.uniform(-2.6, 2.6),
+                "tint": rng.uniform(0.75, 1.15),
+                "leaves": tuple(leaves),
+                "back": False,
+            })
+        # Back layer: thin, dark, slower -- silhouettes behind the rest.
+        for base_x in (4, 33, 57, 70, 92, 124):
+            fronds.append({
+                "x": base_x,
+                "h": rng.randint(6, 12),
+                "phase": rng.uniform(0.0, 6.283),
+                "amp": rng.uniform(1.4, 2.6),
+                "rate": rng.uniform(0.014, 0.026),
+                "lean": rng.uniform(-2.2, 2.2),
+                "tint": rng.uniform(0.8, 1.1),
+                "leaves": (),
+                "back": True,
+            })
+        self._weed = tuple(fronds)
+
+    # ------------------------------------------------------------------
+    # Surface helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _crest(x: int, t: float) -> float:
+        """Row of the water surface at column ``x``, as a float.
+
+        Two summed sines at incommensurate frequencies so the crest
+        doesn't visibly repeat across 128 columns.
+        """
+        return (2.1
+                + 1.05 * math.sin(x * 0.16 + t)
+                + 0.60 * math.sin(x * 0.061 - t * 0.7)
+                + 0.30 * math.sin(x * 0.41 + t * 1.6))
+
+    def _make_fish(self, rng: random.Random, on_screen: bool = False,
+                   depth: float | None = None) -> "_Aquarium._Fish":
+        """Build a fish -- randomly picked species, y row, direction, plane.
 
         If ``on_screen`` is True, the fish starts inside the visible
         panel (used only for the initial pre-populate). Otherwise it
@@ -1646,12 +1968,9 @@ class _Aquarium:
         else:
             # Uniform over non-shark species.
             idx = rng.randrange(len(_FISH_SPRITES) - 1)
-        sprite = _FISH_SPRITES[idx][0]
-        rows = sprite.split("\n")
-        h = len(rows)
-        w = max(len(r) for r in rows)
-        y_min = 4
-        y_max = max(y_min, self._SAND_Y - h - 1)
+        w, h, _body, _tail = _FISH_CACHE[idx]
+        y_min = 3
+        y_max = max(y_min, self._SAND_MIN_Y - h - 1)
         direction = rng.choice((-1, 1))
         if on_screen:
             x = float(rng.randint(8, max(9, 128 - w - 8)))
@@ -1664,6 +1983,10 @@ class _Aquarium:
             speed = rng.uniform(0.12, 0.2)
         else:
             speed = rng.uniform(0.15, 0.4)
+        if depth is None:
+            depth = rng.choices(self._DEPTHS, weights=self._DEPTH_WEIGHT)[0]
+        # Parallax: things further away cross the field of view slower.
+        speed *= 1.0 - self._DEPTH_SLOW * depth
         return _Aquarium._Fish(
             sprite_idx=idx,
             x=x,
@@ -1671,6 +1994,7 @@ class _Aquarium:
             y_phase=rng.random(),
             speed=speed,
             direction=direction,
+            depth=depth,
         )
 
     # ------------------------------------------------------------------
@@ -1688,10 +2012,10 @@ class _Aquarium:
                 # single column of pixels.
                 self._bubbles.append(_Aquarium._Bubble(
                     x=vent_x + rng.uniform(-1.5, 1.5),
-                    y=float(self._SAND_Y - 1),
+                    y=float(self._sand_top[vent_x] - 1),
                     speed=rng.uniform(0.35, 0.7),
                     wobble=rng.uniform(0.0, 6.283),
-                    big=rng.random() < 0.25,
+                    big=rng.random() < 0.3,
                 ))
                 self._vent_cooldowns[i] = rng.randint(4, 18)
 
@@ -1704,7 +2028,7 @@ class _Aquarium:
             # sway. Amplitude stays well under 1 px per frame.
             b.x += 0.15 * (1.0 if (b.wobble % 6.283) < 3.1415 else -1.0) \
                    + rng.uniform(-0.05, 0.05)
-        self._bubbles = [b for b in self._bubbles if b.y > 1 and 0 <= b.x < 128]
+        self._bubbles = [b for b in self._bubbles if b.y > 0 and 0 <= b.x < 128]
 
         # Move fish: horizontal drift plus a slow triangular y-bob.
         # Fish that swim off-screen are culled rather than reflected --
@@ -1714,8 +2038,10 @@ class _Aquarium:
         for f in self._fish:
             f.x += f.speed * f.direction
             f.y_phase = (f.y_phase + 0.008) % 1.0
-            sprite = _FISH_SPRITES[f.sprite_idx][0]
-            sprite_w = max(len(row) for row in sprite.split("\n"))
+            # Tail beat scales with speed: a fast fish beats faster. The
+            # 6.0 puts a slow reef fish at roughly one beat per second.
+            f.tail_phase += f.speed * 6.0
+            sprite_w = _FISH_CACHE[f.sprite_idx][0]
             # Off-screen check: only cull once the whole sprite has
             # cleared the edge, so the exit reads.
             if f.direction > 0 and f.x > 128 + 1:
@@ -1740,24 +2066,19 @@ class _Aquarium:
         # tick down the cooldown; when it hits zero, walk a new crab
         # in from an off-screen side. When the crab exits the far
         # side, retire it and reset the cooldown.
+        crab_w = max(len(row) for row in _CRAB_SPRITE.split("\n"))
         if self._crab is None:
             self._crab_cooldown -= 1
             if self._crab_cooldown <= 0:
                 direction = rng.choice((-1, 1))
-                sprite_w = max(len(row) for row in _CRAB_SPRITE.split("\n"))
-                x = float(-sprite_w - 1) if direction > 0 else float(128 + 1)
+                x = float(-crab_w - 1) if direction > 0 else float(128 + 1)
                 self._crab = _Aquarium._Crab(x=x, direction=direction)
         else:
             c = self._crab
             c.x += self._CRAB_SPEED * c.direction
             c.leg_phase += 1
-            sprite_w = max(len(row) for row in _CRAB_SPRITE.split("\n"))
-            if c.direction > 0 and c.x > 128 + 1:
-                self._crab = None
-                self._crab_cooldown = rng.randint(
-                    self._CRAB_COOLDOWN_MIN, self._CRAB_COOLDOWN_MAX,
-                )
-            elif c.direction < 0 and c.x + sprite_w < -1:
+            gone = (c.x > 128 + 1) if c.direction > 0 else (c.x + crab_w < -1)
+            if gone:
                 self._crab = None
                 self._crab_cooldown = rng.randint(
                     self._CRAB_COOLDOWN_MIN, self._CRAB_COOLDOWN_MAX,
@@ -1767,67 +2088,227 @@ class _Aquarium:
     # Draw
     # ------------------------------------------------------------------
 
-    def _paint_background(self, canvas: Canvas) -> None:
+    def _paint_water(self, canvas: Canvas, tick: int) -> None:
+        """Gradient fill plus the god-ray shafts.
+
+        The shafts are additive toward ``_AQ_SHAFT`` with a parabolic
+        cross-section (bright core, soft edges) and fade out with depth,
+        because that light has been scattered by 26 rows of water by the
+        time it gets down there.
+        """
+        bg = self._bg
         for y in range(32):
-            t = y / 31.0
-            r = int(_AQ_BG_TOP[0] + (_AQ_BG_BOTTOM[0] - _AQ_BG_TOP[0]) * t)
-            g = int(_AQ_BG_TOP[1] + (_AQ_BG_BOTTOM[1] - _AQ_BG_TOP[1]) * t)
-            b = int(_AQ_BG_TOP[2] + (_AQ_BG_BOTTOM[2] - _AQ_BG_TOP[2]) * t)
-            canvas.fill_rect(0, y, 128, 1, (r, g, b))
+            canvas.fill_rect(0, y, 128, 1, bg[y])
 
-    def _paint_caustics(self, canvas: Canvas, tick: int) -> None:
-        # Broken-line caustics across the top 3 rows. Each row uses a
-        # different phase so the ripples look independent, and we skip
-        # pixels on a slow-moving offset to draw dashes rather than a
-        # solid streak.
-        for row in range(3):
-            phase = (tick // 2 + row * 5) % 32
-            for x in range(0, 128, 4):
-                lit_x = (x + phase) % 128
-                # Dash pattern -- 2 lit, 2 skipped, staggered per row.
-                if (lit_x + row * 3) % 8 < 2:
-                    canvas.pixel(lit_x, row, _AQ_CAUSTIC)
+        img = canvas.image_buffer
+        for x0, slant, halfw, gain, phase, wob_amp, wob_rate in self._shafts:
+            for y in range(32):
+                depth_fade = 1.0 - y / 26.0
+                if depth_fade <= 0.0:
+                    break
+                cx = (x0 + slant * y
+                      + wob_amp * math.sin(tick * wob_rate + phase + y * 0.05))
+                hw = halfw * (1.0 + y * 0.03)
+                row_gain = gain * depth_fade
+                lo = int(math.floor(cx - hw))
+                hi = int(math.ceil(cx + hw))
+                base = bg[y]
+                for x in range(lo, hi + 1):
+                    if not 0 <= x < 128:
+                        continue
+                    d = (x + 0.5 - cx) / hw
+                    k = row_gain * (1.0 - d * d)
+                    if k <= 0.02:
+                        continue
+                    img.putpixel((x, y), _mix(base, _AQ_SHAFT, k))
 
-    def _paint_sand_and_weed(self, canvas: Canvas, tick: int) -> None:
-        # Sand: two rows of muted olive-tan.
-        canvas.fill_rect(0, self._SAND_Y, 128, 2, _AQ_SAND)
-        # Seaweed: each frond is a vertical strand of 6-10 pixels that
-        # sways in x by 1 based on a slow phase; alternating shades
-        # give the fronds a little dimension.
-        for i, base_x in enumerate(self._WEED_XS):
-            height = 6 + (i % 3) * 2   # varies 6, 8, 10
-            sway_phase = (tick // 6 + i * 3) % 8
-            for k in range(height):
-                # Sway increases with height (top wobbles more than base).
-                sway = 0
-                if k >= height // 2:
-                    sway = 1 if sway_phase < 4 else -1
-                if k >= height - 2:
-                    sway *= 2
-                px = (base_x + sway) % 128
-                py = self._SAND_Y - 1 - k
-                color = _AQ_WEED_LIT if k % 2 == 0 else _AQ_WEED_DARK
-                canvas.pixel(px, py, color)
+    def _paint_surface(self, canvas: Canvas, tick: int) -> None:
+        """The underside of the water surface.
 
-    def _paint_bubbles(self, canvas: Canvas) -> None:
+        Seen from below, the surface is a bright moving membrane, not a
+        row of dashes. Everything above the crest is the lit membrane,
+        the crest itself is the brightest line, and the row below is the
+        shaded lip where the water starts.
+        """
+        t = tick * 0.06
+        img = canvas.image_buffer
+        for x in range(128):
+            crest = self._crest(x, t)
+            cy = int(crest)
+            frac = crest - cy
+            # Above the crest is the mirrored underside of the surface,
+            # and it is NOT a flat slab: it gets its own short gradient
+            # that is brightest right at the membrane and falls off going
+            # up. A single flat fill here plus integer row rounding is
+            # what made the top of the panel look like a concrete ledge.
+            for y in range(0, min(cy + 1, 32)):
+                near = 1.0 - (cy - y) / 4.0
+                if near < 0.0:
+                    near = 0.0
+                img.putpixel((x, y), _mix(
+                    _mix(self._bg[y], _AQ_SURFACE_HI, 0.42),
+                    _AQ_SURFACE_HI, 0.55 * near,
+                ))
+            # Specular highlight strength: only the stretches of surface
+            # angled toward the light flash bright, so the crest reads as
+            # a moving glitter line instead of a painted stripe. The
+            # derivative of the crest function is the slope.
+            slope = (1.05 * 0.16 * math.cos(x * 0.16 + t)
+                     + 0.60 * 0.061 * math.cos(x * 0.061 - t * 0.7)
+                     + 0.30 * 0.41 * math.cos(x * 0.41 + t * 1.6))
+            spec = max(0.0, min(1.0, 0.18 + 2.4 * slope))
+            spec *= spec
+            # Antialias the membrane across the sub-pixel crest position:
+            # the fractional part splits the highlight between the two
+            # rows it straddles, which removes the 1 px staircase.
+            hi = _mix(_AQ_SURFACE_D, _AQ_SURFACE, spec)
+            if 0 <= cy < 32:
+                img.putpixel((x, cy), _mix(
+                    _mix(self._bg[cy], _AQ_SURFACE_HI, 0.42), hi,
+                    1.0 - frac * 0.65,
+                ))
+            if 0 <= cy + 1 < 32:
+                img.putpixel((x, cy + 1), _mix(
+                    _mix(self._bg[cy + 1], _AQ_SURFACE_D, 0.40), hi,
+                    frac * 0.65,
+                ))
+            if 0 <= cy + 2 < 32:
+                img.putpixel((x, cy + 2), _mix(
+                    self._bg[cy + 2], _AQ_SURFACE_D, 0.16 + 0.20 * spec,
+                ))
+
+    def _paint_bed(self, canvas: Canvas, tick: int) -> None:
+        """Sand columns plus the caustic bands the surface throws down.
+
+        Same two-sine trick as the surface but at a lower frequency and
+        a different drift rate, so the bands on the sand read as light
+        cast by the surface rather than a copy of it.
+        """
+        img = canvas.image_buffer
+        t = tick * 0.8
+        for x in range(128):
+            top = self._sand_top[x]
+            col = self._sand_cols[x]
+            for k, colour in enumerate(col):
+                img.putpixel((x, top + k), colour)
+            band = (math.sin(x * 0.11 + t * 0.05)
+                    + math.sin(x * 0.047 - t * 0.031))
+            if band > 0.75:
+                strength = min(1.0, (band - 0.75) / 0.7)
+                for k in range(3):
+                    y = top + k
+                    if y > 31 or k >= len(col):
+                        break
+                    img.putpixel((x, y), _mix(
+                        col[k], _AQ_SAND_LIT, strength * (1.0 - 0.33 * k),
+                    ))
+
+    def _paint_rocks(self, canvas: Canvas) -> None:
+        for x, y, colour in self._rock_px:
+            canvas.pixel(x, y, colour)
+
+    def _paint_weed(self, canvas: Canvas, tick: int, back: bool) -> None:
+        """Swaying fronds. ``back`` selects the dim rear layer.
+
+        Sway grows superlinearly toward the tip -- ``(k/h) ** 1.6`` --
+        which is roughly how a flexible cantilever in a slow current
+        actually bends: almost nothing at the anchored base, most of the
+        travel in the last third.
+        """
+        img = canvas.image_buffer
+        for frond in self._weed:
+            if frond["back"] != back:
+                continue
+            base_x = frond["x"]
+            h = frond["h"]
+            base_y = self._sand_top[base_x] - 1
+            phase = frond["phase"]
+            amp = frond["amp"]
+            rate = frond["rate"]
+            lean = frond["lean"]
+            tint = frond["tint"]
+            leaves = frond["leaves"]
+            lit = _mix((0, 0, 0), _AQ_WEED_LIT, min(1.0, tint))
+            dark = _mix((0, 0, 0), _AQ_WEED_DARK, min(1.0, tint))
+            if tint > 1.0:
+                lit = _mix(_AQ_WEED_LIT, (255, 255, 255), (tint - 1.0) * 0.5)
+            wave = math.sin(tick * rate + phase)
+            for k in range(h):
+                frac = k / float(h)
+                # Static lean plus animated sway, both growing toward the
+                # tip. A flexible cantilever in slow current bends almost
+                # nowhere at the anchor and does most of its travel in the
+                # last third, which is what the 1.6 exponent buys.
+                bend = (lean + amp * wave) * (frac ** 1.6)
+                fx = base_x + bend
+                px = int(round(fx))
+                py = base_y - k
+                if not (0 <= py < 32):
+                    continue
+                if back:
+                    if 0 <= px < 128:
+                        img.putpixel((px, py), _AQ_WEED_BACK)
+                    continue
+                if 0 <= px < 128:
+                    img.putpixel((px, py), lit)
+                # Stalk tapers 2 px -> 1 px, and the second column sits
+                # on whichever side the frond is bending away from so the
+                # thickness follows the curve.
+                if frac < 0.7:
+                    side = 1 if bend >= 0 else -1
+                    if 0 <= px + side < 128:
+                        img.putpixel((px + side, py), dark)
+            # Leaf blades, drawn after the stalk so they sit on top.
+            for k, side, length in leaves:
+                frac = k / float(h)
+                bend = (lean + amp * wave) * (frac ** 1.6)
+                py = base_y - k
+                if not 0 <= py < 32:
+                    continue
+                for step in range(1, length + 2):
+                    px = int(round(base_x + bend)) + side * step
+                    # Blades hang: each pixel out from the stalk also
+                    # drops a row, so they read as leaves rather than a
+                    # row of thorns.
+                    ly = py + (step - 1)
+                    if 0 <= px < 128 and 0 <= ly < 32 and ly < self._sand_top[px]:
+                        img.putpixel((px, ly), lit if step == 1 else dark)
+
+    def _paint_bubbles(self, canvas: Canvas, tick: int) -> None:
+        t = tick * 0.06
         for b in self._bubbles:
             ix, iy = int(b.x), int(b.y)
             if not (0 <= ix < 128 and 0 <= iy < 32):
                 continue
+            # A bubble that reaches the surface has popped -- don't draw
+            # it sitting on top of the membrane.
+            if iy <= self._crest(ix, t) + 1:
+                continue
+            if not b.big:
+                canvas.pixel(ix, iy, _AQ_BUBBLE_MID)
+                continue
+            # 2x2 sphere: lit on the top-left, shaded bottom-right.
             canvas.pixel(ix, iy, _AQ_BUBBLE_LIGHT)
-            if b.big:
-                # 2x2 bubble with a dark rim so it reads as a sphere.
-                if ix + 1 < 128:
-                    canvas.pixel(ix + 1, iy, _AQ_BUBBLE_DARK)
-                if iy + 1 < 32:
-                    canvas.pixel(ix, iy + 1, _AQ_BUBBLE_DARK)
-                if ix + 1 < 128 and iy + 1 < 32:
-                    canvas.pixel(ix + 1, iy + 1, _AQ_BUBBLE_DARK)
+            if ix + 1 < 128:
+                canvas.pixel(ix + 1, iy, _AQ_BUBBLE_MID)
+            if iy + 1 < 32:
+                canvas.pixel(ix, iy + 1, _AQ_BUBBLE_MID)
+            if ix + 1 < 128 and iy + 1 < 32:
+                canvas.pixel(ix + 1, iy + 1, _AQ_BUBBLE_DARK)
 
     def _paint_fish(self, canvas: Canvas) -> None:
-        for f in self._fish:
-            sprite, body, dark, fin, eye = _FISH_SPRITES[f.sprite_idx]
-            rows = sprite.split("\n")
+        """Paint every fish back plane first, blended by depth.
+
+        Two things sell depth here: the far planes lose saturation into
+        the water colour of the row they sit on (aerial perspective, and
+        it is a real effect over even a foot of tank water), and they are
+        painted first so a near fish always occludes a far one instead of
+        the two turning into mush.
+        """
+        img = canvas.image_buffer
+        bg = self._bg
+        for f in sorted(self._fish, key=lambda fish: -fish.depth):
+            w, h, body_px, tail_px = _FISH_CACHE[f.sprite_idx]
             # y-bob: a tiny triangular offset from y_phase (0..1).
             phase = f.y_phase
             if phase < 0.5:
@@ -1835,26 +2316,21 @@ class _Aquarium:
             else:
                 bob = 1 - int((phase - 0.5) * 4)  # 1, 0, 0, -1
             base_x, base_y = int(f.x), int(f.y) + bob
-            for dy, row in enumerate(rows):
-                for dx, ch in enumerate(row):
-                    if ch == " ":
+            fade = self._DEPTH_FADE * f.depth
+            flick = _AQ_TAIL_BEAT[int(f.tail_phase) % 4]
+            flip = f.direction < 0
+            for group, dyoff in ((body_px, 0), (tail_px, flick)):
+                for dx, dy, colour in group:
+                    px = base_x + (w - 1 - dx) if flip else base_x + dx
+                    py = base_y + dy + dyoff
+                    if not (0 <= px < 128 and 0 <= py < 32):
                         continue
-                    # Mirror when swimming left.
-                    if f.direction < 0:
-                        px = base_x + (len(row) - 1 - dx)
-                    else:
-                        px = base_x + dx
-                    py = base_y + dy
-                    if 0 <= px < 128 and 0 <= py < self._SAND_Y:
-                        if ch == "B":
-                            color = body
-                        elif ch == "D":
-                            color = dark
-                        elif ch == "E":
-                            color = eye
-                        else:  # "F" or any other non-space marker
-                            color = fin
-                        canvas.pixel(px, py, color)
+                    if py >= self._sand_top[px]:
+                        continue
+                    img.putpixel(
+                        (px, py),
+                        colour if fade <= 0.0 else _mix(colour, bg[py], fade),
+                    )
 
     def _paint_crab(self, canvas: Canvas) -> None:
         c = self._crab
@@ -1862,11 +2338,7 @@ class _Aquarium:
             return
         rows = _CRAB_SPRITE.split("\n")
         sprite_h = len(rows)
-        # Sprite sits ON TOP of the sand: bottom row of the crab lies on
-        # the top row of sand (_SAND_Y), so ``base_y`` is sprite_h - 1
-        # rows above the sand top.
         base_x = int(c.x)
-        base_y = self._SAND_Y - (sprite_h - 1)
         # Tiny leg animation: the bottom row of the sprite has 4 leg
         # pixels on alternating columns. Every ~8 ticks flip which
         # legs are up (drawn) vs down (skipped) so the crab reads as
@@ -1882,14 +2354,13 @@ class _Aquarium:
                     px = base_x + (len(row) - 1 - dx)
                 else:
                     px = base_x + dx
-                py = base_y + dy
-                if not (0 <= px < 128 and 0 <= py < 32):
+                if not 0 <= px < 128:
                     continue
-                # Leg-row shuffle: on the bottom row, drop one of the
-                # two alternating leg groups each phase so the legs
-                # visibly move as the crab walks. Legs are at dx =
-                # 1, 3, 5, 7 -- group them by (dx // 2) parity so
-                # every other leg swaps each phase.
+                # The crab's feet follow the sand contour, so it walks
+                # over the dunes instead of clipping through them.
+                py = self._sand_top[px] - (sprite_h - 1) + dy
+                if not 0 <= py < 32:
+                    continue
                 if dy == sprite_h - 1 and ch == "B":
                     if leg_phase_flip:
                         if (dx // 2) % 2 == 0:
@@ -1909,16 +2380,18 @@ class _Aquarium:
 
     def render(self, canvas: Canvas, tick: int) -> None:
         self._step()
-        self._paint_background(canvas)
-        self._paint_caustics(canvas, tick)
-        self._paint_sand_and_weed(canvas, tick)
-        # Bubbles behind fish so a fish crossing a bubble stream reads
-        # as the fish being closer to the glass.
-        self._paint_bubbles(canvas)
-        # Crab walks on the sand -- painted before fish so a swimming
-        # fish drifting overhead reads as being in front of the crab.
+        # Back to front. The one non-obvious ordering choice is the front
+        # seaweed layer coming last: fronds painted over the fish is what
+        # makes the tank feel like it has a foreground at all.
+        self._paint_water(canvas, tick)
+        self._paint_surface(canvas, tick)
+        self._paint_bed(canvas, tick)
+        self._paint_weed(canvas, tick, back=True)
+        self._paint_rocks(canvas)
+        self._paint_bubbles(canvas, tick)
         self._paint_crab(canvas)
         self._paint_fish(canvas)
+        self._paint_weed(canvas, tick, back=False)
 
 
 # ---------------------------------------------------------------------------
