@@ -558,6 +558,54 @@ def test_driving_paints_dusk_scene_with_road_and_lane_lines(config) -> None:  # 
     )
 
 
+def test_driving_road_paint_hazes_out_and_never_outshines_the_sky() -> None:
+    """Lane paint must recede with distance and stay dimmer than the sky.
+
+    The first version painted a constant near-white cream from the bumper
+    to the horizon. That put the two solid edge lines within a few counts
+    of the sun's core and made them read as glowing cables laid over the
+    scene rather than as paint lit only by skyglow. Both failure modes
+    are checked: the far paint must be much darker than the near paint,
+    and no road pixel may be brighter than the brightest sky pixel.
+    """
+    from ticker.modes import vibes as V
+
+    scene = V._Driving()
+    canvas = Canvas(128, 32)
+    scene.render(canvas, 0)
+    img = canvas.image_buffer.convert("RGB")
+
+    sky = max(
+        sum(img.getpixel((x, y)))
+        for y in range(V._DR_HORIZON_Y + 1)
+        for x in range(128)
+    )
+
+    def edge_value(y: int) -> int:
+        """Brightest pixel on the left edge line at output row ``y``.
+
+        Sampling the whole row would pick up the desert sand, which is
+        legitimately bright near the horizon; only the paint is under test,
+        so walk the two columns either side of where the geometry puts it.
+        """
+        z = scene._row_z[y]
+        ex = scene._centre_x(z) - (V._DR_ROAD_HALF - V._DR_EDGE_W) * (V._DR_F / z)
+        cols = [int(round(ex)) + d for d in (-1, 0, 1)]
+        return max(sum(img.getpixel((c, y))) for c in cols if 0 <= c < 128)
+
+    near = edge_value(V._DR_BOTTOM_Y)
+    far = edge_value(V._DR_ROAD_TOP_Y)
+
+    assert near < sky, (
+        f"road paint ({near}) should never be brighter than the sky ({sky})"
+    )
+    assert far < near * 0.6, (
+        f"the edge line at the horizon ({far}) should haze well below the "
+        f"same line at the bumper ({near})"
+    )
+    assert 0.0 < V._DR_PAINT_HAZE < 0.5, "the horizon must keep some paint, but not much"
+
+
 def test_driving_traffic_shows_lamps_and_stays_on_the_asphalt() -> None:
     """Traffic must appear, and never off the edge of the road.
 

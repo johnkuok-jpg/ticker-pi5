@@ -2458,8 +2458,21 @@ _DR_GROUND     = (62, 38, 30)     # desert sand at the camera
 _DR_GROUND_FAR = (112, 76, 60)    # desert sand at the horizon, hazed
 _DR_FLECK      = (140, 100, 76)   # scrub/gravel specks out on the sand
 _DR_ROAD_FLECK = (72, 68, 78)     # tar/chip texture on the asphalt
-_DR_LANE_LINE  = (250, 235, 180)  # bright cream -- the centre dashes
-_DR_LANE_EDGE  = (230, 210, 150)  # the solid white edge lines
+# Road paint. The old version painted a constant near-white cream from the
+# bumper to the horizon, which put the two edge lines within a few counts of
+# the sun's core and made them read as glowing cables rather than paint.
+# There are no headlights in this scene, so the only thing lighting the paint
+# is skyglow: white paint (albedo ~0.55) under half a dusk sky hemisphere
+# lands near 140, not 230. Distance then hazes it toward the asphalt it sits
+# on -- by the horizon the line is only a couple of counts above the road,
+# which is exactly why a real desert road's edge line dissolves before the
+# vanishing point instead of running into it.
+_DR_LANE_LINE  = (170, 152, 94)   # ambient value of the yellow centre line
+_DR_LANE_EDGE  = (150, 134, 110)  # ambient value of the white edge line
+# White paint under an orange sky is not neutral grey -- the edge line above
+# carries the sky's warmth, or it reads as concrete dropped into a sunset.
+_DR_PAINT_HAZE = 0.16             # visibility left at the horizon row
+_DR_PAINT_GAMMA = 0.65            # how fast the paint emerges from the haze
 
 # Roadside poles: dark silhouettes against the sky, with a crossarm and
 # catenary wires strung between consecutive tops. The wires are what
@@ -3077,6 +3090,13 @@ class _Driving:
                      cx + _DR_SHOULDER_HALF * scale, _DR_SHOULDER)
             _dr_span(row, cx - _DR_ROAD_HALF * scale,
                      cx + _DR_ROAD_HALF * scale, road)
+            # Paint visibility: 1 at the bumper, _DR_PAINT_HAZE at the
+            # horizon row. Blending toward this row's own asphalt colour
+            # (rather than toward black) is what makes the far paint sink
+            # into the road instead of hanging in front of it.
+            vis = _DR_PAINT_HAZE + (1.0 - _DR_PAINT_HAZE) * t ** _DR_PAINT_GAMMA
+            edge_c = _dr_lerp(road, _DR_LANE_EDGE, vis)
+            dash_c = _dr_lerp(road, _DR_LANE_LINE, vis)
             # Solid edge lines. On a 128 px panel these are the single
             # strongest road cue there is, and the old version simply
             # did not have them.
@@ -3087,7 +3107,7 @@ class _Driving:
                 ex_next = cx_next + side * offset * scale_next
                 lo = min(ex, ex_next) - half_edge
                 hi = max(ex, ex_next) + half_edge
-                _dr_span(row, lo, hi, _DR_LANE_EDGE)
+                _dr_span(row, lo, hi, edge_c)
             # Centre dashes. The dash ENDS are horizontal, so unlike
             # every other span in the scene they alias vertically:
             # sample the row's depth interval and use the in-dash
@@ -3097,7 +3117,7 @@ class _Driving:
                 half_dash = _DR_DASH_W * 0.5 * scale
                 lo = min(cx, cx_next) - half_dash
                 hi = max(cx, cx_next) + half_dash
-                _dr_span(row, lo, hi, _DR_LANE_LINE, cov)
+                _dr_span(row, lo, hi, dash_c, cov)
             band.append(row)
         self._paint_flecks(band)
         canvas.blit_rgb(0, _DR_ROAD_TOP_Y, band)
