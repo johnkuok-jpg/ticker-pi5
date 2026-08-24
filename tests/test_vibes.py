@@ -436,6 +436,74 @@ def test_driving_paints_dusk_scene_with_road_and_lane_lines(config) -> None:  # 
     )
 
 
+def test_driving_traffic_shows_lamps_and_stays_on_the_asphalt() -> None:
+    """Traffic must appear, and never off the edge of the road.
+
+    Two separate regressions live here. Lamps: the tail and head lights
+    are the only thing that identifies a vehicle at this resolution, so
+    if the spawner stalls or the lamps project off-panel the road looks
+    permanently empty -- which is what happened when the first spawn
+    cooldown was drawn from the full steady-state range. Placement: the
+    vehicle centre plus half its width has to stay inside the projected
+    asphalt half-width at its own depth, or a car drifts out over the
+    sand while still facing down the lane.
+    """
+    from ticker.modes.vibes import (
+        _DR_F,
+        _DR_HEADLIGHT,
+        _DR_ROAD_HALF,
+        _DR_TAIL,
+        _DR_Z_FAR,
+        _Driving,
+    )
+
+    scene = _Driving()
+    canvas = Canvas(128, 32)
+    saw_head = saw_tail = False
+    for tick in range(900):
+        canvas.clear()
+        scene.render(canvas, tick)
+        pixels = _pixels(canvas)
+        saw_head = saw_head or _DR_HEADLIGHT in pixels
+        saw_tail = saw_tail or _DR_TAIL in pixels
+        for v in scene._traffic:
+            z = v["z"]
+            if z < scene._EXIT_Z or z > _DR_Z_FAR:
+                continue
+            offset = abs(scene._project(v["lane"] + v["drift"], z)
+                         - scene._centre_x(z))
+            half_body = _DR_F * v["w"] * 0.5 / z
+            road_half = _DR_F * _DR_ROAD_HALF / z
+            assert offset + half_body <= road_half + 0.6, (
+                f"vehicle off the asphalt at z={z:.2f}"
+            )
+
+    assert saw_tail, "expected a tail light from same-direction traffic"
+    assert saw_head, "expected a headlight from oncoming traffic"
+
+
+def test_driving_wire_colour_picks_contrast_against_the_background() -> None:
+    """Wires switch colour based on what is behind them.
+
+    The wires were never missing -- they were being drawn in a colour
+    within a couple of units of the near mesa they crossed, so half the
+    run was a dark line on an equally dark hill. The fix is per-pixel:
+    dark wire over bright sky, rim-lit wire over a dark ridge. Pin both
+    branches so a future palette change cannot silently collapse them
+    back into one colour.
+    """
+    from PIL import Image
+
+    from ticker.modes.vibes import _DR_WIRE, _DR_WIRE_LIT, _Driving
+
+    img = Image.new("RGB", (2, 1))
+    img.putpixel((0, 0), (240, 200, 150))   # bright sky
+    img.putpixel((1, 0), (20, 14, 24))      # dark ridge
+    assert _Driving._wire_colour(img, 0, 0) == _DR_WIRE
+    assert _Driving._wire_colour(img, 1, 0) == _DR_WIRE_LIT
+
+
+
 # ---------------------------------------------------------------------------
 # Webapp wiring
 # ---------------------------------------------------------------------------

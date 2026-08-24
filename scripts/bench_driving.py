@@ -4,7 +4,7 @@
 Unlike the campfire, the driving scene has no numpy in it at all: it is a
 pure-Python software rasterizer. Every frame walks 16 sky rows and 16
 road rows, blends anti-aliased span boundaries, and draws poles, wires,
-cacti, dashes, flecks and headlights one pixel at a time. That makes its
+cacti, dashes, flecks and traffic one pixel at a time. That makes its
 cost interpreter-bound rather than memory-bound, which is the opposite
 profile to the campfire and means a dev-box number translates to the Pi
 differently -- a Pi 5 core is roughly 2-3x slower per Python bytecode op
@@ -137,7 +137,7 @@ def main() -> int:
             ("road + lines + dashes", "_paint_road"),
             ("poles + wires", "_paint_poles"),
             ("cacti", "_paint_cacti"),
-            ("headlights", "_paint_headlights"),
+            ("traffic", "_paint_traffic"),
             ("dashboard", "_paint_dashboard"),
         ]
         print("\nper-stage (indicative, not additive):")

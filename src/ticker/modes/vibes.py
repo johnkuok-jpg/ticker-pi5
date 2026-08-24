@@ -53,8 +53,19 @@ across each row's depth interval, which is what stops far dashes
 strobing. Poles (with crossarms and sagging catenary wires) and cacti
 pass on both shoulders, faded toward the sky colour by an aerial-
 perspective haze and clipped at Z=18 so they do not collapse into a
-smear at the vanishing point. Occasional oncoming headlights walk up the
-far lane in 1/Z. Spans are anti-aliased horizontally only -- vertical
+smear at the vanishing point. Wire pixels pick their colour from the
+background luma they land on -- dark over bright sky, rim-lit over a dark
+ridge -- because a single fixed wire colour sat within a couple of units
+of the near mesa and half the run vanished into the hill it crossed.
+Traffic is a handful of dicts carrying a Z and a lane, placed by the same
+projection: oncoming vehicles close at our speed plus their own and exit
+past the camera, while same-direction traffic closes only on the speed
+difference, is followed for a few seconds at a fixed gap (overtaking
+needs the oncoming lane, which is more scene than 32 rows can carry), and
+then pulls away. Cars and trucks get a body with an inset cab and a
+sky-glow rim once they are more than a couple of rows tall; below that
+the lamps alone are the honest read, blooming radially into whatever is
+behind them. Spans are anti-aliased horizontally only -- vertical
 supersampling costs more than a pure-Python rasterizer can afford at
 30fps. No fixed loop: speed, curve, and prop jitter come from an
 unseeded RNG. See ``scripts/bench_driving.py`` for the per-frame cost.
@@ -1981,7 +1992,8 @@ _DR_LANE_EDGE  = (230, 210, 150)  # the solid white edge lines
 # catenary wires strung between consecutive tops. The wires are what
 # make a vertical stick read as infrastructure.
 _DR_POLE       = (22, 14, 26)
-_DR_WIRE       = (34, 24, 38)
+_DR_WIRE       = (34, 24, 38)     # seen against a bright sky
+_DR_WIRE_LIT   = (124, 100, 116)  # seen against a dark mesa, rim-lit
 
 # Saguaro cacti along the shoulders. These MUST be lighter than the
 # ground: the old (30, 55, 30) was darker than the sand, so every
@@ -1998,6 +2010,19 @@ _DR_DASH_TRIM  = (60, 40, 30)     # a hair of warmth along the top edge
 # Oncoming headlights on the opposite lane -- a rare, bright cameo.
 _DR_HEADLIGHT      = (255, 245, 200)  # hot cream-white core
 _DR_HEADLIGHT_HALO = (200, 180, 130)  # halo around the core
+
+# Traffic. Bodies are only a shade above the asphalt on purpose: at dusk
+# a car ahead of you is a silhouette carrying two red lights, not a
+# painted shape. The lights do the identifying, the body just blocks the
+# lane markings behind it.
+_DR_CAR_BODY   = (26, 22, 34)
+_DR_CAR_ROOF   = (33, 28, 41)
+_DR_CAR_GLASS  = (58, 54, 78)
+_DR_CAR_EDGE   = (98, 86, 106)     # sky-glow rim along the roof and shoulders
+_DR_TRUCK_BODY = (44, 34, 42)
+_DR_TRUCK_TRIM = (214, 152, 68)    # trailer marker lamps along the top
+_DR_TAIL       = (232, 48, 32)
+_DR_TAIL_HALO  = (128, 26, 20)
 
 # Scene geometry. Panel is 128x32.
 _DR_HORIZON_Y   = 13          # last sky row; the horizon line itself
@@ -2027,6 +2052,12 @@ _DR_Z_FAR  = 34.0
 # into a black smear straddling the vanishing point, which reads as a
 # smudge on the panel rather than as distance.
 _DR_PROP_Z_FAR = 18.0
+# Wires anchor to poles beyond the range the poles themselves are drawn
+# over, at both ends. Without the near overhang the wire pops out of
+# existence when the closest pole passes the camera; without the far
+# overhang the run stops short of the vanishing point.
+_DR_WIRE_Z_NEAR = 0.40
+_DR_WIRE_Z_FAR = 26.0
 # Beyond ~9 units props are hazed toward the sky behind them. Without
 # this an 18-unit-away pole is exactly as black as one at the bumper,
 # and the whole receding line reads flat.
@@ -2164,16 +2195,58 @@ class _Driving:
     _MESA_FAR_PARALLAX  = 0.35
     _MESA_NEAR_PARALLAX = 1.0
 
-    # Headlight cadence: a rare cameo, same spirit as the aquarium shark.
-    _HEADLIGHT_MIN_TICKS = 12 * 30   # 12 s
-    _HEADLIGHT_MAX_TICKS = 40 * 30   # 40 s
-    _HEADLIGHT_TRAVEL    = 45        # ticks from horizon to pass-by
-    _HEADLIGHT_LANE_X    = -1.75     # centre of the oncoming lane
-    _HEADLIGHT_SEP       = 1.4       # world track width between the lamps
+    # Traffic. Two lanes: ours at +1.75 world units off the centreline,
+    # oncoming at -1.75. Both are inside _DR_ROAD_HALF (3.5) so a vehicle
+    # sits on tarmac, not on the shoulder.
+    _LANE_OURS      = 1.75
+    _LANE_ONCOMING  = -1.75
+    _CAR_W, _CAR_H     = 1.55, 1.15
+    _TRUCK_W, _TRUCK_H = 2.05, 2.10
+    # Lamp track width. These have to be comfortably narrower than
+    # _CAR_W: at 1.40 against a 1.55-wide car the headlights landed on
+    # the body's own outline and punched two holes in it.
+    _HEADLIGHT_SEP  = 1.05
+    _TAIL_SEP       = 1.00
+    # Retire a vehicle while it still looks like one. Z = 1 lands on the
+    # bottom road row, so anything closer projects its base *below* the
+    # panel: the body becomes a slab with no bottom and the lamps fall
+    # off the screen entirely, which is exactly how a passing car turned
+    # into a grey rectangle with no headlights. At 1.30 the lamps are
+    # still on row ~23 and the body is already two thirds off the side
+    # of the frame, so the exit reads as a car whipping past.
+    _EXIT_Z         = 1.30
+
+    # Oncoming: spawns at the far clip and closes at our speed plus its
+    # own, so it crosses the whole window in about 6 s. Frequent enough
+    # to feel like a road, rare enough that the pass still registers.
+    _ONCOMING_MIN_TICKS = 5 * 30
+    _ONCOMING_MAX_TICKS = 17 * 30
+    _ONCOMING_MAX       = 2
+    _ONCOMING_SPEED_LO  = 0.80       # their speed as a multiple of ours
+    _ONCOMING_SPEED_HI  = 1.25
+
+    # Same-direction traffic ahead. It spawns mid-window because closing
+    # on it from Z=34 at a realistic speed difference would take a full
+    # minute of nothing happening.
+    _AHEAD_MIN_TICKS = 9 * 30
+    _AHEAD_MAX_TICKS = 26 * 30
+    # Spawn inside Z=16. Past that the whole depth range compresses onto
+    # the horizon row -- Z=1 lands on the bottom road row and K is 16, so
+    # everything from 16 out to the far clip shares one or two rows. A
+    # car spawned at 24 therefore sat as a stationary red dot on the
+    # skyline for ten seconds before it grew at all.
+    _AHEAD_SPAWN_Z   = (9.0, 15.0)
+    _AHEAD_CLOSE_LO  = 0.025         # world units per tick, closing
+    _AHEAD_CLOSE_HI  = 0.060
+    _AHEAD_PULL_LO   = 0.012         # ...and pulling away again
+    _AHEAD_PULL_HI   = 0.030
+    _FOLLOW_Z        = 2.30          # where we stop closing and just follow
+    _FOLLOW_HOLD     = (2 * 30, 7 * 30)
+    _TRUCK_CHANCE    = 0.30
 
     def __init__(self) -> None:
         # Deterministic layout RNG so the roadside is stable across
-        # frames, plus an unseeded one for headlight cadence so no two
+        # frames, plus an unseeded one for traffic cadence so no two
         # sessions have the same traffic.
         self._layout_rng = random.Random(0xD1E5E11)
         self._rng = random.Random()
@@ -2188,9 +2261,21 @@ class _Driving:
         # Per-slot jitter for poles and cacti, materialized on demand.
         self._pole_jitter: dict[int, tuple[float, float]] = {}
         self._cactus_slots: dict[int, tuple[float, float, int, int]] = {}
-        self._headlight_progress: float | None = None
-        self._headlight_cooldown = self._rng.randint(
-            self._HEADLIGHT_MIN_TICKS, self._HEADLIGHT_MAX_TICKS,
+        # Live vehicles, each a small dict. A list beats a class here:
+        # there are never more than three, and the render loop only ever
+        # reads fields.
+        self._traffic: list[dict[str, float | int | str]] = []
+        # First spawns are drawn from a short window rather than the full
+        # steady-state one. Drawing the first gap from the full range put
+        # an empty road on screen for up to 17 seconds after the mode
+        # started, which reads as "the traffic is broken", not as "the
+        # highway is quiet". After the first vehicle the normal spacing
+        # takes over.
+        self._oncoming_cooldown = self._rng.randint(
+            45, self._ONCOMING_MIN_TICKS,
+        )
+        self._ahead_cooldown = self._rng.randint(
+            self._AHEAD_MIN_TICKS // 3, self._AHEAD_MIN_TICKS,
         )
         # Row -> depth table. Fixed geometry, so compute it once.
         self._row_z = {
@@ -2311,17 +2396,104 @@ class _Driving:
         self._curve = self._CURVE_AMP * math.sin(
             tick * (2 * math.pi / self._CURVE_PERIOD))
 
-        if self._headlight_progress is not None:
-            self._headlight_progress += 1.0 / self._HEADLIGHT_TRAVEL
-            if self._headlight_progress >= 1.05:
-                self._headlight_progress = None
-                self._headlight_cooldown = self._rng.randint(
-                    self._HEADLIGHT_MIN_TICKS, self._HEADLIGHT_MAX_TICKS,
-                )
+        self._step_traffic(speed)
+
+    # ------------------------------------------------------------------
+    # Traffic
+    # ------------------------------------------------------------------
+
+    def _step_traffic(self, speed: float) -> None:
+        """Advance every vehicle and spawn new ones on their cooldowns.
+
+        Depth is in the same world units as everything else, so a vehicle
+        needs no screen-space state at all -- it carries a Z and a lane,
+        and the shared projection places it. That is the payoff from the
+        camera rewrite: traffic is about forty lines because it does not
+        have to invent its own perspective.
+
+        The two directions behave differently on purpose. Oncoming
+        traffic closes at our speed plus its own, so it crosses the whole
+        window in a few seconds and exits behind the camera.
+        Same-direction traffic closes only on the speed *difference*,
+        which is slow, and cannot simply be passed -- overtaking on a
+        two-lane road means crossing the centre line into the oncoming
+        lane, which is far more scene than 32 rows can carry. So we close
+        on it, match speed and follow for a few seconds, then it pulls
+        away again. That is what actually happens on a highway, and it
+        costs one state flag.
+        """
+        survivors = []
+        for v in self._traffic:
+            if v["dir"] == -1:
+                v["z"] -= speed * (1.0 + v["rel"])
+                if v["z"] > self._EXIT_Z:
+                    survivors.append(v)
+                continue
+            # Same direction: signed drift, with a follow hold at the end
+            # of the approach.
+            if v["hold"] > 0:
+                v["hold"] -= 1
+                if v["hold"] == 0:
+                    v["rel"] = self._rng.uniform(
+                        self._AHEAD_PULL_LO, self._AHEAD_PULL_HI)
+            else:
+                v["z"] += v["rel"]
+                if v["rel"] < 0.0 and v["z"] <= self._FOLLOW_Z:
+                    v["z"] = self._FOLLOW_Z
+                    v["hold"] = self._rng.randint(*self._FOLLOW_HOLD)
+            if v["z"] < _DR_Z_FAR + 2.0:
+                survivors.append(v)
+        self._traffic = survivors
+
+        oncoming = sum(1 for v in self._traffic if v["dir"] == -1)
+        ahead = sum(1 for v in self._traffic if v["dir"] == 1)
+
+        self._oncoming_cooldown -= 1
+        if self._oncoming_cooldown <= 0:
+            self._oncoming_cooldown = self._rng.randint(
+                self._ONCOMING_MIN_TICKS, self._ONCOMING_MAX_TICKS)
+            # Never stack two oncoming vehicles at nearly the same depth:
+            # the far one hides behind the near one's body and is only
+            # ever seen as it emerges, which reads as a rendering glitch
+            # rather than as traffic.
+            crowded = any(
+                v["dir"] == -1 and v["z"] > _DR_Z_FAR - 8.0
+                for v in self._traffic
+            )
+            if oncoming < self._ONCOMING_MAX and not crowded:
+                self._traffic.append(self._spawn(-1))
+
+        self._ahead_cooldown -= 1
+        if self._ahead_cooldown <= 0:
+            self._ahead_cooldown = self._rng.randint(
+                self._AHEAD_MIN_TICKS, self._AHEAD_MAX_TICKS)
+            # One vehicle ahead at a time. A second queued behind the
+            # first in the same lane is invisible anyway.
+            if ahead == 0:
+                self._traffic.append(self._spawn(1))
+
+    def _spawn(self, direction: int) -> dict:
+        truck = self._rng.random() < self._TRUCK_CHANCE
+        if direction == -1:
+            z = _DR_Z_FAR
+            rel = self._rng.uniform(
+                self._ONCOMING_SPEED_LO, self._ONCOMING_SPEED_HI)
         else:
-            self._headlight_cooldown -= 1
-            if self._headlight_cooldown <= 0:
-                self._headlight_progress = 0.0
+            z = self._rng.uniform(*self._AHEAD_SPAWN_Z)
+            rel = -self._rng.uniform(self._AHEAD_CLOSE_LO, self._AHEAD_CLOSE_HI)
+        return {
+            "z": z,
+            "dir": direction,
+            "rel": rel,
+            "hold": 0,
+            "truck": 1 if truck else 0,
+            "lane": self._LANE_ONCOMING if direction == -1 else self._LANE_OURS,
+            "w": self._TRUCK_W if truck else self._CAR_W,
+            "h": self._TRUCK_H if truck else self._CAR_H,
+            # A little lateral offset so a vehicle is not welded to the
+            # exact lane centre for its whole life.
+            "drift": self._rng.uniform(-0.22, 0.22),
+        }
 
     # ------------------------------------------------------------------
     # Projection
@@ -2511,24 +2683,41 @@ class _Driving:
     # ------------------------------------------------------------------
 
     def _paint_poles(self, canvas: Canvas) -> None:
+        """Pole line down both shoulders, with wires strung between them.
+
+        Endpoints are collected over a WIDER depth range than the poles
+        are drawn over. That is the fix for wires that vanished: the old
+        version skipped a pole entirely when it fell outside
+        ``[_DR_Z_NEAR, _DR_PROP_Z_FAR]``, which also dropped its wire
+        endpoint, so the moment the nearest pole slid past the camera the
+        whole near span of wire popped out of existence -- and past the
+        far clip there was no next pole to string to, so the run never
+        reached the vanishing point either. Wires now anchor to poles the
+        camera cannot see at both ends, which is what makes the line
+        continuous.
+        """
         spacing = self._POLE_SPACING
         base = int(self._distance // spacing)
         phase = self._distance % spacing
-        # Collect projected tops per side so we can string wires between
-        # consecutive poles.
-        tops: dict[int, list[tuple[float, float]]] = {-1: [], 1: []}
-        for i in range(int(_DR_PROP_Z_FAR / spacing) + 2):
+        # (x, arm_row_y, arm_half_width) per pole, near to far, per side.
+        anchors: dict[int, list[tuple[float, float, float]]] = {-1: [], 1: []}
+        count = int((_DR_WIRE_Z_FAR + spacing) / spacing) + 2
+        for i in range(count):
             z = i * spacing - phase
-            if z < _DR_Z_NEAR or z > _DR_PROP_Z_FAR:
+            if z < _DR_WIRE_Z_NEAR or z > _DR_WIRE_Z_FAR:
                 continue
             jitter, hscale = self._pole_slot(base + i)
             y_base = self._ground_y(z)
             height = _DR_F * self._POLE_HEIGHT * hscale / z
             y_top = y_base - height
+            arm = self._POLE_ARM * _DR_F / z
             pole = self._hazed(_DR_POLE, z)
+            visible = _DR_Z_NEAR <= z <= _DR_PROP_Z_FAR
             for side in (-1, 1):
                 px = self._project(side * self._POLE_X + jitter, z)
-                tops[side].append((px, y_top))
+                anchors[side].append((px, y_top + 1.0, arm))
+                if not visible:
+                    continue
                 ix = int(round(px))
                 if not (0 <= ix < 128):
                     continue
@@ -2541,40 +2730,77 @@ class _Driving:
                 # itself -- a real crossarm is about an eighth of the
                 # pole's height across, which is why the old fixed
                 # 3-px bar read as a hammer head on the near poles.
-                arm = max(1, int(round(self._POLE_ARM * _DR_F / z)))
+                iarm = max(1, int(round(arm)))
                 ay = iy_top + 1
                 if height >= 4.0 and 0 <= ay < 32:
-                    for dx in range(-arm, arm + 1):
+                    for dx in range(-iarm, iarm + 1):
                         cxp = ix + dx
                         if 0 <= cxp < 128:
                             canvas.pixel(cxp, ay, pole)
         for side in (-1, 1):
-            self._paint_wires(canvas, tops[side])
+            self._paint_wires(canvas, anchors[side])
 
-    def _paint_wires(self, canvas: Canvas, tops: list[tuple[float, float]]) -> None:
-        """Catenary wires strung between consecutive pole tops.
+    def _paint_wires(self, canvas: Canvas, anchors) -> None:
+        """Catenary wires between consecutive pole crossarms.
 
-        Two pixels of sag is all 32 rows can show, but it is the
-        difference between "power line" and "sticks in the sky", and it
-        is the cue that makes the pole parade read as one continuous
-        object receding to the vanishing point.
+        Sampled along whichever axis is longer, not stepped in x. Near
+        spans are steep -- the pole tops climb off the top of the panel
+        while barely moving sideways -- so an x-stepped line drew a few
+        scattered pixels and read as dashes, and far spans compress below
+        one pixel of horizontal run, where the old ``abs(dx) < 1.0``
+        guard skipped them outright and cut the line short of the
+        vanishing point. Sampling on ``max(|dx|, |dy|)`` covers both.
+
+        Two wires per side, anchored at the crossarm tips, collapsing
+        onto each other with distance. Two pixels of sag is all 32 rows
+        can show, but it is the difference between "power line" and
+        "sticks in the sky".
         """
-        for (x0, y0), (x1, y1) in zip(tops, tops[1:]):
-            dx = x1 - x0
-            if abs(dx) < 1.0 or abs(dx) > 200.0:
-                continue
-            step = 1 if dx > 0 else -1
-            sag_max = min(2.0, abs(dx) / 14.0)
-            for ix in range(int(round(x0)), int(round(x1)) + step, step):
-                if not (0 <= ix < 128):
-                    continue
-                u = (ix - x0) / dx
-                if u < 0.0 or u > 1.0:
-                    continue
-                y = y0 + (y1 - y0) * u + 1.0 + 4.0 * sag_max * u * (1.0 - u)
-                iy = int(round(y))
-                if 0 <= iy <= _DR_HORIZON_Y:
-                    canvas.pixel(ix, iy, _DR_WIRE)
+        img = canvas.image_buffer
+        for (x0, ay0, arm0), (x1, ay1, arm1) in zip(anchors, anchors[1:]):
+            if abs(x1 - x0) > 260.0:
+                continue    # a pole wrapped; do not draw a wire across the panel
+            for tip in (-1.0, 1.0):
+                tx0 = x0 + tip * arm0
+                tx1 = x1 + tip * arm1
+                dx = tx1 - tx0
+                dy = ay1 - ay0
+                sag = min(2.0, abs(dx) / 14.0)
+                steps = min(160, max(2, int(max(abs(dx), abs(dy))) + 1))
+                for s in range(steps + 1):
+                    u = s / steps
+                    ix = int(round(tx0 + dx * u))
+                    if not (0 <= ix < 128):
+                        continue
+                    iy = int(round(
+                        ay0 + dy * u + 4.0 * sag * u * (1.0 - u)))
+                    if 0 <= iy <= _DR_HORIZON_Y:
+                        canvas.pixel(ix, iy, self._wire_colour(img, ix, iy))
+
+    @staticmethod
+    def _wire_colour(img, ix: int, iy: int):
+        """Pick a wire colour that contrasts with whatever is behind it.
+
+        This is the fix for wires that seemed to vanish over the ridges.
+        They were being drawn the whole time -- 71 pixels a frame -- but
+        ``_DR_WIRE`` (34, 24, 38) is within a couple of units of
+        ``_DR_MESA_NEAR`` (46, 24, 38), and nearly half the wire run
+        crosses the mesas. It was painting a dark line onto an equally
+        dark hill.
+
+        A single fixed colour cannot work here, because the same wire
+        crosses bright sky, a dark ridge, and the sun within one span. So
+        pick per pixel: dark where the background is bright, rim-lit
+        where the background is dark. That is also what the eye actually
+        sees -- a wire is thinner than a pixel, so what lands on the
+        panel is a blend, and against a dark hill the blend is dominated
+        by the sky glow scattering around the wire rather than by the
+        wire itself.
+        """
+        r, g, b = img.getpixel((ix, iy))[:3]
+        # Rec. 601 luma is close enough and avoids a multiply-heavy path
+        # in a loop that runs a few hundred times a frame.
+        return _DR_WIRE if (r * 77 + g * 151 + b * 28) >> 8 > 72 else _DR_WIRE_LIT
 
     def _hazed(self, colour, z: float):
         """Fade a prop colour toward the sky behind it with distance.
@@ -2639,28 +2865,152 @@ class _Driving:
                         if 0 <= tip_x < 128 and 0 <= ty < 32:
                             canvas.pixel(tip_x, ty, colour)
 
-    def _paint_headlights(self, canvas: Canvas) -> None:
-        if self._headlight_progress is None:
+    def _paint_traffic(self, canvas: Canvas) -> None:
+        """Draw every live vehicle, far to near.
+
+        Painter's algorithm on Z. There is no depth buffer and there does
+        not need to be: at most three vehicles exist, and the only
+        overlap that matters is a near one hiding a far one.
+        """
+        for v in sorted(self._traffic, key=lambda d: -d["z"]):
+            self._paint_vehicle(canvas, v)
+
+    def _paint_vehicle(self, canvas: Canvas, v) -> None:
+        z = v["z"]
+        if z < self._EXIT_Z or z > _DR_Z_FAR:
             return
-        p = min(1.0, max(0.0, self._headlight_progress))
-        # Progress 0 -> far end of the window, 1 -> at the bumper. Walk
-        # it in 1/Z so the approach accelerates the way a real car does.
-        inv = (1.0 / _DR_Z_FAR) + p * ((1.0 / _DR_Z_NEAR) - (1.0 / _DR_Z_FAR))
-        z = 1.0 / inv
-        y = self._ground_y(z) - _DR_F * 0.5 / z   # lamps sit off the tarmac
-        iy = int(round(y))
-        sep = _DR_F * self._HEADLIGHT_SEP * 0.5 / z
+        cx = self._project(v["lane"] + v["drift"], z)
+        w = _DR_F * v["w"] / z
+        h = _DR_F * v["h"] / z
+        y_base = self._ground_y(z)
+        truck = bool(v["truck"])
+        oncoming = v["dir"] == -1
+
+        if h >= 2.0:
+            # Big enough to be a shape rather than a smudge, so give it a
+            # body. Below that threshold the lights alone are the honest
+            # read: a car half a mile off at dusk IS two points of light.
+            body = self._hazed(_DR_TRUCK_BODY if truck else _DR_CAR_BODY, z)
+            upper = self._hazed(_DR_TRUCK_BODY if truck else _DR_CAR_ROOF, z)
+            edge = self._hazed(_DR_CAR_EDGE, z)
+            x0 = int(round(cx - w * 0.5))
+            x1 = int(round(cx + w * 0.5))
+            y_top = int(round(y_base - h))
+            y_bot = int(round(y_base))
+            # A car's cabin is narrower than its body; a trailer is a
+            # slab all the way up. Skipping that inset is what makes a
+            # pixel car read as a shipping container.
+            cab_h = max(1, int(round(h * (0.55 if truck else 0.42))))
+            inset = 0 if truck else max(0, int(round(w * 0.16)))
+            for y in range(max(0, y_top), min(31, y_bot) + 1):
+                in_cab = y < y_top + cab_h
+                rx0 = x0 + inset if in_cab else x0
+                rx1 = x1 - inset if in_cab else x1
+                colour = upper if in_cab else body
+                for x in range(max(0, rx0), min(127, rx1) + 1):
+                    canvas.pixel(x, y, colour)
+            # Rim light along the roof and both shoulders. Without it the
+            # body is unreadable: a dark silhouette is invisible against
+            # the near asphalt (18, 18, 28), which is nearly as dark, and
+            # only the roof band showed -- a car ahead read as a small
+            # floating grey smudge instead of a car. The rim is also the
+            # real thing to draw, since the sky glow behind the vehicle
+            # catches its top edge and shoulders.
+            if w >= 3.0 and h >= 3.0:
+                for x in range(max(0, x0 + inset), min(127, x1 - inset) + 1):
+                    if 0 <= y_top < 32:
+                        canvas.pixel(x, y_top, edge)
+                for y in range(max(0, y_top), min(31, y_bot) + 1):
+                    in_cab = y < y_top + cab_h
+                    lx_e = x0 + inset if in_cab else x0
+                    rx_e = x1 - inset if in_cab else x1
+                    if 0 <= lx_e < 128:
+                        canvas.pixel(lx_e, y, edge)
+                    if 0 <= rx_e < 128:
+                        canvas.pixel(rx_e, y, edge)
+            if not truck and cab_h >= 2 and h >= 5.0:
+                # Glass: windscreen on an oncoming car, rear window on
+                # one ahead. Same band either way at this size.
+                glass = self._hazed(_DR_CAR_GLASS, z)
+                gy = y_top + 1
+                if 0 <= gy < 32:
+                    for x in range(max(0, x0 + inset + 1), min(127, x1 - inset - 1) + 1):
+                        canvas.pixel(x, gy, glass)
+            if truck and w >= 5.0 and 0 <= y_top < 32:
+                # Trailer marker lights along the top edge -- the single
+                # cue that separates a truck from a tall car at a glance.
+                trim = self._hazed(_DR_TRUCK_TRIM, z)
+                for frac in (0.15, 0.5, 0.85):
+                    mx = int(round(x0 + (x1 - x0) * frac))
+                    if 0 <= mx < 128:
+                        canvas.pixel(mx, y_top, trim)
+
+        # Lamps sit low: headlights are near the bumper, tail lights a
+        # little higher on the tailgate. Putting them at mid-body height
+        # made every vehicle read as a tram.
+        if oncoming:
+            lamp, halo, sep, frac = (
+                _DR_HEADLIGHT, _DR_HEADLIGHT_HALO, self._HEADLIGHT_SEP, 0.18)
+        else:
+            lamp, halo, sep, frac = (
+                _DR_TAIL, _DR_TAIL_HALO, self._TAIL_SEP, 0.34)
+        # Lift the lamps off the base row only when the vehicle is big
+        # enough for the lift to mean something. The old unconditional
+        # 1 px lift put the far red dot on row 13 -- the horizon row,
+        # which is sky -- so a distant car ahead read as a tail light
+        # hovering above the road. Clamping into the road band fixes the
+        # same thing from the other side: rows 16 units out and beyond
+        # all compress onto row 14, and that is where a vehicle at the
+        # vanishing point belongs.
+        lift = h * frac
+        ly = int(round(y_base - lift if lift >= 1.5 else y_base))
+        ly = max(_DR_ROAD_TOP_Y, ly)
+        lsep = _DR_F * sep * 0.5 / z
+        # Bloom radius by proximity. Oncoming headlights get more of it
+        # than tail lights because they are pointed at the camera: an
+        # approaching car at dusk is the brightest thing in the frame by
+        # a wide margin, and a fixed 3x3 block of halo does not carry
+        # that -- it reads as a lit window punched into the body.
+        if oncoming:
+            radius = 3 if z < 2.0 else (2 if z < 4.5 else 1)
+        else:
+            radius = 2 if z < 3.0 else 1
+        img = canvas.image_buffer
         for side in (-1.0, 1.0):
-            hx = self._project(self._HEADLIGHT_LANE_X, z) + side * sep
-            ix = int(round(hx))
-            if not (0 <= ix < 128 and 0 <= iy < 32):
+            lx = int(round(cx + side * lsep))
+            if not (0 <= lx < 128 and 0 <= ly < 32):
                 continue
-            canvas.pixel(ix, iy, _DR_HEADLIGHT)
-            if z < 12.0:
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    hax, hay = ix + dx, iy + dy
-                    if 0 <= hax < 128 and 0 <= hay < 32:
-                        canvas.pixel(hax, hay, _DR_HEADLIGHT_HALO)
+            self._paint_lamp(canvas, img, lx, ly, lamp, halo, radius)
+
+    @staticmethod
+    def _paint_lamp(canvas: Canvas, img, lx: int, ly: int,
+                    lamp, halo, radius: int) -> None:
+        """One lamp: hot core, then a radial bloom into the background.
+
+        The bloom blends with whatever is already on the panel rather
+        than painting a flat halo colour, which is what makes it read as
+        light instead of as a second, paler lamp. Falloff is on true
+        radial distance, so the glow is round; a rectangular block of
+        halo pixels is instantly recognisable as a sprite.
+        """
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                x, y = lx + dx, ly + dy
+                if not (0 <= x < 128 and 0 <= y < 32):
+                    continue
+                if dx == 0 and dy == 0:
+                    canvas.pixel(x, y, lamp)
+                    continue
+                d = math.hypot(dx, dy)
+                if d > radius + 0.35:
+                    continue
+                # Inside ~1.5 px the filament still dominates; past that
+                # it is scatter, which is dimmer and warmer.
+                target = lamp if d <= 1.45 else halo
+                k = min(0.92, (1.0 - d / (radius + 1.0)) ** 1.6 * 1.35)
+                if k <= 0.02:
+                    continue
+                canvas.pixel(x, y, _dr_lerp(img.getpixel((x, y))[:3], target, k))
 
     def _paint_dashboard(self, canvas: Canvas) -> None:
         canvas.fill_rect(0, _DR_DASH_Y, 128, 1, _DR_DASH_TRIM)
@@ -2674,7 +3024,7 @@ class _Driving:
         # cannot live inside either band.
         self._paint_poles(canvas)
         self._paint_cacti(canvas)
-        self._paint_headlights(canvas)
+        self._paint_traffic(canvas)
         self._paint_dashboard(canvas)
 
 
