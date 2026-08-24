@@ -10,6 +10,11 @@ trust an off-Pi estimate. Run this ON the Pi:
 
     cd /home/pi/ticker-pi5 && python scripts/bench_campfire.py
 
+The Pi's dependencies live in the project venv, not in system Python, so
+this re-execs itself into ``venv/bin/python`` when it finds one -- plain
+``python scripts/...`` otherwise dies on ``No module named 'dotenv'``
+before it reaches a single flame.
+
 It prints median / p95 / max ms per frame for the solver plus its palette
 mapping, and the share of the 30fps budget that represents. Comfortable
 is p95 under about a third of the budget; above two thirds, drop
@@ -25,6 +30,7 @@ Options:
 from __future__ import annotations
 
 import argparse
+import os
 import statistics
 import sys
 import time
@@ -32,6 +38,33 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+
+def _reexec_in_venv() -> None:
+    """Restart under ``venv/bin/python`` if we were started outside it.
+
+    The Pi installs numpy, Pillow, python-dotenv and the rest into
+    ``/home/pi/ticker-pi5/venv``; system Python has none of them. Running
+    a script here with bare ``python`` therefore fails at the first
+    ``ticker`` import, which looks like a broken script rather than the
+    wrong interpreter. Re-exec instead of printing advice: the guard is
+    an env var so the second process cannot loop.
+    """
+    if os.environ.get("TICKER_BENCH_REEXEC"):
+        return
+    venv_python = PROJECT_ROOT / "venv" / "bin" / "python"
+    try:
+        already_inside = venv_python.resolve() == Path(sys.executable).resolve()
+    except OSError:  # pragma: no cover - unreadable path, just carry on
+        already_inside = True
+    if already_inside or not venv_python.exists():
+        return
+    env = dict(os.environ, TICKER_BENCH_REEXEC="1")
+    # flush=True matters: execve replaces the process image without
+    # flushing Python's buffers, so a block-buffered print into a pipe
+    # would be lost and the handoff would happen invisibly.
+    print(f"re-running under {venv_python}", flush=True)
+    os.execve(str(venv_python), [str(venv_python), *sys.argv], env)
 
 
 def main() -> int:
@@ -45,6 +78,8 @@ def main() -> int:
         help="time Campfire.render (solver + logs + blit) instead of the solver alone",
     )
     args = parser.parse_args()
+
+    _reexec_in_venv()
 
     from ticker.modes.vibes import _Campfire, _FluidFlame, _np
 
