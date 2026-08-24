@@ -77,3 +77,44 @@ def test_blit_rgb_ignores_empty_and_fully_offscreen_blocks() -> None:
     canvas.blit_rgb(40, 40, _block(4, 4, (255, 255, 255)))
     canvas.blit_rgb(-10, 0, _block(4, 4, (255, 255, 255)))
     assert set(canvas.image_buffer.convert("RGB").getdata()) == {(0, 0, 0)}
+
+
+def test_blit_rgb_pastes_flat_per_row_byte_buffers() -> None:
+    """Rows may be flat ``3*w`` byte buffers, not just triple sequences.
+
+    The driving vibe builds each row as a single ``bytearray`` and mutates
+    it in place while rasterizing spans, because allocating 128 tuples per
+    row per frame is exactly the sort of overhead a pure-Python rasterizer
+    cannot carry at 30fps. If this path regressed to being interpreted as
+    a sequence of triples the whole scene would smear sideways rather than
+    fail loudly, so pin the byte layout.
+    """
+    canvas = Canvas(16, 8)
+    row = bytearray()
+    for _ in range(4):
+        row += bytes((200, 100, 50))
+    canvas.blit_rgb(2, 3, [row, bytes(row)])
+
+    img = canvas.image_buffer
+    assert img.getpixel((2, 3)) == (200, 100, 50)
+    assert img.getpixel((5, 3)) == (200, 100, 50)
+    # Second row proves ``bytes`` works alongside ``bytearray``.
+    assert img.getpixel((5, 4)) == (200, 100, 50)
+    assert img.getpixel((6, 3)) == (0, 0, 0)
+    assert img.getpixel((2, 5)) == (0, 0, 0)
+
+
+def test_blit_rgb_clips_flat_per_row_buffers_at_the_edges() -> None:
+    """The flat path shares the nested path's cropping, including x < 0.
+
+    Cropping a flat row means slicing at ``3*dx``, not ``dx`` -- an
+    off-by-three here would shift colour channels and tint the scene
+    instead of moving it, which is a bug that survives a smoke test.
+    """
+    canvas = Canvas(16, 8)
+    row = bytes((10, 20, 30)) * 4
+    canvas.blit_rgb(-2, 0, [row])
+    img = canvas.image_buffer
+    assert img.getpixel((0, 0)) == (10, 20, 30)
+    assert img.getpixel((1, 0)) == (10, 20, 30)
+    assert img.getpixel((2, 0)) == (0, 0, 0)

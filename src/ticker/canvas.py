@@ -398,13 +398,17 @@ class Canvas:
     def blit_rgb(self, x: int, y: int, rgb) -> None:
         """Paste a block of RGB bytes at (x, y) in one operation.
 
-        ``rgb`` is anything ``PIL.Image.frombytes`` accepts as an
-        ``(h, w, 3)`` uint8 buffer -- in practice a numpy array. This
-        exists because a full-panel effect painted through
+        ``rgb`` is an ``(h, w, 3)`` block of uint8, in any of three
+        shapes: a numpy array, a nested sequence of ``(r, g, b)``
+        triples, or a sequence of FLAT per-row byte buffers of length
+        ``3 * w`` (what a pure-Python rasterizer naturally produces --
+        one ``bytearray`` per scanline, filled with slice assignments).
+
+        This exists because a full-panel effect painted through
         :meth:`pixel` costs one Python call per pixel: ~3.7k calls a
         frame for a 128x29 band, which is the difference between
         comfortable and marginal at 30fps on a Pi. Callers that already
-        have their frame as an array should use this instead.
+        have their frame as a buffer should use this instead.
 
         The block is clipped to the panel, and pasting black overwrites
         whatever was there -- it is a blit, not an alpha composite, so
@@ -413,12 +417,23 @@ class Canvas:
         height = len(rgb)
         if height == 0:
             return
-        width = len(rgb[0])
-        if width == 0:
+        first = rgb[0]
+        if len(first) == 0:
             return
-        raw = rgb.tobytes() if hasattr(rgb, "tobytes") else bytes(
-            component for row in rgb for pixel in row for component in pixel
-        )
+        if hasattr(rgb, "tobytes"):
+            width = len(first)
+            raw = rgb.tobytes()
+        elif isinstance(first, (bytes, bytearray)) or isinstance(first[0], int):
+            # Flat per-row buffers: 3 bytes per pixel, already in order.
+            width = len(first) // 3
+            if width == 0:
+                return
+            raw = b"".join(bytes(row) for row in rgb)
+        else:
+            width = len(first)
+            raw = bytes(
+                component for row in rgb for pixel in row for component in pixel
+            )
         block = Image.frombytes("RGB", (width, height), raw)
         if x < 0 or y < 0 or x + width > self.width or y + height > self.height:
             # Clip by cropping the source rather than letting PIL silently
