@@ -47,6 +47,54 @@ LOGGER = logging.getLogger("ticker.sports")
 _LOGO_SIZE = 16   # rendered size on the panel (px)
 _DEFAULT_TIMEOUT = 6.0
 
+# Approximate regular-season-through-championship windows, as
+# (start_month, start_day, end_month, end_day). Deliberately generous on
+# both ends (camp/preseason buzz on one side, awards/parade coverage on
+# the other) since this only drives whether the settings page shows a
+# league's team grid collapsed by default -- a day or two of slop in
+# either direction is harmless, unlike the actual schedule feeds used
+# for game data, which are always the source of truth for scores.
+#
+# Wrapping windows (season crosses a calendar year, e.g. NHL/NBA/NFL)
+# are expressed as end < start; ``_in_window`` below treats that as
+# "before end OR after start" instead of a plain range.
+_SEASON_WINDOWS: dict[str, tuple[int, int, int, int]] = {
+    "mlb": (3, 20, 11, 5),    # spring training through World Series
+    "nhl": (10, 1, 6, 30),    # regular season through Stanley Cup Final
+    "nfl": (9, 1, 2, 15),     # kickoff through Super Bowl
+    "nba": (10, 1, 6, 30),    # opening night through NBA Finals
+}
+
+
+def _in_window(today, start_month: int, start_day: int, end_month: int, end_day: int) -> bool:
+    start = (start_month, start_day)
+    end = (end_month, end_day)
+    now = (today.month, today.day)
+    if start <= end:
+        return start <= now <= end
+    # Window wraps the new year (e.g. Oct -> Jun): in-season if we're
+    # after the start date this year or before the end date this year.
+    return now >= start or now <= end
+
+
+def is_in_season(league: str, today=None) -> bool:
+    """Best-effort "is this league's season roughly on right now" check.
+
+    Used only to decide whether the settings page shows a league's team
+    grid expanded or collapsed by default -- never for score/game data,
+    which always comes from each league's live schedule feed regardless
+    of this window. A user can always expand a "collapsed" league
+    manually, so a wrong guess here costs a tap, not correctness.
+    """
+    import datetime
+
+    window = _SEASON_WINDOWS.get(league)
+    if window is None:
+        return True
+    if today is None:
+        today = datetime.date.today()
+    return _in_window(today, *window)
+
 
 @dataclass(slots=True, frozen=True)
 class Game:

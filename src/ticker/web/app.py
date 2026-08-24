@@ -26,6 +26,7 @@ from ticker.modes.worldclock_cities import (
     ALIASES as WORLDCLOCK_ALIASES,
     CITIES as WORLDCLOCK_CITY_INDEX,
 )
+from ticker.modes.sports_common import is_in_season
 
 
 # Acronyms and multi-word display names for the mode grid + settings page.
@@ -265,6 +266,10 @@ def create_app() -> Flask:
                 "nhl": config.current_favorite_team_nhl(),
                 "nfl": config.current_favorite_team_nfl(),
                 "nba": config.current_favorite_team_nba(),
+            },
+            sports_in_season={
+                league: is_in_season(league)
+                for league in ("mlb", "nhl", "nfl", "nba")
             },
             nametag_name=config.current_nametag_name(),
             nametag_color=_rgb_to_hex(config.current_nametag_color()),

@@ -309,22 +309,35 @@
         ("nba", "NBA", nba_divisions)
       ] %}
       {% for league_key, league_label, divisions in league_sections %}
-      <p class="fx-league-label">{{ league_label }}</p>
-      <div id="{{ league_key }}-team-grid" class="fx-grid league-team-grid" data-league="{{ league_key }}" aria-label="{{ league_label }} favorite team">
-        {% for division, short_code, teams in divisions %}
-        {% for tri in teams %}
-        <button type="button"
-                class="fx-tile league-team-tile{% if tri == sports_favorites[league_key] %} is-selected{% endif %}"
-                data-tri="{{ tri }}"
-                data-league="{{ league_key }}"
-                aria-pressed="{% if tri == sports_favorites[league_key] %}true{% else %}false{% endif %}"
-                title="{{ division }}">
-          <span class="fx-tile-code">{{ tri }}</span>
-          <span class="fx-tile-base">{{ short_code }}</span>
-        </button>
-        {% endfor %}
-        {% endfor %}
-      </div>
+      {# Off-season leagues default collapsed so the settings page isn't
+         six divisions of NBA tiles in August -- but the grid, its id,
+         and every data-* attribute are unchanged, so a league picked
+         before its season starts (or kept from last season) still
+         shows as selected once expanded, and the JS click handlers
+         below need no league-aware branching. `open` is only a default;
+         the user's own expand/collapse is not persisted server-side,
+         same as any other <details> on the web. #}
+      <details class="fx-league-section"{% if sports_in_season[league_key] %} open{% endif %}>
+        <summary class="fx-league-label">
+          {{ league_label }}
+          {% if not sports_in_season[league_key] %}<span class="fx-league-offseason">off-season</span>{% endif %}
+        </summary>
+        <div id="{{ league_key }}-team-grid" class="fx-grid league-team-grid" data-league="{{ league_key }}" aria-label="{{ league_label }} favorite team">
+          {% for division, short_code, teams in divisions %}
+          {% for tri in teams %}
+          <button type="button"
+                  class="fx-tile league-team-tile{% if tri == sports_favorites[league_key] %} is-selected{% endif %}"
+                  data-tri="{{ tri }}"
+                  data-league="{{ league_key }}"
+                  aria-pressed="{% if tri == sports_favorites[league_key] %}true{% else %}false{% endif %}"
+                  title="{{ division }}">
+            <span class="fx-tile-code">{{ tri }}</span>
+            <span class="fx-tile-base">{{ short_code }}</span>
+          </button>
+          {% endfor %}
+          {% endfor %}
+        </div>
+      </details>
       {% endfor %}
       <p id="sports-favorite-note" class="schedule">Cards rotate every 6 s across leagues with games today. Games refresh every 30 s per league.</p>
     </section>

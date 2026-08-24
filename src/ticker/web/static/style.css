@@ -631,6 +631,39 @@ input[type=range]::-moz-range-thumb {
 }
 .fx-league-label:first-of-type { margin-top: 4px; }
 
+/* Per-league <details> wrapper on the sports favorites card. Same native-
+   expando pattern as .fx-custom-details above: off-season leagues render
+   collapsed by default (server decides via sports_in_season) so August
+   doesn't mean six divisions of NBA tiles before a single MLB tile. The
+   inner grid/tile markup is untouched, so existing tap-to-favorite JS
+   needs no league-aware branching. */
+.fx-league-section {
+  margin: 0;
+}
+.fx-league-section summary {
+  cursor: pointer;
+  list-style: none;
+}
+.fx-league-section summary::-webkit-details-marker { display: none; }
+.fx-league-section summary.fx-league-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.fx-league-section summary.fx-league-label::before {
+  content: '+ ';
+  color: var(--accent);
+}
+.fx-league-section[open] summary.fx-league-label::before { content: '- '; }
+.fx-league-offseason {
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+}
+
 /* Custom pair drops behind a native <details> expando so the primary
    flow (tile grid) isn't crowded. The summary keeps the same accent/font
    as the other section labels. */

@@ -15,6 +15,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import datetime
+
 from ticker.canvas import Canvas
 from ticker.modes.sports_common import (
     Game,
@@ -22,6 +24,7 @@ from ticker.modes.sports_common import (
     LogoCache,
     draw_game_card,
     draw_placeholder,
+    is_in_season,
 )
 
 
@@ -399,3 +402,60 @@ def test_card_rotation_cycles_through_multiple_games() -> None:
         canvas = Canvas(128, 32)
         draw_game_card(canvas, g, cache)
         assert _lit(canvas), "card drew nothing"
+
+
+# ---------------------------------------------------------------------------
+# is_in_season
+# ---------------------------------------------------------------------------
+
+
+def test_is_in_season_nba_offseason_in_august() -> None:
+    """NBA has no games at all in late August -- the settings page should
+    default that league's grid collapsed."""
+    assert is_in_season("nba", today=datetime.date(2026, 8, 23)) is False
+
+
+def test_is_in_season_nba_in_season_in_january() -> None:
+    """NBA's window wraps the calendar year (Oct -> Jun); mid-season in
+    January must still read as in-season."""
+    assert is_in_season("nba", today=datetime.date(2026, 1, 15)) is True
+
+
+def test_is_in_season_nba_opening_night_boundary() -> None:
+    assert is_in_season("nba", today=datetime.date(2026, 10, 1)) is True
+    assert is_in_season("nba", today=datetime.date(2026, 9, 30)) is False
+
+
+def test_is_in_season_mlb_plain_window_in_season() -> None:
+    """MLB's window doesn't wrap the year -- a plain start<=now<=end check."""
+    assert is_in_season("mlb", today=datetime.date(2026, 7, 4)) is True
+
+
+def test_is_in_season_mlb_plain_window_offseason() -> None:
+    assert is_in_season("mlb", today=datetime.date(2026, 1, 1)) is False
+    assert is_in_season("mlb", today=datetime.date(2026, 12, 25)) is False
+
+
+def test_is_in_season_nfl_wraps_year_boundary() -> None:
+    """NFL's window (Sep 1 -> Feb 15) wraps the new year; early January
+    (playoffs) must read as in-season."""
+    assert is_in_season("nfl", today=datetime.date(2026, 1, 5)) is True
+    assert is_in_season("nfl", today=datetime.date(2026, 3, 1)) is False
+
+
+def test_is_in_season_nhl_wraps_year_boundary() -> None:
+    assert is_in_season("nhl", today=datetime.date(2026, 2, 1)) is True
+    assert is_in_season("nhl", today=datetime.date(2026, 8, 1)) is False
+
+
+def test_is_in_season_unknown_league_defaults_true() -> None:
+    """An unrecognized league key should never cause a section to be
+    hidden -- fail open, not closed."""
+    assert is_in_season("mls", today=datetime.date(2026, 8, 23)) is True
+
+
+def test_is_in_season_defaults_to_todays_date_when_omitted() -> None:
+    """Calling without ``today`` must not raise -- exercises the real
+    ``datetime.date.today()`` path used in production."""
+    result = is_in_season("mlb")
+    assert isinstance(result, bool)
