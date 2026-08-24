@@ -688,7 +688,7 @@
     </section>
     <section class="flight worldclock-card" data-for="worldclock">
       <label>World clock</label>
-      <p class="schedule">Three cities. First city renders in amber as the "home" accent. Labels are capped at 6 characters. Timezones use IANA names, e.g. <code>Europe/London</code>, <code>Asia/Tokyo</code>.</p>
+      <p class="schedule">Three cities. First city renders in amber as the "home" accent. Labels are capped at 6 characters. Search for a city below and the label + timezone auto-fill; you can still type an IANA name like <code>Europe/London</code> by hand.</p>
       <div class="worldclock-view" role="group" aria-label="World clock view">
         <span class="worldclock-view-label">View</span>
         <div class="worldclock-view-toggle">
@@ -702,6 +702,14 @@
         {% for city in worldclock_cities %}
         <div class="worldclock-row" data-index="{{ loop.index0 }}" role="listitem">
           <span class="worldclock-badge">{% if loop.index0 == 0 %}Home{% else %}{{ loop.index0 + 1 }}{% endif %}</span>
+          <div class="worldclock-search addr-field">
+            <input class="worldclock-city" type="search"
+                   placeholder="Search a city (Tokyo, NYC, Paris…)"
+                   autocomplete="off" spellcheck="false"
+                   role="combobox" aria-expanded="false" aria-autocomplete="list"
+                   aria-label="City search">
+            <ul class="addr-suggest worldclock-suggest" role="listbox" hidden></ul>
+          </div>
           <input class="worldclock-label" type="text" value="{{ city.label }}"
                  placeholder="LON" maxlength="6" autocomplete="off" spellcheck="false"
                  aria-label="City label">
@@ -749,6 +757,8 @@
     const symbolInput = document.getElementById('symbol-input');
     const symbolList = document.getElementById('symbol-list');
     const symbolNote = document.getElementById('symbol-note');
+    const worldclockCityIndex = {{ worldclock_city_index | tojson }};
+    const worldclockCityAliases = {{ worldclock_city_aliases | tojson }};
     let symbols = {{ symbols | list | tojson }};
     const maxSymbols = {{ max_symbols | tojson }};
     let stocksLock = {{ stocks_lock | tojson }};
@@ -2385,6 +2395,142 @@
       setInterval(focusRender, 1000);
       setInterval(focusRefresh, 5000);
     }
+
+    // World clock city search. Nobody memorises IANA tz strings, so each row
+    // has a search box that filters the bundled city index and offers to fill
+    // both label + tz on tap. The manual label/tz fields still work, so this
+    // is additive; a user who already knows their tz can just type it.
+    //
+    // Match rules, in scoring order (higher = better):
+    //  - name starts with query -> 3
+    //  - name contains query -> 2
+    //  - country matches -> 2
+    //  - alias hits -> 1 (bonus on top of the resolved city's own score)
+    // Ties fall back to city-index order (roughly big-city-first, so "lon"
+    // surfaces London before London, Ontario).
+    function worldclockScoreCity(city, aliasBonus, q) {
+      const name = city.name.toLowerCase();
+      let s = 0;
+      if (name.startsWith(q)) s = 3;
+      else if (name.indexOf(q) !== -1) s = 2;
+      if (city.country && city.country.toLowerCase() === q) s = Math.max(s, 2);
+      return s + aliasBonus;
+    }
+    function worldclockSearchCities(query) {
+      const q = query.trim().toLowerCase();
+      if (q.length < 1) return [];
+      // Resolve aliases first: if the query itself is an alias key, we
+      // want its target city to score as if the alias matched.
+      const aliasHits = new Map();  // city name -> bonus
+      Object.keys(worldclockCityAliases || {}).forEach(function (k) {
+        if (k.toLowerCase().indexOf(q) !== -1) {
+          aliasHits.set(worldclockCityAliases[k], 1);
+        }
+      });
+      const scored = [];
+      worldclockCityIndex.forEach(function (city, idx) {
+        const bonus = aliasHits.get(city.name) || 0;
+        const s = worldclockScoreCity(city, bonus, q);
+        if (s > 0) scored.push({ city: city, score: s, idx: idx });
+      });
+      scored.sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.idx - b.idx;
+      });
+      return scored.slice(0, 8).map(function (r) { return r.city; });
+    }
+    // Attach the search behaviour to a single .worldclock-row. Mirrors the
+    // commute address typeahead pattern (mousedown-not-click, blur delay,
+    // keyboard arrow support) so both suggest lists feel identical.
+    function worldclockAttachSearch(row) {
+      const input = row.querySelector('.worldclock-city');
+      const listEl = row.querySelector('.worldclock-suggest');
+      const labelInput = row.querySelector('.worldclock-label');
+      const tzInput = row.querySelector('.worldclock-tz');
+      if (!input || !listEl || !labelInput || !tzInput) return;
+      let items = [];
+      let activeIndex = -1;
+      function close() {
+        listEl.hidden = true;
+        listEl.innerHTML = '';
+        items = [];
+        activeIndex = -1;
+        input.setAttribute('aria-expanded', 'false');
+      }
+      function highlight(i) {
+        activeIndex = i;
+        Array.from(listEl.children).forEach(function (li, idx) {
+          if (idx === i) {
+            li.classList.add('is-active');
+            li.setAttribute('aria-selected', 'true');
+          } else {
+            li.classList.remove('is-active');
+            li.setAttribute('aria-selected', 'false');
+          }
+        });
+      }
+      function choose(city) {
+        labelInput.value = (city.label || '').slice(0, 6);
+        tzInput.value = city.tz || '';
+        input.value = city.name;
+        close();
+        // Nudge the label/tz fields so any downstream listener sees the change.
+        labelInput.dispatchEvent(new Event('input', { bubbles: true }));
+        tzInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      function render(list) {
+        items = list;
+        listEl.innerHTML = '';
+        if (list.length === 0) { close(); return; }
+        list.forEach(function (city, index) {
+          const li = document.createElement('li');
+          const country = city.country ? ' \u00b7 ' + city.country : '';
+          const label = city.label ? ' \u00b7 ' + city.label : '';
+          li.textContent = city.name + country + label;
+          li.setAttribute('role', 'option');
+          li.setAttribute('aria-selected', 'false');
+          // mousedown, not click: click fires after blur has closed the list.
+          li.addEventListener('mousedown', function (event) {
+            event.preventDefault();
+            choose(city);
+          });
+          li.addEventListener('mouseenter', function () { highlight(index); });
+          listEl.appendChild(li);
+        });
+        listEl.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
+        highlight(-1);
+      }
+      input.addEventListener('input', function () {
+        const q = input.value.trim();
+        if (q.length < 1) { close(); return; }
+        render(worldclockSearchCities(q));
+      });
+      input.addEventListener('focus', function () {
+        const q = input.value.trim();
+        if (q.length >= 1) render(worldclockSearchCities(q));
+      });
+      input.addEventListener('keydown', function (event) {
+        if (listEl.hidden || items.length === 0) return;
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          highlight((activeIndex + 1) % items.length);
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          highlight((activeIndex - 1 + items.length) % items.length);
+        } else if (event.key === 'Enter') {
+          if (activeIndex >= 0) {
+            event.preventDefault();
+            choose(items[activeIndex]);
+          }
+        } else if (event.key === 'Escape') {
+          close();
+        }
+      });
+      // Delay so a mousedown on a row is not cancelled by the blur.
+      input.addEventListener('blur', function () { setTimeout(close, 120); });
+    }
+    document.querySelectorAll('#worldclock-rows .worldclock-row').forEach(worldclockAttachSearch);
 
     // World clock. Save button collects each row's label + tz, POSTs the
     // whole list, and reports the API's error string verbatim on failure

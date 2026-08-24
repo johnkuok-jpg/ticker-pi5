@@ -22,6 +22,10 @@ from ticker.modes.youtube import (
     CATEGORIES as YT_CATEGORIES,
     DEFAULT_CATEGORY as YT_DEFAULT_CATEGORY,
 )
+from ticker.modes.worldclock_cities import (
+    ALIASES as WORLDCLOCK_ALIASES,
+    CITIES as WORLDCLOCK_CITY_INDEX,
+)
 
 
 # Acronyms and multi-word display names for the mode grid + settings page.
@@ -268,6 +272,8 @@ def create_app() -> Flask:
             youtube_selection=config.current_youtube_playlist(),
             worldclock_cities=config.current_worldclock_cities(),
             worldclock_view=config.current_worldclock_view(),
+            worldclock_city_index=WORLDCLOCK_CITY_INDEX,
+            worldclock_city_aliases=WORLDCLOCK_ALIASES,
             vibe=config.current_vibe(),
             vibe_labels=_VIBE_LABELS_FOR_TEMPLATE,
             quake_alert_enabled=config.quake_alert_enabled,

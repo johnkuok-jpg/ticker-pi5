@@ -1299,12 +1299,36 @@ body[data-mode="net"]     { --accent: #78b6ff; --accent-soft: rgba(120, 182, 255
 body[data-mode="worldclock"] { --accent: #ffb000; --accent-soft: rgba(255, 176, 0, 0.16); }
 
 /* ----- World clock card ------------------------------------------------- */
-.worldclock-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.worldclock-rows { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+/* Each row is a two-row grid: the search input spans the full width on top so
+   the dropdown has room to open; the label + tz inputs sit beneath it. The
+   badge occupies both rows in the left column so it visually brackets the row. */
 .worldclock-row {
   display: grid;
   grid-template-columns: 44px 68px 1fr;
-  gap: 8px;
+  grid-template-rows: auto auto;
+  gap: 6px 8px;
   align-items: center;
+}
+.worldclock-row .worldclock-badge { grid-row: 1 / span 2; }
+.worldclock-row .worldclock-search { grid-row: 1; grid-column: 2 / span 2; }
+.worldclock-row .worldclock-label { grid-row: 2; grid-column: 2; }
+.worldclock-row .worldclock-tz    { grid-row: 2; grid-column: 3; }
+.worldclock-city {
+  width: 100%;
+  border: none;
+  border-bottom: 1px dashed var(--dimmer);
+  background: transparent;
+  color: var(--ink);
+  padding: 6px 4px;
+  font: inherit;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+.worldclock-city:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+  border-bottom-style: solid;
 }
 .worldclock-badge {
   font-family: "JetBrains Mono", ui-monospace, monospace;

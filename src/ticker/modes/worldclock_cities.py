@@ -1,0 +1,322 @@
+"""Bundled city index for the world-clock search box.
+
+Nobody memorises IANA timezone names (Asia/Ho_Chi_Minh, Pacific/Chatham),
+so the webapp lets the user type a city and picks the tz for them. The
+list here is small enough to ship inside the page (a single JSON blob in
+the template), fast enough to filter with a substring search on every
+keystroke, and broad enough to cover the cities a normal person actually
+tracks: family/friends abroad, business hubs, common travel spots.
+
+Coverage rules I applied when building this:
+- every capital city;
+- every US city over ~500k plus the well-known ones (Honolulu, Anchorage);
+- every world metro over ~3 million;
+- one entry per US state timezone (so ``Denver``, ``Phoenix`` and
+  ``Chicago`` all resolve correctly);
+- known trap cities where the naive tz would be wrong (Phoenix does not
+  observe DST -> America/Phoenix, not America/Denver; Indianapolis has
+  its own zone; parts of Australia split across Sydney/Adelaide/Perth/
+  Darwin/Brisbane; China only uses Asia/Shanghai despite five time zones
+  in reality).
+
+Each entry has ``name`` (the searchable city name), ``country`` (a short
+2-3 letter code so ``London`` disambiguates GB vs Canada), ``tz`` (the
+IANA zone), and ``label`` (the auto-filled 6-char panel code). Aliases
+live in ``ALIASES`` so ``NYC`` finds New York, ``LA`` finds Los Angeles,
+``BOM`` finds Mumbai, etc.
+
+If you edit this file, ``tests/test_worldclock_cities.py`` validates
+every tz against ``zoneinfo`` and every label against the 6-char panel
+budget. Do not commit an entry that fails those checks.
+"""
+
+from __future__ import annotations
+
+# Ordered rough-north-to-south, rough-west-to-east within a country, but
+# the JS search does not care about order -- it just filters. Order
+# affects only which suggestion appears first when two labels tie.
+CITIES: list[dict[str, str]] = [
+    # North America ---------------------------------------------------------
+    {"name": "San Francisco", "country": "US", "tz": "America/Los_Angeles", "label": "SF"},
+    {"name": "Los Angeles",   "country": "US", "tz": "America/Los_Angeles", "label": "LA"},
+    {"name": "San Diego",     "country": "US", "tz": "America/Los_Angeles", "label": "SAN"},
+    {"name": "Seattle",       "country": "US", "tz": "America/Los_Angeles", "label": "SEA"},
+    {"name": "Portland",      "country": "US", "tz": "America/Los_Angeles", "label": "PDX"},
+    {"name": "Las Vegas",     "country": "US", "tz": "America/Los_Angeles", "label": "LAS"},
+    {"name": "Phoenix",       "country": "US", "tz": "America/Phoenix",     "label": "PHX"},
+    {"name": "Denver",        "country": "US", "tz": "America/Denver",      "label": "DEN"},
+    {"name": "Salt Lake City","country": "US", "tz": "America/Denver",      "label": "SLC"},
+    {"name": "Chicago",       "country": "US", "tz": "America/Chicago",     "label": "CHI"},
+    {"name": "Dallas",        "country": "US", "tz": "America/Chicago",     "label": "DAL"},
+    {"name": "Houston",       "country": "US", "tz": "America/Chicago",     "label": "HOU"},
+    {"name": "Austin",        "country": "US", "tz": "America/Chicago",     "label": "AUS"},
+    {"name": "New Orleans",   "country": "US", "tz": "America/Chicago",     "label": "MSY"},
+    {"name": "Minneapolis",   "country": "US", "tz": "America/Chicago",     "label": "MSP"},
+    {"name": "New York",      "country": "US", "tz": "America/New_York",    "label": "NYC"},
+    {"name": "Boston",        "country": "US", "tz": "America/New_York",    "label": "BOS"},
+    {"name": "Washington DC", "country": "US", "tz": "America/New_York",    "label": "DC"},
+    {"name": "Atlanta",       "country": "US", "tz": "America/New_York",    "label": "ATL"},
+    {"name": "Miami",         "country": "US", "tz": "America/New_York",    "label": "MIA"},
+    {"name": "Philadelphia",  "country": "US", "tz": "America/New_York",    "label": "PHL"},
+    {"name": "Indianapolis",  "country": "US", "tz": "America/Indiana/Indianapolis", "label": "IND"},
+    {"name": "Detroit",       "country": "US", "tz": "America/Detroit",     "label": "DET"},
+    {"name": "Honolulu",      "country": "US", "tz": "Pacific/Honolulu",    "label": "HNL"},
+    {"name": "Anchorage",     "country": "US", "tz": "America/Anchorage",   "label": "ANC"},
+    {"name": "Toronto",       "country": "CA", "tz": "America/Toronto",     "label": "TOR"},
+    {"name": "Montreal",      "country": "CA", "tz": "America/Toronto",     "label": "YUL"},
+    {"name": "Ottawa",        "country": "CA", "tz": "America/Toronto",     "label": "OTT"},
+    {"name": "Vancouver",     "country": "CA", "tz": "America/Vancouver",   "label": "VAN"},
+    {"name": "Calgary",       "country": "CA", "tz": "America/Edmonton",    "label": "YYC"},
+    {"name": "Edmonton",      "country": "CA", "tz": "America/Edmonton",    "label": "YEG"},
+    {"name": "Winnipeg",      "country": "CA", "tz": "America/Winnipeg",    "label": "YWG"},
+    {"name": "Halifax",       "country": "CA", "tz": "America/Halifax",     "label": "YHZ"},
+    {"name": "St. John's",    "country": "CA", "tz": "America/St_Johns",    "label": "YYT"},
+    {"name": "Mexico City",   "country": "MX", "tz": "America/Mexico_City", "label": "MEX"},
+    {"name": "Guadalajara",   "country": "MX", "tz": "America/Mexico_City", "label": "GDL"},
+    {"name": "Monterrey",     "country": "MX", "tz": "America/Monterrey",   "label": "MTY"},
+    {"name": "Cancun",        "country": "MX", "tz": "America/Cancun",      "label": "CUN"},
+    {"name": "Tijuana",       "country": "MX", "tz": "America/Tijuana",     "label": "TIJ"},
+    {"name": "Havana",        "country": "CU", "tz": "America/Havana",      "label": "HAV"},
+    {"name": "Kingston",      "country": "JM", "tz": "America/Jamaica",     "label": "KIN"},
+    {"name": "San Juan",      "country": "PR", "tz": "America/Puerto_Rico", "label": "SJU"},
+    {"name": "Panama City",   "country": "PA", "tz": "America/Panama",      "label": "PTY"},
+
+    # Central & South America ----------------------------------------------
+    {"name": "Guatemala City","country": "GT", "tz": "America/Guatemala",   "label": "GUA"},
+    {"name": "San Jose",      "country": "CR", "tz": "America/Costa_Rica",  "label": "SJO"},
+    {"name": "Bogota",        "country": "CO", "tz": "America/Bogota",      "label": "BOG"},
+    {"name": "Lima",          "country": "PE", "tz": "America/Lima",        "label": "LIM"},
+    {"name": "Quito",         "country": "EC", "tz": "America/Guayaquil",   "label": "UIO"},
+    {"name": "Caracas",       "country": "VE", "tz": "America/Caracas",     "label": "CCS"},
+    {"name": "La Paz",        "country": "BO", "tz": "America/La_Paz",      "label": "LPB"},
+    {"name": "Santiago",      "country": "CL", "tz": "America/Santiago",    "label": "SCL"},
+    {"name": "Buenos Aires",  "country": "AR", "tz": "America/Argentina/Buenos_Aires", "label": "BUE"},
+    {"name": "Montevideo",    "country": "UY", "tz": "America/Montevideo",  "label": "MVD"},
+    {"name": "Asuncion",      "country": "PY", "tz": "America/Asuncion",    "label": "ASU"},
+    {"name": "Sao Paulo",     "country": "BR", "tz": "America/Sao_Paulo",   "label": "SAO"},
+    {"name": "Rio de Janeiro","country": "BR", "tz": "America/Sao_Paulo",   "label": "RIO"},
+    {"name": "Brasilia",      "country": "BR", "tz": "America/Sao_Paulo",   "label": "BSB"},
+    {"name": "Manaus",        "country": "BR", "tz": "America/Manaus",      "label": "MAO"},
+
+    # Europe ---------------------------------------------------------------
+    {"name": "Reykjavik",     "country": "IS", "tz": "Atlantic/Reykjavik",  "label": "REK"},
+    {"name": "Lisbon",        "country": "PT", "tz": "Europe/Lisbon",       "label": "LIS"},
+    {"name": "Porto",         "country": "PT", "tz": "Europe/Lisbon",       "label": "OPO"},
+    {"name": "Dublin",        "country": "IE", "tz": "Europe/Dublin",       "label": "DUB"},
+    {"name": "London",        "country": "GB", "tz": "Europe/London",       "label": "LON"},
+    {"name": "Manchester",    "country": "GB", "tz": "Europe/London",       "label": "MAN"},
+    {"name": "Edinburgh",     "country": "GB", "tz": "Europe/London",       "label": "EDI"},
+    {"name": "Paris",         "country": "FR", "tz": "Europe/Paris",        "label": "PAR"},
+    {"name": "Marseille",     "country": "FR", "tz": "Europe/Paris",        "label": "MRS"},
+    {"name": "Nice",          "country": "FR", "tz": "Europe/Paris",        "label": "NCE"},
+    {"name": "Amsterdam",     "country": "NL", "tz": "Europe/Amsterdam",    "label": "AMS"},
+    {"name": "Brussels",      "country": "BE", "tz": "Europe/Brussels",     "label": "BRU"},
+    {"name": "Luxembourg",    "country": "LU", "tz": "Europe/Luxembourg",   "label": "LUX"},
+    {"name": "Madrid",        "country": "ES", "tz": "Europe/Madrid",       "label": "MAD"},
+    {"name": "Barcelona",     "country": "ES", "tz": "Europe/Madrid",       "label": "BCN"},
+    {"name": "Seville",       "country": "ES", "tz": "Europe/Madrid",       "label": "SVQ"},
+    {"name": "Rome",          "country": "IT", "tz": "Europe/Rome",         "label": "ROM"},
+    {"name": "Milan",         "country": "IT", "tz": "Europe/Rome",         "label": "MIL"},
+    {"name": "Venice",        "country": "IT", "tz": "Europe/Rome",         "label": "VCE"},
+    {"name": "Naples",        "country": "IT", "tz": "Europe/Rome",         "label": "NAP"},
+    {"name": "Zurich",        "country": "CH", "tz": "Europe/Zurich",       "label": "ZRH"},
+    {"name": "Geneva",        "country": "CH", "tz": "Europe/Zurich",       "label": "GVA"},
+    {"name": "Bern",          "country": "CH", "tz": "Europe/Zurich",       "label": "BRN"},
+    {"name": "Vienna",        "country": "AT", "tz": "Europe/Vienna",       "label": "VIE"},
+    {"name": "Berlin",        "country": "DE", "tz": "Europe/Berlin",       "label": "BER"},
+    {"name": "Munich",        "country": "DE", "tz": "Europe/Berlin",       "label": "MUC"},
+    {"name": "Frankfurt",     "country": "DE", "tz": "Europe/Berlin",       "label": "FRA"},
+    {"name": "Hamburg",       "country": "DE", "tz": "Europe/Berlin",       "label": "HAM"},
+    {"name": "Prague",        "country": "CZ", "tz": "Europe/Prague",       "label": "PRG"},
+    {"name": "Warsaw",        "country": "PL", "tz": "Europe/Warsaw",       "label": "WAW"},
+    {"name": "Budapest",      "country": "HU", "tz": "Europe/Budapest",     "label": "BUD"},
+    {"name": "Copenhagen",    "country": "DK", "tz": "Europe/Copenhagen",   "label": "CPH"},
+    {"name": "Oslo",          "country": "NO", "tz": "Europe/Oslo",         "label": "OSL"},
+    {"name": "Stockholm",     "country": "SE", "tz": "Europe/Stockholm",    "label": "STO"},
+    {"name": "Helsinki",      "country": "FI", "tz": "Europe/Helsinki",     "label": "HEL"},
+    {"name": "Tallinn",       "country": "EE", "tz": "Europe/Tallinn",      "label": "TLL"},
+    {"name": "Riga",          "country": "LV", "tz": "Europe/Riga",         "label": "RIX"},
+    {"name": "Vilnius",       "country": "LT", "tz": "Europe/Vilnius",      "label": "VNO"},
+    {"name": "Minsk",         "country": "BY", "tz": "Europe/Minsk",        "label": "MSQ"},
+    {"name": "Kyiv",          "country": "UA", "tz": "Europe/Kyiv",         "label": "KBP"},
+    {"name": "Moscow",        "country": "RU", "tz": "Europe/Moscow",       "label": "MOW"},
+    {"name": "Saint Petersburg","country":"RU","tz": "Europe/Moscow",       "label": "LED"},
+    {"name": "Athens",        "country": "GR", "tz": "Europe/Athens",       "label": "ATH"},
+    {"name": "Istanbul",      "country": "TR", "tz": "Europe/Istanbul",     "label": "IST"},
+    {"name": "Ankara",        "country": "TR", "tz": "Europe/Istanbul",     "label": "ANK"},
+    {"name": "Bucharest",     "country": "RO", "tz": "Europe/Bucharest",    "label": "BUH"},
+    {"name": "Sofia",         "country": "BG", "tz": "Europe/Sofia",        "label": "SOF"},
+    {"name": "Belgrade",      "country": "RS", "tz": "Europe/Belgrade",     "label": "BEG"},
+    {"name": "Zagreb",        "country": "HR", "tz": "Europe/Zagreb",       "label": "ZAG"},
+
+    # Africa ---------------------------------------------------------------
+    {"name": "Casablanca",    "country": "MA", "tz": "Africa/Casablanca",   "label": "CMN"},
+    {"name": "Rabat",         "country": "MA", "tz": "Africa/Casablanca",   "label": "RBA"},
+    {"name": "Algiers",       "country": "DZ", "tz": "Africa/Algiers",      "label": "ALG"},
+    {"name": "Tunis",         "country": "TN", "tz": "Africa/Tunis",        "label": "TUN"},
+    {"name": "Cairo",         "country": "EG", "tz": "Africa/Cairo",        "label": "CAI"},
+    {"name": "Khartoum",      "country": "SD", "tz": "Africa/Khartoum",     "label": "KRT"},
+    {"name": "Addis Ababa",   "country": "ET", "tz": "Africa/Addis_Ababa",  "label": "ADD"},
+    {"name": "Nairobi",       "country": "KE", "tz": "Africa/Nairobi",      "label": "NBO"},
+    {"name": "Dar es Salaam", "country": "TZ", "tz": "Africa/Dar_es_Salaam","label": "DAR"},
+    {"name": "Kampala",       "country": "UG", "tz": "Africa/Kampala",      "label": "KLA"},
+    {"name": "Kigali",        "country": "RW", "tz": "Africa/Kigali",       "label": "KGL"},
+    {"name": "Lagos",         "country": "NG", "tz": "Africa/Lagos",        "label": "LOS"},
+    {"name": "Abuja",         "country": "NG", "tz": "Africa/Lagos",        "label": "ABV"},
+    {"name": "Accra",         "country": "GH", "tz": "Africa/Accra",        "label": "ACC"},
+    {"name": "Dakar",         "country": "SN", "tz": "Africa/Dakar",        "label": "DKR"},
+    {"name": "Kinshasa",      "country": "CD", "tz": "Africa/Kinshasa",     "label": "FIH"},
+    {"name": "Luanda",        "country": "AO", "tz": "Africa/Luanda",       "label": "LAD"},
+    {"name": "Johannesburg",  "country": "ZA", "tz": "Africa/Johannesburg", "label": "JNB"},
+    {"name": "Cape Town",     "country": "ZA", "tz": "Africa/Johannesburg", "label": "CPT"},
+    {"name": "Pretoria",      "country": "ZA", "tz": "Africa/Johannesburg", "label": "PRY"},
+    {"name": "Harare",        "country": "ZW", "tz": "Africa/Harare",       "label": "HRE"},
+
+    # Middle East ---------------------------------------------------------
+    {"name": "Tel Aviv",      "country": "IL", "tz": "Asia/Jerusalem",      "label": "TLV"},
+    {"name": "Jerusalem",     "country": "IL", "tz": "Asia/Jerusalem",      "label": "JRS"},
+    {"name": "Amman",         "country": "JO", "tz": "Asia/Amman",          "label": "AMM"},
+    {"name": "Beirut",        "country": "LB", "tz": "Asia/Beirut",         "label": "BEY"},
+    {"name": "Damascus",      "country": "SY", "tz": "Asia/Damascus",       "label": "DAM"},
+    {"name": "Baghdad",       "country": "IQ", "tz": "Asia/Baghdad",        "label": "BGW"},
+    {"name": "Riyadh",        "country": "SA", "tz": "Asia/Riyadh",         "label": "RUH"},
+    {"name": "Jeddah",        "country": "SA", "tz": "Asia/Riyadh",         "label": "JED"},
+    {"name": "Kuwait City",   "country": "KW", "tz": "Asia/Kuwait",         "label": "KWI"},
+    {"name": "Doha",          "country": "QA", "tz": "Asia/Qatar",          "label": "DOH"},
+    {"name": "Manama",        "country": "BH", "tz": "Asia/Bahrain",        "label": "BAH"},
+    {"name": "Abu Dhabi",     "country": "AE", "tz": "Asia/Dubai",          "label": "AUH"},
+    {"name": "Dubai",         "country": "AE", "tz": "Asia/Dubai",          "label": "DXB"},
+    {"name": "Muscat",        "country": "OM", "tz": "Asia/Muscat",         "label": "MCT"},
+    {"name": "Sanaa",         "country": "YE", "tz": "Asia/Aden",           "label": "SAH"},
+    {"name": "Tehran",        "country": "IR", "tz": "Asia/Tehran",         "label": "IKA"},
+
+    # Asia ----------------------------------------------------------------
+    {"name": "Kabul",         "country": "AF", "tz": "Asia/Kabul",          "label": "KBL"},
+    {"name": "Islamabad",     "country": "PK", "tz": "Asia/Karachi",        "label": "ISB"},
+    {"name": "Karachi",       "country": "PK", "tz": "Asia/Karachi",        "label": "KHI"},
+    {"name": "Lahore",        "country": "PK", "tz": "Asia/Karachi",        "label": "LHE"},
+    {"name": "Delhi",         "country": "IN", "tz": "Asia/Kolkata",        "label": "DEL"},
+    {"name": "Mumbai",        "country": "IN", "tz": "Asia/Kolkata",        "label": "BOM"},
+    {"name": "Bengaluru",     "country": "IN", "tz": "Asia/Kolkata",        "label": "BLR"},
+    {"name": "Kolkata",       "country": "IN", "tz": "Asia/Kolkata",        "label": "CCU"},
+    {"name": "Chennai",       "country": "IN", "tz": "Asia/Kolkata",        "label": "MAA"},
+    {"name": "Hyderabad",     "country": "IN", "tz": "Asia/Kolkata",        "label": "HYD"},
+    {"name": "Kathmandu",     "country": "NP", "tz": "Asia/Kathmandu",      "label": "KTM"},
+    {"name": "Dhaka",         "country": "BD", "tz": "Asia/Dhaka",          "label": "DAC"},
+    {"name": "Colombo",       "country": "LK", "tz": "Asia/Colombo",        "label": "CMB"},
+    {"name": "Male",          "country": "MV", "tz": "Indian/Maldives",     "label": "MLE"},
+    {"name": "Yangon",        "country": "MM", "tz": "Asia/Yangon",         "label": "RGN"},
+    {"name": "Bangkok",       "country": "TH", "tz": "Asia/Bangkok",        "label": "BKK"},
+    {"name": "Phuket",        "country": "TH", "tz": "Asia/Bangkok",        "label": "HKT"},
+    {"name": "Chiang Mai",    "country": "TH", "tz": "Asia/Bangkok",        "label": "CNX"},
+    {"name": "Vientiane",     "country": "LA", "tz": "Asia/Vientiane",      "label": "VTE"},
+    {"name": "Phnom Penh",    "country": "KH", "tz": "Asia/Phnom_Penh",     "label": "PNH"},
+    {"name": "Ho Chi Minh",   "country": "VN", "tz": "Asia/Ho_Chi_Minh",    "label": "SGN"},
+    {"name": "Hanoi",         "country": "VN", "tz": "Asia/Ho_Chi_Minh",    "label": "HAN"},
+    {"name": "Kuala Lumpur",  "country": "MY", "tz": "Asia/Kuala_Lumpur",   "label": "KUL"},
+    {"name": "Singapore",     "country": "SG", "tz": "Asia/Singapore",      "label": "SIN"},
+    {"name": "Jakarta",       "country": "ID", "tz": "Asia/Jakarta",        "label": "JKT"},
+    {"name": "Bali",          "country": "ID", "tz": "Asia/Makassar",       "label": "DPS"},
+    {"name": "Manila",        "country": "PH", "tz": "Asia/Manila",         "label": "MNL"},
+    {"name": "Cebu",          "country": "PH", "tz": "Asia/Manila",         "label": "CEB"},
+    {"name": "Taipei",        "country": "TW", "tz": "Asia/Taipei",         "label": "TPE"},
+    {"name": "Hong Kong",     "country": "HK", "tz": "Asia/Hong_Kong",      "label": "HKG"},
+    {"name": "Macau",         "country": "MO", "tz": "Asia/Macau",          "label": "MFM"},
+    # PRC uses a single national tz despite spanning five geographic zones.
+    {"name": "Beijing",       "country": "CN", "tz": "Asia/Shanghai",       "label": "PEK"},
+    {"name": "Shanghai",      "country": "CN", "tz": "Asia/Shanghai",       "label": "SHA"},
+    {"name": "Shenzhen",      "country": "CN", "tz": "Asia/Shanghai",       "label": "SZX"},
+    {"name": "Guangzhou",     "country": "CN", "tz": "Asia/Shanghai",       "label": "CAN"},
+    {"name": "Chengdu",       "country": "CN", "tz": "Asia/Shanghai",       "label": "CTU"},
+    {"name": "Ulaanbaatar",   "country": "MN", "tz": "Asia/Ulaanbaatar",    "label": "ULN"},
+    {"name": "Pyongyang",     "country": "KP", "tz": "Asia/Pyongyang",      "label": "FNJ"},
+    {"name": "Seoul",         "country": "KR", "tz": "Asia/Seoul",          "label": "SEL"},
+    {"name": "Busan",         "country": "KR", "tz": "Asia/Seoul",          "label": "PUS"},
+    {"name": "Tokyo",         "country": "JP", "tz": "Asia/Tokyo",          "label": "TYO"},
+    {"name": "Osaka",         "country": "JP", "tz": "Asia/Tokyo",          "label": "OSA"},
+    {"name": "Kyoto",         "country": "JP", "tz": "Asia/Tokyo",          "label": "UKY"},
+    {"name": "Sapporo",       "country": "JP", "tz": "Asia/Tokyo",          "label": "SPK"},
+
+    # Central Asia / Caucasus --------------------------------------------
+    {"name": "Tbilisi",       "country": "GE", "tz": "Asia/Tbilisi",        "label": "TBS"},
+    {"name": "Yerevan",       "country": "AM", "tz": "Asia/Yerevan",        "label": "EVN"},
+    {"name": "Baku",          "country": "AZ", "tz": "Asia/Baku",           "label": "BAK"},
+    {"name": "Tashkent",      "country": "UZ", "tz": "Asia/Tashkent",       "label": "TAS"},
+    {"name": "Almaty",        "country": "KZ", "tz": "Asia/Almaty",         "label": "ALA"},
+    {"name": "Astana",        "country": "KZ", "tz": "Asia/Almaty",         "label": "NQZ"},
+    {"name": "Bishkek",       "country": "KG", "tz": "Asia/Bishkek",        "label": "FRU"},
+    {"name": "Dushanbe",      "country": "TJ", "tz": "Asia/Dushanbe",       "label": "DYU"},
+    {"name": "Ashgabat",      "country": "TM", "tz": "Asia/Ashgabat",       "label": "ASB"},
+
+    # Oceania -------------------------------------------------------------
+    {"name": "Perth",         "country": "AU", "tz": "Australia/Perth",     "label": "PER"},
+    {"name": "Darwin",        "country": "AU", "tz": "Australia/Darwin",    "label": "DRW"},
+    {"name": "Adelaide",      "country": "AU", "tz": "Australia/Adelaide",  "label": "ADL"},
+    {"name": "Brisbane",      "country": "AU", "tz": "Australia/Brisbane",  "label": "BNE"},
+    {"name": "Sydney",        "country": "AU", "tz": "Australia/Sydney",    "label": "SYD"},
+    {"name": "Melbourne",     "country": "AU", "tz": "Australia/Melbourne", "label": "MEL"},
+    {"name": "Hobart",        "country": "AU", "tz": "Australia/Hobart",    "label": "HBA"},
+    {"name": "Canberra",      "country": "AU", "tz": "Australia/Sydney",    "label": "CBR"},
+    {"name": "Auckland",      "country": "NZ", "tz": "Pacific/Auckland",    "label": "AKL"},
+    {"name": "Wellington",    "country": "NZ", "tz": "Pacific/Auckland",    "label": "WLG"},
+    {"name": "Christchurch",  "country": "NZ", "tz": "Pacific/Auckland",    "label": "CHC"},
+    {"name": "Suva",          "country": "FJ", "tz": "Pacific/Fiji",        "label": "SUV"},
+    {"name": "Nuku'alofa",    "country": "TO", "tz": "Pacific/Tongatapu",   "label": "TBU"},
+    {"name": "Apia",          "country": "WS", "tz": "Pacific/Apia",        "label": "APW"},
+    {"name": "Papeete",       "country": "PF", "tz": "Pacific/Tahiti",      "label": "PPT"},
+    {"name": "Guam",          "country": "GU", "tz": "Pacific/Guam",        "label": "GUM"},
+
+    # UTC anchor ---------------------------------------------------------
+    # Handy for engineers, ops rotations, and anyone tracking a server
+    # log timezone rather than a place.
+    {"name": "UTC",           "country": "UTC","tz": "UTC",                 "label": "UTC"},
+]
+
+# Aliases so that the airport code or a very common shorthand also finds
+# the right entry, without stuffing the dropdown with alias-only rows.
+# The value is the canonical city ``name`` from CITIES.
+ALIASES: dict[str, str] = {
+    "NYC":   "New York",
+    "NY":    "New York",
+    "LA":    "Los Angeles",
+    "LAX":   "Los Angeles",
+    "SF":    "San Francisco",
+    "SFO":   "San Francisco",
+    "SEA":   "Seattle",
+    "DC":    "Washington DC",
+    "IAD":   "Washington DC",
+    "DCA":   "Washington DC",
+    "BOM":   "Mumbai",
+    "BLR":   "Bengaluru",
+    "SAIGON":"Ho Chi Minh",
+    "PEK":   "Beijing",
+    "SHA":   "Shanghai",
+    "PVG":   "Shanghai",
+    "HKG":   "Hong Kong",
+    "TPE":   "Taipei",
+    "SIN":   "Singapore",
+    "KUL":   "Kuala Lumpur",
+    "BKK":   "Bangkok",
+    "CDG":   "Paris",
+    "LHR":   "London",
+    "FRA":   "Frankfurt",
+    "MUC":   "Munich",
+    "MAD":   "Madrid",
+    "BCN":   "Barcelona",
+    "FCO":   "Rome",
+    "GRU":   "Sao Paulo",
+    "GIG":   "Rio de Janeiro",
+    "EZE":   "Buenos Aires",
+    "SCL":   "Santiago",
+    "MEX":   "Mexico City",
+    "YYZ":   "Toronto",
+    "YVR":   "Vancouver",
+    "YUL":   "Montreal",
+    "SYD":   "Sydney",
+    "MEL":   "Melbourne",
+    "AKL":   "Auckland",
+    "TYO":   "Tokyo",
+    "HND":   "Tokyo",
+    "NRT":   "Tokyo",
+    "ICN":   "Seoul",
+}
