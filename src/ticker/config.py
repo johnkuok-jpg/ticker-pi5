@@ -260,6 +260,14 @@ class Config:
     stocks_layout: str = "card"  # card | scroll
     news_feed_url: str = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
     news_source_name: str = "CNBC MARKETS"
+    # Human-readable label for this physical unit, e.g. "MOM'S TICKER". Every
+    # gift Pi runs the exact same code from the same git remote, so nothing in
+    # the software itself distinguishes one board from another -- only the
+    # hostname set at flash time and this string tell them apart. Shown on the
+    # Wi-Fi/network screen so you can identify a unit at a glance without
+    # checking its hostname or IP. Blank by default (single-unit setups don't
+    # need it) and silently ignored past a few characters of panel width.
+    unit_name: str = ""
     flight_number: str = ""
     flight_airport: str = ""
     crypto_symbols: tuple[str, ...] = ("BTC", "ETH")
@@ -2204,6 +2212,7 @@ def load_config(env_file: Path | None = None) -> Config:
         stocks_layout=os.getenv("STOCKS_LAYOUT", "card").strip().lower(),
         news_feed_url=os.getenv("NEWS_FEED_URL", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"),
         news_source_name=os.getenv("NEWS_SOURCE_NAME", "CNBC MARKETS"),
+        unit_name=os.getenv("TICKER_UNIT_NAME", "").strip(),
         flight_number="".join(os.getenv("FLIGHT_NUMBER", "").split()).upper(),
         flight_airport=os.getenv("FLIGHT_AIRPORT", "").strip().upper(),
         crypto_symbols=crypto_symbols,

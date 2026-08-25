@@ -139,7 +139,13 @@ class NetworkMode(Mode):
         # MEDIUM, not SMALL: an IP address is read off the panel digit by digit
         # while typing it into a phone, and every dotted quad fits at 6px a glyph.
         canvas.text(0, 10, canvas.fit(status.ip or "NO ADDRESS", canvas.width, MEDIUM), WHITE, MEDIUM)
-        canvas.text(0, ROW_Y[2], f"ticker.local:{WEB_PORT}", DIM, SMALL)
+        # TICKER_UNIT_NAME wins the bottom row when set -- with several
+        # identical gift units on identical code, this is the one line on the
+        # whole panel that says which physical board you're looking at.
+        # Falls back to the old ticker.local:PORT hint so single-unit setups
+        # (nothing set) see exactly what they always have.
+        bottom = self.config.unit_name or f"ticker.local:{WEB_PORT}"
+        canvas.text(0, ROW_Y[2], canvas.fit(bottom, canvas.width, SMALL), DIM, SMALL)
         self._draw_bars(canvas, status.signal)
 
     def _draw_setup(self, canvas: Canvas, tick: int, notice: dict[str, str]) -> None:

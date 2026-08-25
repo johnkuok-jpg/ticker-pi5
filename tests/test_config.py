@@ -471,3 +471,25 @@ def test_set_mode_never_writes_bytes_directly_to_the_mode_file(tmp_path, monkeyp
         + "\n".join(offenders)
     )
     assert cfg.current_mode() == "weather"
+
+
+def test_unit_name_defaults_blank(config) -> None:  # type: ignore[no-untyped-def]
+    """Single-unit setups set nothing and see the old ticker.local behavior."""
+    assert config.unit_name == ""
+
+
+def test_unit_name_reads_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    """A gift Pi's .env can label itself, e.g. TICKER_UNIT_NAME=MOM'S TICKER."""
+    monkeypatch.setattr("ticker.config._first_writable_state_dir", lambda: tmp_path / "state")
+    env = tmp_path / ".env"
+    env.write_text("TICKER_UNIT_NAME=MOM'S TICKER\n", encoding="utf-8")
+    cfg = load_config(env)
+    assert cfg.unit_name == "MOM'S TICKER"
+
+
+def test_unit_name_is_stripped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("ticker.config._first_writable_state_dir", lambda: tmp_path / "state")
+    env = tmp_path / ".env"
+    env.write_text("TICKER_UNIT_NAME=  DAVE'S TICKER  \n", encoding="utf-8")
+    cfg = load_config(env)
+    assert cfg.unit_name == "DAVE'S TICKER"

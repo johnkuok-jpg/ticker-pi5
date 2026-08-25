@@ -66,6 +66,12 @@ Open `http://ticker.local:8080` from a phone on the same network. The page selec
 
 Copy `.env.example` to `.env` and edit it. The renderer and web service read it at startup; after editing, run `sudo systemctl restart ticker ticker-web`. If you also changed a `WIFI_SETUP_*` variable, restart `ticker-wifi` too.
 
+### Identity
+
+| Variable | Meaning |
+| --- | --- |
+| `TICKER_UNIT_NAME` | Label for this physical unit (e.g. `MOM'S TICKER`), shown on the bottom row of the Wi-Fi/network screen once connected. Every unit runs identical code from the same git remote, so this is the only thing (besides the hostname set at flash time) that distinguishes one board from another once you have more than one. Leave blank to show `ticker.local:8080` instead. |
+
 ### Display
 
 | Variable | Meaning |
