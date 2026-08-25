@@ -23,6 +23,7 @@ from ticker.modes.news import NewsMode
 from ticker.modes.nfl import NFLMode
 from ticker.modes.nhl import NHLMode
 from ticker.modes.pihealth import PiHealthMode
+from ticker.modes.pixeltest import PixelTestMode
 from ticker.modes.pokemon import PokemonMode
 from ticker.modes.spotify import SpotifyMode
 from ticker.modes.sports import SportsMode
@@ -53,6 +54,7 @@ MODE_TYPES: dict[str, type[Mode]] = {
     "focus": FocusMode,
     "net": NetworkMode,
     "pihealth": PiHealthMode,
+    "pixeltest": PixelTestMode,
     "worldclock": WorldClockMode,
     "youtube": YouTubeMode,
     "vibes": VibesMode,
@@ -103,6 +105,7 @@ __all__ = [
     "NametagMode",
     "NetworkMode",
     "PiHealthMode",
+    "PixelTestMode",
     "PokemonMode",
     "FocusMode",
     "SpotifyMode",

@@ -58,6 +58,7 @@ MODE_LABELS = {
     "focus": "Focus",
     "net": "Wi-Fi",
     "pihealth": "Pi Health",
+    "pixeltest": "Pixel Test",
     "worldclock": "World Clock",
     "youtube": "YouTube",
     "vibes": "Vibes",
