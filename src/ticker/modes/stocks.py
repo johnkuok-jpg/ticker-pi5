@@ -314,14 +314,25 @@ def compact_percent(percent: float, max_chars: int) -> str:
 
 
 class StocksMode(Mode):
-    """Render configured symbols, refreshing market data at most once a minute."""
+    """Render configured symbols, refreshing market data at a cadence that
+    scales with the size of the watchlist."""
 
-    # Refresh cadence. Finnhub's free tier is 60 req/min, so a 15-second
-    # cadence over a small watchlist (5-10 tickers) is well under budget.
-    # Yahoo Finance rate limits are looser at this frequency too, but if we
-    # ever fall back to yfinance the refresh call is still bounded by
-    # its own network timeouts and won't compound.
-    CACHE_SECONDS = 15
+    # Refresh cadence. Finnhub's free tier is 60 req/min, and each refresh
+    # costs one request per watched symbol, so the fastest cadence that
+    # never exceeds budget is symbol_count * 60 / FINNHUB_REQUESTS_PER_MINUTE
+    # seconds between refreshes. Short watchlists (the common case -- a
+    # handful of favorites on a gift unit) get noticeably snappier updates;
+    # long ones back off automatically instead of tripping the rate limit
+    # and silently falling back to Yahoo's 15-20 minute delayed quotes.
+    #
+    # MIN_CACHE_SECONDS floors the result so a tiny watchlist can't poll
+    # faster than is actually useful for a price that itself only updates
+    # a few times a second at most.
+    FINNHUB_REQUESTS_PER_MINUTE = 60
+    MIN_CACHE_SECONDS = 5
+    # Slow fallback cadence when there is no watchlist to size the budget
+    # calculation against.
+    IDLE_CACHE_SECONDS = 30
     CARD_SECONDS = 6
 
     def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
@@ -336,6 +347,27 @@ class StocksMode(Mode):
         self._logo_missing: set[str] = set()
 
     # -- data ----------------------------------------------------------------
+
+    @property
+    def cache_seconds(self) -> float:
+        """Refresh interval in seconds, scaled to the current watchlist size.
+
+        symbol_count / cache_seconds * 60 keeps the whole watchlist within
+        Finnhub's free-tier budget of FINNHUB_REQUESTS_PER_MINUTE requests
+        per minute, i.e. cache_seconds = symbol_count * 60 / budget, floored
+        at MIN_CACHE_SECONDS so a short watchlist (the common case -- a
+        handful of favorites) doesn't poll pointlessly fast. There is no
+        upper cap: staying under the rate limit always wins, because a
+        rate-limit hit means a silent fallback to Yahoo's 15-20 minute
+        delayed quotes, which is worse than a slower-than-ideal refresh on
+        a long watchlist. An empty watchlist has nothing to refresh, so it
+        just gets IDLE_CACHE_SECONDS.
+        """
+        symbol_count = len(self._watched)
+        if symbol_count == 0:
+            return self.IDLE_CACHE_SECONDS
+        budget_interval = symbol_count * 60.0 / self.FINNHUB_REQUESTS_PER_MINUTE
+        return max(self.MIN_CACHE_SECONDS, budget_interval)
 
     def _refresh(self) -> None:
         """Poll one quote per symbol.
@@ -520,7 +552,7 @@ class StocksMode(Mode):
             watched = self.config.current_symbols()
             stale = bool(self._watched) and watched != self._watched
             self._watched = watched
-        if stale or time.monotonic() - self._last_refresh >= self.CACHE_SECONDS:
+        if stale or time.monotonic() - self._last_refresh >= self.cache_seconds:
             self._refresh()
         canvas.clear()
         if not self.quotes:
